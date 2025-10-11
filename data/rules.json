@@ -1,0 +1,37 @@
+[
+  {
+    "name": "Allow Windows/System listener",
+    "when": { "source": "process", "listening_port": true, "name_contains": ["system"] },
+    "then": { "level": "info", "reason": "Known system listener" }
+  },
+  {
+    "name": "Allow Intel esrv service",
+    "when": { "source": "process", "listening_port": true, "name_contains": ["esrv"], "port_not_in": [22, 3389, 4444, 5900] },
+    "then": { "level": "info", "reason": "Intel background service" }
+  },
+  {
+    "name": "Allow Adobe Collab Sync",
+    "when": { "source": "process", "listening_port": true, "name_contains": ["AdobeCollabSync"], "port_not_in": [22, 3389, 4444, 5900] },
+    "then": { "level": "info", "reason": "Adobe background service" }
+  },
+  {
+    "name": "Allow Logitech G Hub agent",
+    "when": { "source": "process", "listening_port": true, "name_contains": ["lghub", "lghub_agent"], "port_not_in": [22, 3389, 4444, 5900] },
+    "then": { "level": "info", "reason": "Logitech background service" }
+  },
+  {
+    "name": "Local dev server",
+    "when": { "source": "process", "listening_port": true, "name_contains": ["python"], "port_in": [8000] },
+    "then": { "level": "info", "reason": "Local dev server" }
+  },
+  {
+    "name": "High-risk ports",
+    "when": { "source": "process", "listening_port": true, "port_in": [22, 3389, 4444, 5900] },
+    "then": { "level": "critical", "reason": "Process listening on risky port" }
+  },
+  {
+    "name": "Default listener alert",
+    "when": { "source": "process", "listening_port": true },
+    "then": { "level": "warning", "reason": "Unexpected listener" }
+  }
+]
