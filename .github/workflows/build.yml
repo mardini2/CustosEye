@@ -1,0 +1,44 @@
+name: build-windows-exe
+
+on:
+  push:
+    branches: ['**']  # build on any branch push
+  workflow_dispatch:   # allow manual runs from UI/CLI
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11.9'
+
+      - name: Install deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .
+          pip install black ruff mypy pytest pyinstaller
+
+      - name: Lint & typecheck & test
+        run: |
+          python -m black --check app agent algorithm dashboard tests
+          python -m ruff check app agent algorithm dashboard tests
+          python -m mypy app agent algorithm dashboard
+          python -m pytest -q
+
+      - name: Build exe
+        run: |
+          pyinstaller --noconfirm --onefile --name CustosEye.exe --console app/console.py
+          echo Version froze on %GITHUB_SHA%> dist/VERSION.txt
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: CustosEye-exe
+          path: |
+            dist/CustosEye.exe
+            dist/VERSION.txt

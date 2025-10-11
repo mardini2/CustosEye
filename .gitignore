@@ -160,3 +160,9 @@ reports/
 *.bak
 *.old
 *.orig
+
+# GitHub Actions
+!.github/
+!.github/workflows/
+.github/*
+!.github/workflows/**
