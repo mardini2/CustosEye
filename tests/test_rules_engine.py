@@ -1,5 +1,5 @@
 """
-Goal: Ensure rule matches on a simple listening process event.
+goal: make sure rule matches on a simple listening process event.
 """
 
 from __future__ import annotations

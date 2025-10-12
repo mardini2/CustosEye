@@ -1,21 +1,21 @@
 """
-Goal: Verify the integrity of configured files by recomputing SHA256 and comparing to known-good values,
+goal: verify the integrity of configured files by recomputing SHA256 and comparing to known-good values,
       but only emit events when a file's status changes (quiet output).
 
-Design:
-- Targets are listed in data/integrity_targets.json:
+design:
+- targets are listed in data/integrity_targets.json:
   [
     {"path": "%WINDIR%/System32/notepad.exe", "sha256": "..."},
     {"path": "data/fixtures/ok.txt", "sha256": "..."}
   ]
-- Paths can be relative, absolute, with %ENVVARS%, or with ~.
-- Status transitions that trigger a print:
+- paths can be relative, absolute, with %ENVVARS%, or with ~.
+- status transitions that trigger a print:
     missing  -> ok | mismatch | noaccess | error
     ok       -> missing | mismatch | noaccess | error
     mismatch -> ok | missing | noaccess | error
     noaccess -> ok | missing | mismatch | error
     error    -> ok | missing | mismatch | noaccess
-- Interval defaults to 30s; you can set a faster interval from app/console.py when constructing IntegrityChecker.
+- interval defaults to 30s; you can set a faster interval from app/console.py when constructing IntegrityChecker.
 """
 
 from __future__ import annotations
@@ -96,7 +96,7 @@ class IntegrityChecker:
 
                 path = self._normalize_path(raw_path)
 
-                # Missing file
+                # missing file
                 if not os.path.exists(path):
                     self._emit_if_changed(
                         path,

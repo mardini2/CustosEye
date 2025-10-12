@@ -1,5 +1,5 @@
 """
-Goal: Basic sanity tests for CSCTrustEngine scoring.
+goal: basic sanity tests for CSCTrustEngine scoring.
 """
 
 from __future__ import annotations

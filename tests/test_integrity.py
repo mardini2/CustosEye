@@ -1,5 +1,5 @@
 """
-Goal: Validate integrity checker behavior on missing files and bad hashes.
+goal: validates integrity checker behavior on missing files and bad hashes.
 """
 
 from __future__ import annotations

@@ -1,5 +1,5 @@
 """
-Goal: Smoke test the monitor module to ensure event shape is sane.
+goal: smoke test the monitor module to make sure event shape is sane.
 """
 
 from __future__ import annotations

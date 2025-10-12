@@ -1,5 +1,5 @@
 """
-Goal: Write a simple version file with current git sha for traceability.
+goal: writes a simple version file with current git sha for traceability.
 """
 from __future__ import annotations
 

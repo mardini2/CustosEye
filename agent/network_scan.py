@@ -1,9 +1,9 @@
 """
-Goal: Publish a coarse network state snapshot so rules can react to listening ports, connections, etc.
+goal: publish a coarse network state snapshot so rules can react to listening ports, connections, etc.
 
-Design:
-- Uses psutil.net_connections for system-wide view every N seconds.
-- Normalizes into a compact event for the rules engine.
+design:
+- uses psutil.net_connections for system-wide view every N seconds.
+- normalizes into a compact event for the rules engine.
 """
 
 from __future__ import annotations

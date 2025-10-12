@@ -1,7 +1,7 @@
 """
-Goal: Apply JSON-defined rules to events and return a decision with "level" and "reason".
+goal: apply JSON-defined rules to events and return a decision with "level" and "reason".
 
-This version adds targeted match fields so you can reduce noise:
+it adds targeted match fields so you can reduce noise:
 - when.source: "process" | "network" | "integrity"
 - when.listening_port: true/false      # any listening port on the event
 - when.name_contains: str | [str,...]  # match process name substring(s)
@@ -10,7 +10,7 @@ This version adds targeted match fields so you can reduce noise:
 - when.port_not_in: [int,...]          # match if none of these ports are present
 - when.any_remote: true/false          # any remote endpoints present
 
-Rules are evaluated top-to-bottom; the first match wins. Keep rules ordered from most specific to most general.
+rules are evaluated top-to-bottom; the first match wins. keep rules ordered from most specific to most general.
 """
 
 from __future__ import annotations

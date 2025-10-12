@@ -2,43 +2,84 @@ name: build-windows-exe
 
 on:
   push:
-    branches: ['**']  # build on any branch push
-  workflow_dispatch:   # allow manual runs from UI/CLI
+    branches: ['**']
+  workflow_dispatch:
 
 jobs:
   build:
     runs-on: windows-latest
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Python
+      - name: Set up Python 3.11
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11.9'
+          python-version: '3.11'
 
-      - name: Install deps
+      - name: Install dependencies
+        shell: pwsh
         run: |
           python -m pip install --upgrade pip
-          pip install -e .
-          pip install black ruff mypy pytest pyinstaller
+          if (Test-Path requirements.txt) { python -m pip install -r requirements.txt }
+          python -m pip install -e .
+          python -m pip install black ruff mypy pytest pyinstaller waitress pystray pillow
 
-      - name: Lint & typecheck & test
+      - name: Lint, typecheck, test
+        shell: pwsh
         run: |
           python -m black --check app agent algorithm dashboard tests
           python -m ruff check app agent algorithm dashboard tests
           python -m mypy app agent algorithm dashboard
           python -m pytest -q
 
-      - name: Build exe
+      - name: Build EXE with icon and bundle assets
+        shell: pwsh
         run: |
-          pyinstaller --noconfirm --onefile --name CustosEye.exe --console app/console.py
-          echo Version froze on %GITHUB_SHA%> dist/VERSION.txt
+          $iconArg = ""
+          if (Test-Path "assets/custoseye.ico") { $iconArg = "--icon assets/custoseye.ico" }
+          pyinstaller --noconfirm --onefile --name CustosEye.exe --console `
+            $iconArg `
+            --add-data "data;data" `
+            --add-data "assets;assets" `
+            app/console.py
+          echo $env:GITHUB_SHA > dist\VERSION.txt
+          Get-ChildItem dist
 
-      - name: Upload artifact
+      - name: Upload EXE artifact
         uses: actions/upload-artifact@v4
         with:
           name: CustosEye-exe
           path: |
             dist/CustosEye.exe
             dist/VERSION.txt
+          if-no-files-found: error
+
+      - name: Create release ZIP
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force release | Out-Null
+          Copy-Item dist/CustosEye.exe release/
+          Copy-Item dist/VERSION.txt release/
+          if (Test-Path README.md) { Copy-Item README.md release/ }
+          # include sample data so users can tweak
+          if (Test-Path data) {
+            New-Item -ItemType Directory -Force release\data | Out-Null
+            Copy-Item data\rules.json -Destination release\data\ -Force -ErrorAction SilentlyContinue
+            Copy-Item data\csc_weights.json -Destination release\data\ -Force -ErrorAction SilentlyContinue
+            Copy-Item data\integrity_targets.json -Destination release\data\ -Force -ErrorAction SilentlyContinue
+          }
+          if (Test-Path assets\favicon.ico) {
+            New-Item -ItemType Directory -Force release\assets | Out-Null
+            Copy-Item assets\favicon.ico -Destination release\assets\ -Force
+          }
+          Compress-Archive -Path release\* -DestinationPath CustosEye-Windows.zip -Force
+          Get-ChildItem CustosEye-Windows.zip
+
+      - name: Upload ZIP artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: CustosEye-zip
+          path: CustosEye-Windows.zip
+          if-no-files-found: error
