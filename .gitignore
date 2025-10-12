@@ -144,6 +144,8 @@ data/temp/
 # local trust database, optional autosaves, and reports
 data/trust_db.json
 data/integrity_targets_autosave.json
+# test fixtures (exclude from repo and builds)
+data/fixtures/
 artifacts/
 reports/
 *.json.backup

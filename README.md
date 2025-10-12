@@ -17,7 +17,7 @@ The console now just prints a welcome banner and the dashboard URL.
 ## Quick start
 
 ```bash
-# 1. Create a virtual environment
+# 1. Create a virtual environment (this is optional)
 python -m venv .venv
 . .venv/Scripts/activate
 
@@ -69,6 +69,7 @@ Uses multiple signals:
 - Path context
 - Name entropy
 - Signer validity
+- Windows Authenticode signature validation (signer subject and validity)
 - Network posture
 - Parent process behavior
 
@@ -132,6 +133,17 @@ pyinstaller --noconfirm --onefile --name CustosEye.exe --console `
 
 GitHub Actions also handles this build automatically and uploads artifacts:
 `CustosEye.exe`, `VERSION.txt`, and a ZIP with assets.
+
+### Continuous Integration
+
+GitHub Actions automatically builds, tests, and packages each release.  
+Each tagged build (e.g., `v0.2.1`) includes:
+- `CustosEye.exe`
+- `VERSION.txt`
+- `CustosEye-Windows.zip` (portable bundle)
+
+The workflow embeds both the version and commit hash into the dashboard’s “About” section.  
+It also computes the EXE’s SHA-256 and updates `data/self_suppress.json` automatically.
 
 ---
 
