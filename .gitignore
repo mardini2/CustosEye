@@ -7,7 +7,7 @@ __pycache__/
 *.py[cod]
 *$py.class
 
-# Virtual environments
+# virtual environments
 .venv/
 env/
 venv/
@@ -15,19 +15,19 @@ ENV/
 env.bak/
 venv.bak/
 
-# Environment / secret files
+# environment / secret files
 .env
 .env.*
 *.env
 .envrc
 
-# Byte-compiled / optimized / DLL files
+# byte-compiled / optimized / DLL files
 *.pyo
 *.pyd
 *.so
 *.dll
 
-# Unit test / coverage reports
+# unit test / coverage reports
 htmlcov/
 .tox/
 .nox/
@@ -42,7 +42,7 @@ coverage.xml
 .hypothesis/
 .pytest_cache/
 
-# ---- Build / Packaging ----
+# ---- build / packaging ----
 build/
 dist/
 *.egg-info/
@@ -103,7 +103,7 @@ dmypy.json
 .pylint.d/
 .ruff_cache/
 
-# ---- Packaging / Dependency Managers ----
+# ---- packaging / dependency managers ----
 # pipenv
 Pipfile.lock
 # poetry
@@ -112,8 +112,8 @@ poetry.lock
 *.conda
 *.yml
 *.yaml
-# pip-tools
-*.txt
+# pip-tools (do NOT ignore all *.txt globally)
+# requirements files should remain tracked
 
 # ---- Documentation ----
 docs/_build/
@@ -123,15 +123,15 @@ build/docs/
 *.docx
 *.odt
 
-# ---- PyInstaller Executables ----
-# Keep the source clean; artifacts rebuilt via CLI
+# ---- PyInstaller executables ----
+# keep the source clean; artifacts rebuilt via CI or local CLI
 dist/
 build/
 *.spec
 *.exe
 *.dll
 
-# ---- Temporary / Sandbox Data ----
+# ---- temporary / sandbox data ----
 tmp/
 temp/
 data/tmp/
@@ -140,29 +140,27 @@ data/temp/
 *.bak
 *.swp
 
-# ---- CustosEye Specific ----
-# Local trust database, test fixtures, generated JSONs
+# ---- CustosEye specific ----
+# local trust database, optional autosaves, and reports
 data/trust_db.json
 data/integrity_targets_autosave.json
 artifacts/
 reports/
 *.json.backup
 
-# ---- Misc ----
-# Archive and export files
+# ---- archives ----
 *.zip
 *.tar.gz
 *.tar
 *.7z
 *.rar
 
-# Ignore anything accidentally exported by IDEs
-*.bak
+# Misc
 *.old
 *.orig
+*.bak
 
-# GitHub Actions
+# ---- gitHub actions ----
+# keep workflows tracked
 !.github/
 !.github/workflows/
-.github/*
-!.github/workflows/**

@@ -97,8 +97,8 @@ class CSCTrustEngine:
         defaults: dict[str, Any] = {
             # base & thresholds
             "base": 70,
-            "trust_low_threshold": 40,
-            "trust_high_threshold": 75,
+            "trust_low_threshold": 45,
+            "trust_high_threshold": 79,
             # directory context
             "bonus_system_dir": 12,
             "bonus_program_files": 5,

@@ -4,7 +4,7 @@ on:
   push:
     branches: ['**']
     tags: ['v*.*.*']
-  workflow_dispatch:      # manual run still builds artifacts
+  workflow_dispatch:
 
 jobs:
   build:
@@ -38,47 +38,64 @@ jobs:
       - name: Build EXE with icon and bundle assets
         shell: pwsh
         run: |
-          $iconArg = ""
-          # prefer your app icon; fallback to favicon if that's what you have
-          if (Test-Path "assets\custoseye.ico") { $iconArg = "--icon assets\custoseye.ico" }
-          elseif (Test-Path "assets\favicon.ico") { $iconArg = "--icon assets\favicon.ico" }
+          $IconPath = "assets\favicon.ico"
+          $iconArgs = @()
+          if (Test-Path $IconPath) { $iconArgs = @('--icon', $IconPath) }
 
-          # Build by module name to avoid Windows path quirks
-          pyinstaller --noconfirm --onefile --name CustosEye --console `
-            $iconArg `
+          pyinstaller --noconfirm --onefile --name CustosEye.exe --console `
+            $iconArgs `
             --add-data "data;data" `
             --add-data "assets;assets" `
-            -m app.console
+            app/console.py
 
-          # Ensure dist exists and write a readable version file
-          New-Item -ItemType Directory -Force dist | Out-Null
-          $tag = if ("$env:GITHUB_REF" -like "refs/tags/*") { $env:GITHUB_REF -replace "refs/tags/","" } else { "dev" }
-          "$tag`n$env:GITHUB_SHA" | Out-File -Encoding utf8 dist\VERSION.txt
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+
+          if ($env:GITHUB_REF -like 'refs/tags/*') {
+            $version = $env:GITHUB_REF_NAME
+          } else {
+            $version = "dev-" + $env:GITHUB_SHA.Substring(0,7)
+          }
+          "$version`n$env:GITHUB_SHA" | Out-File -Encoding ascii dist\VERSION.txt
 
           Get-ChildItem dist
 
-      - name: Upload EXE artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: CustosEye-exe
-          path: |
-            dist/CustosEye.exe
-            dist/VERSION.txt
-          if-no-files-found: error
+      - name: Compute EXE SHA256 and stage suppress file
+        shell: pwsh
+        run: |
+          $exePath = "dist/CustosEye.exe"
+          if (!(Test-Path $exePath)) {
+            Write-Error "EXE not found at $exePath"
+            exit 1
+          }
+          $hash = (Get-FileHash $exePath -Algorithm SHA256).Hash
+          Write-Host "EXE SHA256: $hash"
+          # Save the hash alongside the build
+          $hash | Out-File -Encoding ascii dist\CUSTOSEYE_SHA256.txt
+
+          # If you keep a template suppress file, update a copy for the release
+          if (Test-Path "data\self_suppress.json") {
+            New-Item -ItemType Directory -Force release\data | Out-Null
+            $content = Get-Content data\self_suppress.json -Raw
+            $updated = $content -replace '(?<="sha256":\s*\[)[^\]]*', "`n    `"$hash`"`n  "
+            $updated | Out-File -Encoding utf8 release\data\self_suppress.json
+          }
 
       - name: Create release ZIP
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force release | Out-Null
-          Copy-Item dist\CustosEye.exe release\
-          Copy-Item dist\VERSION.txt release\
-          if (Test-Path README.md) { Copy-Item README.md release\ }
-          # include sample data so users can tweak
-          if (Test-Path data) {
+          Copy-Item dist/CustosEye.exe release/
+          Copy-Item dist/VERSION.txt release/
+          Copy-Item dist/CUSTOSEYE_SHA256.txt release/
+          if (Test-Path README.md) { Copy-Item README.md release/ }
+          # include configs (and updated suppress file if created above)
+          if (Test-Path data\rules.json) { Copy-Item data\rules.json -Destination release\data\ -Force }
+          if (Test-Path data\csc_weights.json) { Copy-Item data\csc_weights.json -Destination release\data\ -Force }
+          if (Test-Path data\integrity_targets.json) { Copy-Item data\integrity_targets.json -Destination release\data\ -Force }
+          if ((Test-Path data\self_suppress.json) -and !(Test-Path release\data\self_suppress.json)) {
+            # fallback: copy original if we didn't generate an updated one
             New-Item -ItemType Directory -Force release\data | Out-Null
-            Copy-Item data\rules.json -Destination release\data\ -Force -ErrorAction SilentlyContinue
-            Copy-Item data\csc_weights.json -Destination release\data\ -Force -ErrorAction SilentlyContinue
-            Copy-Item data\integrity_targets.json -Destination release\data\ -Force -ErrorAction SilentlyContinue
+            Copy-Item data\self_suppress.json -Destination release\data\ -Force
           }
           if (Test-Path assets\favicon.ico) {
             New-Item -ItemType Directory -Force release\assets | Out-Null
@@ -87,6 +104,16 @@ jobs:
           Compress-Archive -Path release\* -DestinationPath CustosEye-Windows.zip -Force
           Get-ChildItem CustosEye-Windows.zip
 
+      - name: Upload EXE artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: CustosEye-exe
+          path: |
+            dist/CustosEye.exe
+            dist/VERSION.txt
+            dist/CUSTOSEYE_SHA256.txt
+          if-no-files-found: error
+
       - name: Upload ZIP artifact
         uses: actions/upload-artifact@v4
         with:
@@ -94,15 +121,13 @@ jobs:
           path: CustosEye-Windows.zip
           if-no-files-found: error
 
-      # auto-publish a GitHub Release if this run was triggered by a tag (like v0.2.0)
-      - name: Publish GitHub Release
+      - name: Create GitHub Release (tag push only)
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          name: CustosEye ${{ github.ref_name }}
           files: |
+            CustosEye-Windows.zip
             dist/CustosEye.exe
             dist/VERSION.txt
-            CustosEye-Windows.zip
-          draft: false
-          prerelease: false
+            dist/CUSTOSEYE_SHA256.txt
+          generate_release_notes: true

@@ -11,12 +11,22 @@ from __future__ import annotations
 
 import hashlib
 import os
+import sys
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
 import psutil
+
+# signer helper (typed shim; safe if missing)
+GetSigFn = Callable[[str], dict[str, Any] | None]
+try:
+    from agent.win_sign import get_signature_info as _get_signature_info  # type: ignore
+
+    get_signature_info: GetSigFn | None = _get_signature_info
+except Exception:
+    get_signature_info = None  # type: ignore[assignment]
 
 PublishFn = Callable[[dict[str, Any]], None]
 
@@ -51,13 +61,14 @@ class _Hasher:
 
 
 class ProcessMonitor:
-    """polls Windows processes and publishes normalized events."""
+    """polls Windows processes and publishes normalized events"""
 
     def __init__(self, publish: PublishFn, interval_sec: float = 3.0) -> None:
         self.publish = publish
         self.interval = interval_sec
         self._hasher = _Hasher()
         self._seen: dict[int, float] = {}
+        self._sig_cache: dict[tuple[str, float], tuple[bool, str | None]] = {}
 
     def _proc_event(self, p: psutil.Process) -> dict[str, Any]:
         # gather fields with resilience to disappearing processes
@@ -78,10 +89,29 @@ class ProcessMonitor:
                 c.laddr.port for c in conns if c.status == psutil.CONN_LISTEN
             ]
             info["remote_addrs"] = [f"{c.raddr.ip}:{c.raddr.port}" for c in conns if c.raddr]
+
             # hash if we have an exe
             if info.get("exe"):
                 digest = self._hasher.sha256_file(info["exe"])
                 info["sha256"] = digest
+
+            # signer (Windows only), mypy-safe optional callable
+            exe = info.get("exe")
+            if (
+                sys.platform == "win32"
+                and exe
+                and os.path.exists(exe)
+                and get_signature_info is not None
+            ):
+                try:
+                    sig = cast(GetSigFn, get_signature_info)(exe)
+                    if sig:
+                        info["signer_valid"] = bool(sig.get("valid", False))
+                        subj = sig.get("subject")
+                        if subj:
+                            info["signer_subject"] = subj
+                except Exception:
+                    pass  # never break polling
         except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
             info["status"] = "gone"
         return info

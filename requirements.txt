@@ -1,0 +1,11 @@
+flask==3.0.0
+waitress==3.0.2
+psutil==5.9.8
+pyinstaller==6.6.0
+
+# test + lint
+pytest==8.2.0
+pytest-cov==5.0.0
+black==24.8.0
+ruff==0.6.8
+mypy==1.11.1

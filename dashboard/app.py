@@ -72,6 +72,25 @@ CSC_WEIGHTS_PATH = str((BASE_DIR / "data" / "csc_weights.json").resolve())
 CSC_DB_PATH = str((BASE_DIR / "data" / "trust_db.json").resolve())
 INTEGRITY_TARGETS_PATH = str((BASE_DIR / "data" / "integrity_targets.json").resolve())
 
+SELF_SUPPRESS_PATH = str((BASE_DIR / "data" / "self_suppress.json").resolve())
+
+
+def _load_self_suppress() -> dict[str, set[str]]:
+    try:
+        with open(SELF_SUPPRESS_PATH, encoding="utf-8") as f:
+            obj = json.load(f) or {}
+    except Exception:
+        obj = {}
+    # normalize to lowercase sets
+    return {
+        "names": {s.lower() for s in obj.get("names", ["CustosEye.exe"])},
+        "exes": {s.lower() for s in obj.get("exes", [])},
+        "sha256": {s.lower() for s in obj.get("sha256", [])},
+    }
+
+
+SELF_SUPPRESS = _load_self_suppress()
+
 _rules = RulesEngine(path=RULES_PATH)
 _rules_mtime = os.path.getmtime(RULES_PATH) if os.path.exists(RULES_PATH) else 0.0
 _csc = CSCTrustEngine(weights_path=CSC_WEIGHTS_PATH, db_path=CSC_DB_PATH)
@@ -565,11 +584,18 @@ HTML = """
       }
     });
 
-    //poller: only live (tree loads on demand to preserve expand/collapse)
-    state.timer = setInterval(() => {
-      if (state.tab==='live') fetchData();
-    }, 1500);
-    fetchData();
+    // poller: keep draining regardless of tab; render only when on "live"
+    function tick() {
+      if (state.paused) return;
+      if (state.tab === 'live') {
+        fetchData(); // pulls & renders
+      } else {
+        // keep the backend draining without pulling the full payload
+        fetch('/api/ping').catch(()=>{});
+      }
+    }
+    state.timer = setInterval(tick, 1500);
+    tick(); // kick once at load
   </script>
 </body>
 </html>
@@ -738,12 +764,26 @@ def build_app(event_bus) -> Flask:
                 ev["reason"] = decision.get("reason", ev.get("reason"))
 
             if ev.get("source") == "process":
+                # --- suppress our own process(es) before any scoring or tree updates ---
+                nm = str(ev.get("name") or "").lower()
+                ex = str(ev.get("exe") or "").lower()
+                h = str(ev.get("sha256") or "").lower()
+                if (
+                    (nm and nm in SELF_SUPPRESS["names"])
+                    or (ex and ex in SELF_SUPPRESS["exes"])
+                    or (h and h in SELF_SUPPRESS["sha256"])
+                ):
+                    continue  # skip buffering and tree indexing entirely
+
+                # trust evaluation
                 t = _csc.evaluate(ev)
                 ev["trust"], ev["trust_label"], ev["trust_reasons"] = (
                     t["trust"],
                     t["label"],
                     t["reasons"],
                 )
+
+                # process tree index
                 pid = ev.get("pid")
                 if isinstance(pid, int):
                     PROC_INDEX[pid] = {
@@ -788,6 +828,12 @@ def build_app(event_bus) -> Flask:
                 continue
             data.append(ev)
         return jsonify(data)
+
+    @app.get("/api/ping")
+    def ping():
+        """lightweight drain trigger so background ingestion continues on any tab"""
+        n = drain_into_buffer()
+        return jsonify({"ok": True, "drained": n, "buffer": len(BUFFER)})
 
     @app.get("/api/export")
     def export_current():
