@@ -83,24 +83,33 @@ jobs:
       - name: Create release ZIP
         shell: pwsh
         run: |
+          # ensure release folders exist
           New-Item -ItemType Directory -Force release | Out-Null
-          Copy-Item dist/CustosEye.exe release/
-          Copy-Item dist/VERSION.txt release/
-          Copy-Item dist/CUSTOSEYE_SHA256.txt release/
-          if (Test-Path README.md) { Copy-Item README.md release/ }
-          # include configs (and updated suppress file if created above)
-          if (Test-Path data\rules.json) { Copy-Item data\rules.json -Destination release\data\ -Force }
-          if (Test-Path data\csc_weights.json) { Copy-Item data\csc_weights.json -Destination release\data\ -Force }
-          if (Test-Path data\integrity_targets.json) { Copy-Item data\integrity_targets.json -Destination release\data\ -Force }
-          if ((Test-Path data\self_suppress.json) -and !(Test-Path release\data\self_suppress.json)) {
-            # fallback: copy original if we didn't generate an updated one
-            New-Item -ItemType Directory -Force release\data | Out-Null
-            Copy-Item data\self_suppress.json -Destination release\data\ -Force
-          }
-          if (Test-Path assets\favicon.ico) {
-            New-Item -ItemType Directory -Force release\assets | Out-Null
-            Copy-Item assets\favicon.ico -Destination release\assets\ -Force
-          }
+          New-Item -ItemType Directory -Force release\data | Out-Null
+          New-Item -ItemType Directory -Force release\assets | Out-Null
+
+          # ship a clean default: no pre-watched files
+          Set-Content -Encoding ascii data\integrity_targets.json "[]"
+
+          # binaries + meta
+          if (Test-Path dist\CustosEye.exe) { Copy-Item dist\CustosEye.exe release\ }
+          if (Test-Path dist\VERSION.txt)   { Copy-Item dist\VERSION.txt   release\ }
+          if (Test-Path dist\CUSTOSEYE_SHA256.txt) { Copy-Item dist\CUSTOSEYE_SHA256.txt release\ }
+          if (Test-Path README.md) { Copy-Item README.md release\ }
+
+          # configs
+          if (Test-Path data\rules.json)         { Copy-Item data\rules.json          -Destination release\data\ -Force }
+          if (Test-Path data\csc_weights.json)   { Copy-Item data\csc_weights.json    -Destination release\data\ -Force }
+          # copy the just-forced-empty targets file
+          Copy-Item data\integrity_targets.json  -Destination release\data\ -Force
+
+          # optional self-suppress list if present (lets you hide our own EXE/process hash)
+          if (Test-Path data\self_suppress.json) { Copy-Item data\self_suppress.json  -Destination release\data\ -Force }
+
+          # assets (icon)
+          if (Test-Path assets\favicon.ico)      { Copy-Item assets\favicon.ico       -Destination release\assets\ -Force }
+
+          # zip it up
           Compress-Archive -Path release\* -DestinationPath CustosEye-Windows.zip -Force
           Get-ChildItem CustosEye-Windows.zip
 

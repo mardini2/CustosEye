@@ -1,17 +1,1 @@
-[
-  {
-    "path": "%WINDIR%/System32/notepad.exe",
-    "sha256": "1552F6A579B77B61460DF56CB4B2CE0A34FE96B6176829D7916275B806EDC2BB",
-    "rule": "sha256"
-  },
-  {
-    "path": "data/fixtures/ok.txt",
-    "sha256": "654B93F61054E4CE90ED203BB8D556A6200D5F906CF3ECA0620738D6DC18CBED",
-    "rule": "sha256"
-  },
-  {
-    "path": "data/fixtures/watch_me.txt",
-    "sha256": "0FD657972178F854136164ADD36B8CF10D495934797A9514BD5EEBAF5565CE9F",
-    "rule": "sha256"
-  }
-]
+[]
