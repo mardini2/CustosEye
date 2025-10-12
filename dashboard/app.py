@@ -16,15 +16,17 @@ Highlights (this build):
 from __future__ import annotations
 
 import csv
+import hashlib
 import io
 import json
 import os
+import sys
 import threading
 import time
 from collections import deque
 from collections.abc import Iterator
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from flask import (
     Flask,
@@ -68,6 +70,7 @@ BASE_DIR = _resolve_base_dir()
 RULES_PATH = str((BASE_DIR / "data" / "rules.json").resolve())
 CSC_WEIGHTS_PATH = str((BASE_DIR / "data" / "csc_weights.json").resolve())
 CSC_DB_PATH = str((BASE_DIR / "data" / "trust_db.json").resolve())
+INTEGRITY_TARGETS_PATH = str((BASE_DIR / "data" / "integrity_targets.json").resolve())
 
 _rules = RulesEngine(path=RULES_PATH)
 _rules_mtime = os.path.getmtime(RULES_PATH) if os.path.exists(RULES_PATH) else 0.0
@@ -93,7 +96,6 @@ PROC_INDEX: dict[int, dict[str, Any]] = {}
 DRAIN_LIMIT_PER_CALL = 300
 DRAIN_DEADLINE_SEC = 0.25
 
-# ---------------- HTML UI ----------------
 HTML = """
 <!doctype html>
 <html lang="en">
@@ -112,6 +114,7 @@ HTML = """
       --accent:#7cc5ff; --ok:#1db954; --border:#1f2a36; --row:#10161e; --rowAlt:#0d131a; --input:#0f141b;
       --tab:#0f151d; --tabOn:#1b2634;
       --trust-low:#c03d3d; --trust-medium:#c27b00; --trust-high:#1db954;
+      --bad:#c03d3d; --warn:#e6a700; --good:#1db954;
     }
     @media (prefers-color-scheme: light) {
       :root {
@@ -153,7 +156,7 @@ HTML = """
     .count { font-weight:600; }
     .nowrap { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 
-    /* Process tree */
+    /* process tree */
     .tree { margin-top:12px; }
     .treebar { display:flex; gap:8px; align-items:center; margin-bottom:8px; }
     .pill { display:inline-block; padding:2px 6px; border-radius:999px; border:1px solid var(--border); font-size:11px; }
@@ -165,6 +168,19 @@ HTML = """
     summary::-webkit-details-marker { display:none; }
     .caret { display:inline-block; width:0; height:0; border-top:6px solid transparent; border-bottom:6px solid transparent; border-left:6px solid var(--muted); margin-right:6px; transform: translateY(1px) rotate(-90deg); transition: transform .15s ease; }
     details[open] > summary .caret { transform: translateY(1px) rotate(0deg); }
+
+    /* integrity tab */
+    .grid { display:grid; gap:10px; grid-template-columns: 1fr; }
+    .card { background:var(--panel); border:1px solid var(--border); border-radius:12px; padding:12px; }
+    .tbl { width:100%; border-collapse: collapse; }
+    .tbl th, .tbl td { padding:8px; border-bottom:1px solid var(--border); text-align:left; font-size:12px; }
+    .badge { display:inline-block; padding:2px 8px; border-radius:999px; border:1px solid var(--border); font-size:11px; }
+    .badge.ok { color:var(--good); border-color: color-mix(in oklab, var(--good) 40%, var(--border)); }
+    .badge.warn { color:var(--warn); border-color: color-mix(in oklab, var(--warn) 40%, var(--border)); }
+    .badge.bad { color:var(--bad); border-color: color-mix(in oklab, var(--bad) 40%, var(--border)); }
+    .row-actions { display:flex; gap:8px; }
+    .small { font-size:11px; color:var(--muted); }
+    .hint { color:var(--muted); font-size:12px; }
   </style>
 </head>
 <body>
@@ -178,6 +194,7 @@ HTML = """
       <div class="tabs">
         <div class="tab on" data-tab="live">Live Events</div>
         <div class="tab" data-tab="tree">Process Tree</div>
+        <div class="tab" data-tab="integrity">Integrity</div>
         <div class="tab" data-tab="about">About</div>
       </div>
 
@@ -192,6 +209,42 @@ HTML = """
           <button class="btn" id="refresh">Refresh</button>
           <button class="btn" id="export">Export CSV</button>
           <div class="muted">Showing <span id="count" class="count">0</span> / <span id="total" class="count">0</span></div>
+        </div>
+      </div>
+
+      <!-- Integrity bar -->
+      <div class="panel" id="bar-integrity" style="display:none">
+        <div class="grid">
+          <div class="card">
+            <div class="controls" style="gap:8px">
+              <button class="btn" id="i-browse">Browse (Windows)</button>
+              <input id="i-path" class="input" placeholder="File path (or use Browse)" style="min-width:360px" />
+              <select id="i-rule" class="input" style="min-width:160px">
+                <option value="sha256">Exact SHA-256</option>
+                <option value="mtime+size">mtime + size</option>
+              </select>
+              <input id="i-note" class="input" placeholder="Note (optional)" style="min-width:200px" />
+              <button class="btn" id="i-hash">Hash Now</button>
+              <button class="btn" id="i-add">Save</button>
+              <span class="hint" id="i-hint"></span>
+            </div>
+            <div class="small" id="i-preview"></div>
+          </div>
+          <div class="card">
+            <table class="tbl" id="i-table">
+              <thead>
+                <tr>
+                  <th>Path</th>
+                  <th>Rule</th>
+                  <th>Baseline</th>
+                  <th>Last result</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody id="i-tbody"></tbody>
+            </table>
+            <div class="hint">Targets are stored in <span class="mono">data/integrity_targets.json</span> and are hot-reloaded by the IntegrityChecker.</div>
+          </div>
         </div>
       </div>
     </div>
@@ -218,27 +271,50 @@ HTML = """
   </main>
 
   <script>
-    const state = { tab:"live", levels:{info:false,warning:true,critical:true}, paused:false, q:"", timer:null, treeQ:"" };
+    const state = { tab:"live", levels:{info:true,warning:true,critical:true}, paused:false, q:"", timer:null, treeQ:"" };
+    // sync initial from buttons (prevents drift)
+    document.querySelectorAll('#bar-live .chip[data-level]').forEach(btn => {
+      const lvl = btn.getAttribute('data-level');
+      const on = btn.getAttribute('data-on') === 'true';
+      state.levels[lvl] = on;
+    });
+
     const listEl = document.getElementById('live'), searchEl = document.getElementById('search');
     const countEl = document.getElementById('count'), totalEl = document.getElementById('total');
     const pauseBtn = document.getElementById('pause'), pauseText = document.getElementById('pauseText');
     const treeEl = document.getElementById('treeRoot'), aboutEl = document.getElementById('about');
 
-    // Tabs
+    //integrity refs
+    const iBar = document.getElementById('bar-integrity');
+    const iPath = document.getElementById('i-path');
+    const iRule = document.getElementById('i-rule');
+    const iNote = document.getElementById('i-note');
+    const iBrowse = document.getElementById('i-browse');
+    const iHash = document.getElementById('i-hash');
+    const iAdd = document.getElementById('i-add');
+    const iHint = document.getElementById('i-hint');
+    const iPreview = document.getElementById('i-preview');
+    const iTbody = document.getElementById('i-tbody');
+
+    //tabs
     document.querySelectorAll('.tab').forEach(t => {
       t.addEventListener('click', () => {
         document.querySelectorAll('.tab').forEach(x => x.classList.remove('on'));
         t.classList.add('on'); state.tab = t.getAttribute('data-tab');
+
         document.getElementById('live').style.display = (state.tab==='live')?'':'none';
         document.getElementById('bar-live').style.display = (state.tab==='live')?'':'none';
         document.getElementById('tree').style.display = (state.tab==='tree')?'':'none';
+        iBar.style.display = (state.tab==='integrity')?'':'none';
         aboutEl.style.display = (state.tab==='about')?'':'none';
-        if (state.tab==='tree') fetchTree();   // fetch once on enter
+
+        if (state.tab==='tree') fetchTree();
         if (state.tab==='about') fetchAbout();
+        if (state.tab==='integrity') loadTargets();
       });
     });
 
-    // Live filters
+    //live filters
     document.querySelectorAll('#bar-live .chip[data-level]').forEach(btn => {
       btn.addEventListener('click', () => {
         const lvl = btn.getAttribute('data-level');
@@ -257,7 +333,7 @@ HTML = """
     searchEl.addEventListener('input', (e) => { state.q = e.target.value.toLowerCase().trim(); render(window.__data || []); });
     document.getElementById('refresh').addEventListener('click', fetchData);
 
-    // Export live
+    //export live
     document.getElementById('export').addEventListener('click', () => {
       const includeInfo = state.levels.info ? '1' : '0';
       const lvls = Object.entries(state.levels).filter(([k,v]) => v).map(([k])=>k).join(',');
@@ -265,20 +341,26 @@ HTML = """
       window.location.href = url;
     });
 
-    // Live list rendering
+    //live list rendering
     function row(ev) {
       const lvl = (ev.level || 'info').toLowerCase();
       const reason = ev.reason || 'event';
       const src = ev.source || '';
       const pid = ev.pid || '';
       const name = ev.name || '';
+      const path = ev.path || '';
       const ts = ev.ts ? new Date(ev.ts * 1000).toLocaleTimeString() : '';
       const trust = (typeof ev.trust === 'number') ? ` | trust=${ev.trust}(${ev.trust_label || ''})` : '';
+
+      const ident = (src === 'integrity')
+        ? `path=${path || name}`     // show file path for integrity events
+        : `pid=${pid} name=${name}`;
+
       return `
         <div class="row">
           <div class="nowrap"><span class="lvl ${lvl}">${lvl.toUpperCase()}</span></div>
           <div class="mono muted nowrap">${ts}</div>
-          <div class="mono nowrap">${reason} | source=${src} pid=${pid} name=${name}${trust}</div>
+          <div class="mono nowrap">${reason} | source=${src} ${ident}${trust}</div>
         </div>
       `;
     }
@@ -287,7 +369,7 @@ HTML = """
       const byLevel = data.filter(ev => state.levels[(ev.level || 'info').toLowerCase()]);
       const q = state.q;
       const byQuery = q ? byLevel.filter(ev => {
-        const s = (ev.reason || '') + ' ' + (ev.source || '') + ' ' + (ev.name || '') + ' ' + (ev.pid || '');
+        const s = (ev.reason || '') + ' ' + (ev.source || '') + ' ' + (ev.name || '') + ' ' + (ev.pid || '') + ' ' + (ev.path || '');
         return s.toLowerCase().includes(q);
       }) : byLevel;
       countEl.textContent = byQuery.length; totalEl.textContent = data.length;
@@ -304,7 +386,7 @@ HTML = """
       } catch (e) { /* ignore */ }
     }
 
-    // ---------------- Process tree ----------------
+    // ---------------- process tree ----------------
     const treeSearch = document.getElementById('treeSearch');
     document.getElementById('treeRefresh').addEventListener('click', fetchTree);
     document.getElementById('treeExpand').addEventListener('click', () => toggleAll(true));
@@ -369,7 +451,7 @@ HTML = """
       tmp.select(); document.execCommand('copy'); document.body.removeChild(tmp);
     }
 
-    // ---------------- About ----------------
+    // ---------------- about ----------------
     async function fetchAbout() {
       try {
         const res = await fetch('/api/about'); const a = await res.json();
@@ -383,7 +465,107 @@ HTML = """
       } catch (e) {}
     }
 
-    // poller: only live (tree loads on demand to preserve expand/collapse)
+    // ---------------- integrity tab logic ----------------
+    async function loadTargets() {
+      try {
+        const res = await fetch('/api/integrity/targets');
+        const data = await res.json();
+        renderTargets(data);
+      } catch (e) {
+        iTbody.innerHTML = `<tr><td colspan="5" class="small">Failed to load targets</td></tr>`;
+      }
+    }
+
+    function renderTargets(list) {
+      if (!Array.isArray(list) || list.length === 0) {
+        iTbody.innerHTML = `<tr><td colspan="5" class="small">No files being watched yet.</td></tr>`;
+        return;
+      }
+      iTbody.innerHTML = list.map(row => {
+        const status = row.last_result || '';
+        const badgeCls = status.startsWith('OK') ? 'ok' : (status ? 'bad' : '');
+        const baseline = row.rule === 'sha256'
+          ? (row.sha256 || '')
+          : ((row.mtime && row.size) ? `mtime=${row.mtime} size=${row.size}` : '(none)');
+        return `
+          <tr>
+            <td class="mono">${(row.path||'')}</td>
+            <td>${(row.rule||'sha256')}</td>
+            <td class="mono">${baseline}</td>
+            <td>${status ? `<span class="badge ${badgeCls}">${status}</span>` : ''}</td>
+            <td class="row-actions">
+              <button class="btn" data-act="rehash" data-path="${encodeURIComponent(row.path||'')}">Re-hash</button>
+              <button class="btn" data-act="remove" data-path="${encodeURIComponent(row.path||'')}">Remove</button>
+            </td>
+          </tr>`;
+      }).join('');
+      //wire row actions
+      iTbody.querySelectorAll('button[data-act="remove"]').forEach(btn => {
+        btn.addEventListener('click', async () => {
+          const path = decodeURIComponent(btn.getAttribute('data-path'));
+          if (!confirm('Remove from watch list?')) return;
+          await fetch('/api/integrity/targets', { method:'DELETE', headers:{'Content-Type':'application/json'}, body: JSON.stringify({path}) });
+          loadTargets();
+        });
+      });
+      iTbody.querySelectorAll('button[data-act="rehash"]').forEach(btn => {
+        btn.addEventListener('click', async () => {
+          const path = decodeURIComponent(btn.getAttribute('data-path'));
+          const r = await fetch('/api/integrity/hash', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({path}) });
+          const j = await r.json();
+          alert((j.sha256 ? `SHA-256:\n${j.sha256}` : 'No hash') + (j.error? `\n\nError: ${j.error}`:''));
+          // refresh table to reflect last_result / baseline promotion
+          loadTargets();
+        });
+      });
+    }
+
+    iBrowse.addEventListener('click', async () => {
+      iHint.textContent = 'Opening Windows file dialog...';
+      try {
+        const r = await fetch('/api/integrity/browse', { method:'POST' });
+        const j = await r.json();
+        if (j.path) { iPath.value = j.path; iHint.textContent = ''; } else { iHint.textContent = 'No file selected'; }
+      } catch(e) { iHint.textContent = 'Browse not available'; }
+    });
+
+    iHash.addEventListener('click', async () => {
+      const path = iPath.value.trim();
+      if (!path) { iHint.textContent = 'Pick a file first'; return; }
+      iHint.textContent = 'Hashing...';
+      const r = await fetch('/api/integrity/hash', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({path}) });
+      const j = await r.json();
+      if (j.sha256) {
+        iPreview.textContent = `SHA-256: ${j.sha256}  |  size=${j.size}  |  mtime=${j.mtime}`;
+        if (iRule.value === 'sha256') {
+          // pre-fill baseline preview; we store baseline server-side on Save
+        }
+        iHint.textContent = 'Preview ready';
+      } else {
+        iPreview.textContent = '';
+        iHint.textContent = j.error || 'Failed to hash';
+      }
+    });
+
+    iAdd.addEventListener('click', async () => {
+      const path = iPath.value.trim();
+      if (!path) { iHint.textContent = 'Pick a file first'; return; }
+      const rule = iRule.value;
+      const note = iNote.value.trim();
+      iHint.textContent = 'Saving...';
+      const r = await fetch('/api/integrity/targets', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({path, rule, note}) });
+      const j = await r.json();
+      if (j.ok) {
+        iHint.textContent = 'Saved';
+        iPreview.textContent = '';
+        iNote.value = '';
+        loadTargets();
+      } else {
+        iHint.textContent = j.error || 'Failed to save';
+      }
+    });
+
+    //poller: only live (tree loads on demand to preserve expand/collapse)
     state.timer = setInterval(() => {
       if (state.tab==='live') fetchData();
     }, 1500);
@@ -408,6 +590,88 @@ def _bus_iterator(bus: Any) -> Iterator[dict[str, Any]]:
         it = bus.iter_events()
     # mypy: convince this is an Iterator[dict[str, Any]]
     return it  # type: ignore[return-value]
+
+
+def _read_integrity_targets() -> list[dict[str, Any]]:
+    """
+    back-compat:
+      - if file is a JSON array: return it.
+      - if file is an object with "targets": return that list.
+      - if missing/unreadable: return [].
+    also augments each row with "rule" (default sha256) and "last_result" if present.
+    """
+    try:
+        with open(INTEGRITY_TARGETS_PATH, encoding="utf-8") as f:
+            data = json.load(f)
+        if isinstance(data, list):
+            rows = cast(list[dict[str, Any]], data)
+        elif isinstance(data, dict) and isinstance(data.get("targets"), list):
+            rows = cast(list[dict[str, Any]], data["targets"])
+        else:
+            rows = []
+    except Exception:
+        rows = []
+    # normalize fields for UI
+    norm: list[dict[str, Any]] = []
+    for r in rows:
+        if not isinstance(r, dict):
+            continue
+        rr = dict(r)
+        rr.setdefault("rule", "sha256" if rr.get("sha256") else "mtime+size")
+        # last_result is not persisted by us; my agent may add it to events only.
+        norm.append(rr)
+    return norm
+
+
+def _write_integrity_targets(rows: list[dict[str, Any]]) -> None:
+    """
+    persist as a plain array to keep compatibility with your current file.
+    """
+    try:
+        Path(INTEGRITY_TARGETS_PATH).parent.mkdir(parents=True, exist_ok=True)
+        with open(INTEGRITY_TARGETS_PATH, "w", encoding="utf-8") as f:
+            json.dump(rows, f, indent=2, ensure_ascii=False)
+    except Exception:
+        pass
+
+
+def _expand_user_vars(p: str) -> str:
+    # expand %VARS% and ~; keep relative paths as-is (agent resolves relative to BASE_DIR currently)
+    try:
+        p = os.path.expandvars(p)
+        p = os.path.expanduser(p)
+    except Exception:
+        pass
+    return p
+
+
+def _sha256_file(path: str) -> dict[str, Any]:
+    # normalize (env vars, ~, quotes) but keep original text in "path"
+    p = _norm_user_path(path)
+    out: dict[str, Any] = {"path": path}
+    try:
+        st = os.stat(p)
+        out["size"] = st.st_size
+        out["mtime"] = int(st.st_mtime)
+    except Exception as e:
+        out["error"] = f"stat failed: {e}"
+        return out
+    try:
+        h = hashlib.sha256()
+        with open(p, "rb") as f:
+            for chunk in iter(lambda: f.read(1024 * 1024), b""):
+                h.update(chunk)
+        out["sha256"] = h.hexdigest().upper()
+    except Exception as e:
+        out["error"] = f"hash failed: {e}"
+    return out
+
+
+def _norm_user_path(p: str) -> str:
+    # normalize, expand env vars (~, %WINDIR%), strip quotes, keep Unicode
+    p = (p or "").strip().strip('"')
+    p = os.path.expandvars(os.path.expanduser(p))
+    return str(Path(p))
 
 
 # ---------------- Flask app build ----------------
@@ -493,6 +757,15 @@ def build_app(event_bus) -> Flask:
             if ev.get("source") == "network" and not (ev.get("pid") or ev.get("name")):
                 continue
 
+            # if the event is from integrity, make sure we have a display name
+            if ev.get("source") == "integrity":
+                p = ev.get("path") or ev.get("file")
+                if p and not ev.get("name"):
+                    try:
+                        ev["name"] = os.path.basename(str(p))
+                    except Exception:
+                        ev["name"] = str(p)
+
             BUFFER.append(ev)
             drained += 1
 
@@ -560,7 +833,7 @@ def build_app(event_bus) -> Flask:
             return resp
 
         # common tabular cols
-        cols = ["ts", "level", "reason", "source", "pid", "name", "trust", "trust_label"]
+        cols = ["ts", "level", "reason", "source", "pid", "name", "path", "trust", "trust_label"]
 
         # XLSX
         if fmt == "xlsx":
@@ -747,6 +1020,176 @@ def build_app(event_bus) -> Flask:
             except Exception:
                 pass
         return jsonify({"version": version, "build": build, "buffer_max": BUFFER_MAX})
+
+        # ---------------- integrity endpoints ----------------
+
+    @app.get("/api/integrity/targets")
+    def api_integrity_targets_get():
+        # return normalized list
+        return jsonify(_read_integrity_targets())
+
+    @app.post("/api/integrity/targets")
+    def api_integrity_targets_post():
+        """
+        body: { path, rule, note? }
+        rule: "sha256" | "mtime+size"
+        behavior: if rule == "sha256" and no baseline stored yet, auto-hash now to set baseline.
+        """
+        try:
+            body = request.get_json(force=True) or {}
+            path = str(body.get("path") or "").strip()
+            rule = str(body.get("rule") or "sha256").strip().lower()
+            note = str(body.get("note") or "").strip()
+            if not path:
+                return jsonify({"ok": False, "error": "missing path"}), 400
+            if rule not in ("sha256", "mtime+size"):
+                return jsonify({"ok": False, "error": "invalid rule"}), 400
+
+            rows = _read_integrity_targets()
+
+            # update or insert
+            target = None
+            for r in rows:
+                if str(r.get("path") or "").lower() == path.lower():
+                    target = r
+                    break
+            if target is None:
+                target = {"path": path, "rule": rule}
+                if note:
+                    target["note"] = note
+                rows.append(target)
+            else:
+                target["path"] = path  # keep users original text (env vars allowed)
+                target["rule"] = rule
+                if note:
+                    target["note"] = note
+
+            # auto-baseline for sha256 if missing
+            if rule == "sha256" and not target.get("sha256"):
+                info = _sha256_file(path)
+                if info.get("sha256"):
+                    target["sha256"] = info["sha256"]
+                    target["last_result"] = "OK (baseline set)"
+                else:
+                    # leave baseline empty; UI can re-hash later
+                    target["last_result"] = f"ERR: {info.get('error', 'hash failed')}"
+
+            # auto-baseline for mtime+size if missing
+            if rule == "mtime+size" and (not target.get("mtime") or not target.get("size")):
+                try:
+                    st = os.stat(_norm_user_path(path))
+                    target["mtime"] = int(st.st_mtime)
+                    target["size"] = int(st.st_size)
+                    target["last_result"] = "OK (baseline set)"
+                except Exception as e:
+                    target["last_result"] = f"ERR: {e}"
+
+            _write_integrity_targets(rows)
+            return jsonify({"ok": True})
+
+        except Exception as e:
+            return jsonify({"ok": False, "error": str(e)}), 500
+
+    @app.delete("/api/integrity/targets")
+    def api_integrity_targets_delete():
+        try:
+            body = request.get_json(force=True) or {}
+            path = str(body.get("path") or "").strip()
+            if not path:
+                return jsonify({"ok": False, "error": "missing path"}), 400
+            rows = _read_integrity_targets()
+            rows2 = [r for r in rows if str(r.get("path") or "").lower() != path.lower()]
+            _write_integrity_targets(rows2)
+            return jsonify({"ok": True})
+        except Exception as e:
+            return jsonify({"ok": False, "error": str(e)}), 500
+
+    @app.post("/api/integrity/hash")
+    def api_integrity_hash():
+        """
+        computes SHA-256 and updates stored target:
+          - sets last_result to OK/CHANGED/ERR
+          - if baseline missing and rule == sha256, promote this hash to baseline
+        """
+        try:
+            body = request.get_json(force=True) or {}
+            path = str(body.get("path") or "").strip()
+            if not path:
+                return jsonify({"error": "missing path"}), 400
+
+            info = _sha256_file(path)  # handles normalization internally
+            rows = _read_integrity_targets()
+
+            # update corresponding row if present
+            changed = False
+            for r in rows:
+                if str(r.get("path") or "").lower() == path.lower():
+                    rule = str(r.get("rule") or "sha256").lower()
+                    baseline = str(r.get("sha256") or "")
+                    if "error" in info:
+                        r["last_result"] = f"ERR: {info['error']}"
+                    else:
+                        new_hash = info.get("sha256", "")
+                        if rule == "sha256":
+                            if not baseline:
+                                r["sha256"] = new_hash
+                                r["last_result"] = "OK (baseline set)"
+                            else:
+                                r["last_result"] = "OK" if baseline == new_hash else "CHANGED"
+                        else:
+                            # mtime+size rule — compare against baseline (or set it if missing)
+                            try:
+                                st = os.stat(_norm_user_path(path))
+                                cur_mtime = int(st.st_mtime)
+                                cur_size = int(st.st_size)
+                                if not r.get("mtime") or not r.get("size"):
+                                    r["mtime"], r["size"] = cur_mtime, cur_size
+                                    r["last_result"] = "OK (baseline set)"
+                                else:
+                                    r["last_result"] = (
+                                        "OK"
+                                        if (r["mtime"] == cur_mtime and r["size"] == cur_size)
+                                        else "CHANGED"
+                                    )
+                            except Exception as e:
+                                r["last_result"] = f"ERR: {e}"
+                    changed = True
+                    break
+
+            if changed:
+                _write_integrity_targets(rows)
+
+            # return raw info for the alert preview
+            return jsonify(info)
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    @app.post("/api/integrity/browse")
+    def api_integrity_browse():
+        """
+        windows-only file picker via tkinter. returns {"path": "..."} or {} if cancelled.
+        we keep it very small and guarded. it will no-op on non-Windows.
+        """
+        try:
+            if sys.platform != "win32":
+                return jsonify({"error": "browse supported on Windows only"}), 400
+            # late imports to avoid importing Tk on non-Windows
+            import tkinter as _tk  # type: ignore
+            from tkinter import filedialog as _fd  # type: ignore
+
+            root = _tk.Tk()
+            root.withdraw()
+            root.attributes("-topmost", True)  # bring dialog front
+            sel = _fd.askopenfilename(title="Select a file to watch")
+            try:
+                root.destroy()
+            except Exception:
+                pass
+            if sel:
+                return jsonify({"path": sel})
+            return jsonify({})
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
 
     return app
 

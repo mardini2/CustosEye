@@ -54,6 +54,9 @@ python -m app.console --tray      # system tray icon
 - `/api/proctree`
 - `/api/about`
 - Favicons: `/favicon.ico`, `/favicon-32x32.png`, `/apple-touch-icon.png`
+- `/api/integrity/targets` (GET, POST, DELETE)
+- `/api/integrity/hash` (POST)
+- `/api/integrity/browse` (POST, Windows only)
 
 ---
 
@@ -111,6 +114,10 @@ python -m mypy app agent algorithm dashboard
 python -m pytest -q
 ```
 
+- Integrity tab: pick files to watch (Windows Browse or paste path), choose rule
+  (`sha256` or `mtime+size`), preview “Hash Now”, save/remove targets. Targets are written to
+  `data/integrity_targets.json` and hot-reloaded by the Integrity checker.
+
 ---
 
 ## Building the EXE (Windows)
@@ -165,4 +172,4 @@ GitHub Actions also handles this build automatically and uploads artifacts:
 
 ## License
 
-MIT — do cool things, don’t sue us.
+MIT — do cool things, don’t sue me.

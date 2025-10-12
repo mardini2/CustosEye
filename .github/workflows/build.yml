@@ -3,7 +3,8 @@ name: build-windows-exe
 on:
   push:
     branches: ['**']
-  workflow_dispatch:
+    tags: ['v*.*.*']
+  workflow_dispatch:      # manual run still builds artifacts
 
 jobs:
   build:
@@ -38,13 +39,22 @@ jobs:
         shell: pwsh
         run: |
           $iconArg = ""
-          if (Test-Path "assets/custoseye.ico") { $iconArg = "--icon assets/custoseye.ico" }
-          pyinstaller --noconfirm --onefile --name CustosEye.exe --console `
+          # prefer your app icon; fallback to favicon if that's what you have
+          if (Test-Path "assets\custoseye.ico") { $iconArg = "--icon assets\custoseye.ico" }
+          elseif (Test-Path "assets\favicon.ico") { $iconArg = "--icon assets\favicon.ico" }
+
+          # Build by module name to avoid Windows path quirks
+          pyinstaller --noconfirm --onefile --name CustosEye --console `
             $iconArg `
             --add-data "data;data" `
             --add-data "assets;assets" `
-            app/console.py
-          echo $env:GITHUB_SHA > dist\VERSION.txt
+            -m app.console
+
+          # Ensure dist exists and write a readable version file
+          New-Item -ItemType Directory -Force dist | Out-Null
+          $tag = if ("$env:GITHUB_REF" -like "refs/tags/*") { $env:GITHUB_REF -replace "refs/tags/","" } else { "dev" }
+          "$tag`n$env:GITHUB_SHA" | Out-File -Encoding utf8 dist\VERSION.txt
+
           Get-ChildItem dist
 
       - name: Upload EXE artifact
@@ -60,9 +70,9 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force release | Out-Null
-          Copy-Item dist/CustosEye.exe release/
-          Copy-Item dist/VERSION.txt release/
-          if (Test-Path README.md) { Copy-Item README.md release/ }
+          Copy-Item dist\CustosEye.exe release\
+          Copy-Item dist\VERSION.txt release\
+          if (Test-Path README.md) { Copy-Item README.md release\ }
           # include sample data so users can tweak
           if (Test-Path data) {
             New-Item -ItemType Directory -Force release\data | Out-Null
@@ -83,3 +93,16 @@ jobs:
           name: CustosEye-zip
           path: CustosEye-Windows.zip
           if-no-files-found: error
+
+      # auto-publish a GitHub Release if this run was triggered by a tag (like v0.2.0)
+      - name: Publish GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          name: CustosEye ${{ github.ref_name }}
+          files: |
+            dist/CustosEye.exe
+            dist/VERSION.txt
+            CustosEye-Windows.zip
+          draft: false
+          prerelease: false

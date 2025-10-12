@@ -11,7 +11,7 @@ it keeps the same public surface but adds a bunch of smart, defensive heuristics
 - Safe clamping and soft caps so one bad signal doesn’t nuke trust alone.
 - Tiny local DB (JSON) with version + time-decay to avoid stale trust forever.
 
-Inputs (all optional; we only use what is present):
+inputs (all optional; we only use what is present):
     name, exe, sha256, ppid, parent_name, parent_exe, username, integrity_level,
     is_service, elevation (bool), file_ctime, file_mtime, file_size_mb,
     listening_ports (list[int]), remote_addrs / remote_endpoints (list[str|dict]),

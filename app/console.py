@@ -43,7 +43,7 @@ def print_banner() -> None:
 
     eye = rf"""
 {dim}┌──────────────────────────────────────────────────────────────┐{reset}
-{dim}│{reset}{cyan}{bold}                  C  U  S  T  O  S  E  Y  E{reset}{dim}                   │{reset}
+{dim}│{reset}{cyan}{bold}                  C  u  s  t  o  s  E  y  e{reset}{dim}                   │{reset}
 {dim}├──────────────────────────────────────────────────────────────┤{reset}
 {mag}                         ⠀⠀⠀⠀⠀⠀⠀⢀⣀⣀⣀⣀⣀⣀⠀⠀⠀⠀⠀⠀⠀⠀                         {reset}
 {mag}                    ⠀⠀⠀⠀⠀⣠⣶⣿⣿⣿⣿⣿⣿⣿⣿⣿⣶⣄⠀⠀⠀⠀⠀⠀                    {reset}
@@ -97,7 +97,7 @@ def _resolve_base_dir() -> Path:
     return Path(__file__).resolve().parents[1]
 
 
-# -------------- Fan-out EventBus --------------
+# -------------- fan-out EventBus --------------
 class EventBus:
     """pub/sub fan-out: each subscriber gets every event."""
 
@@ -205,7 +205,7 @@ def main() -> None:
 
     # minimal terminal output (no live stream)
     print_banner()
-    print("Welcome to CustosEye – Your Third Eye")
+    print("Welcome to CustosEye!")
     print("Dashboard running at http://127.0.0.1:8765/ (Ctrl+C to quit)")
 
     # keep main alive
