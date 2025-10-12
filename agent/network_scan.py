@@ -5,14 +5,16 @@ Design:
 - Uses psutil.net_connections for system-wide view every N seconds.
 - Normalizes into a compact event for the rules engine.
 """
+
 from __future__ import annotations
 
 import time
-from typing import Any, Dict, List, Callable
+from collections.abc import Callable
+from typing import Any
 
 import psutil
 
-PublishFn = Callable[[Dict[str, Any]], None]
+PublishFn = Callable[[dict[str, Any]], None]
 
 
 class NetworkSnapshot:
@@ -23,11 +25,15 @@ class NetworkSnapshot:
     def run(self) -> None:
         while True:
             conns = psutil.net_connections(kind="inet")
-            listening: List[int] = sorted({c.laddr.port for c in conns if c.status == psutil.CONN_LISTEN})
-            outbound: List[str] = [f"{c.raddr.ip}:{c.raddr.port}" for c in conns if c.raddr]
-            self.publish({
-                "source": "network",
-                "listening_ports": listening,
-                "remote_endpoints": outbound,
-            })
+            listening: list[int] = sorted(
+                {c.laddr.port for c in conns if c.status == psutil.CONN_LISTEN}
+            )
+            outbound: list[str] = [f"{c.raddr.ip}:{c.raddr.port}" for c in conns if c.raddr]
+            self.publish(
+                {
+                    "source": "network",
+                    "listening_ports": listening,
+                    "remote_endpoints": outbound,
+                }
+            )
             time.sleep(self.interval)

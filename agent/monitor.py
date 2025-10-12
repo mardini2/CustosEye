@@ -6,17 +6,19 @@ Design:
 - Publishes structured events for each observed process and deltas for new ones.
 - Hashing is cached per (pid, exe_path, mtime) to avoid heavy recompute.
 """
+
 from __future__ import annotations
 
 import hashlib
 import os
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, Optional, Tuple
+from typing import Any
 
 import psutil
 
-PublishFn = Callable[[Dict[str, Any]], None]
+PublishFn = Callable[[dict[str, Any]], None]
 
 
 @dataclass
@@ -29,9 +31,9 @@ class _Hasher:
     """Small SHA256 hasher with naive cache keyed by (path, mtime)."""
 
     def __init__(self) -> None:
-        self._cache: Dict[Tuple[str, float], str] = {}
+        self._cache: dict[tuple[str, float], str] = {}
 
-    def sha256_file(self, path: str) -> Optional[str]:
+    def sha256_file(self, path: str) -> str | None:
         try:
             st = os.stat(path)
             key = (path, st.st_mtime)
@@ -55,11 +57,11 @@ class ProcessMonitor:
         self.publish = publish
         self.interval = interval_sec
         self._hasher = _Hasher()
-        self._seen: Dict[int, float] = {}
+        self._seen: dict[int, float] = {}
 
-    def _proc_event(self, p: psutil.Process) -> Dict[str, Any]:
+    def _proc_event(self, p: psutil.Process) -> dict[str, Any]:
         # Gather fields with resilience to disappearing processes
-        info: Dict[str, Any] = {"source": "process"}
+        info: dict[str, Any] = {"source": "process"}
         try:
             info["pid"] = p.pid
             info["name"] = p.name()
@@ -72,7 +74,9 @@ class ProcessMonitor:
             info["rss"] = getattr(mem, "rss", None)
             info["vms"] = getattr(mem, "vms", None)
             conns = p.connections(kind="inet")  # TCP/UDP
-            info["listening_ports"] = [c.laddr.port for c in conns if c.status == psutil.CONN_LISTEN]
+            info["listening_ports"] = [
+                c.laddr.port for c in conns if c.status == psutil.CONN_LISTEN
+            ]
             info["remote_addrs"] = [f"{c.raddr.ip}:{c.raddr.port}" for c in conns if c.raddr]
             # Hash if we have an exe
             if info.get("exe"):

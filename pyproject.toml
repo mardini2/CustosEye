@@ -5,27 +5,43 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "custoseye"
 version = "0.1.0"
-description = "CustosEye Phase 1 MVP"
-authors = [{ name = "Your Name" }]
+description = "CustosEye console agent and local dashboard"
+authors = [{ name = "mardini2" }]
 requires-python = ">=3.11,<3.12"
 dependencies = [
   "psutil>=5.9",
   "Flask>=3.0",
+  "waitress>=3.0",
 ]
+
+[tool.setuptools.packages.find]
+where = ["."]
 
 [tool.pytest.ini_options]
 addopts = "-q"
 
 [tool.black]
 line-length = 100
+target-version = ["py311"]
+include = "\\.pyi?$"
 
 [tool.ruff]
+target-version = "py311"
 line-length = 100
+exclude = ["dist", "build", ".venv"]
+
+# Ruff moved linter settings into the `lint` table.
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP"]
+ignore = [
+  "E203",  # keep black/ruff harmony
+  "E501",  # allow long lines for docstrings and inline HTML/CSS/JS
+]
 
 [tool.mypy]
 python_version = "3.11"
 ignore_missing_imports = true
-strict = false
-
-[tool.setuptools.packages.find]
-where = ["."]
+warn_unused_ignores = true
+no_implicit_optional = true
+check_untyped_defs = true
+pretty = true

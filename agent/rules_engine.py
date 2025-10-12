@@ -12,17 +12,18 @@ This version adds targeted match fields so you can reduce noise:
 
 Rules are evaluated top-to-bottom; the first match wins. Keep rules ordered from most specific to most general.
 """
+
 from __future__ import annotations
 
 import json
 import os
-from typing import Any, Dict, List, Sequence, Union
+from collections.abc import Sequence
+from typing import Any
+
+StrOrList = str | Sequence[str]
 
 
-StrOrList = Union[str, Sequence[str]]
-
-
-def _ensure_list(x: StrOrList | None) -> List[str]:
+def _ensure_list(x: StrOrList | None) -> list[str]:
     if x is None:
         return []
     if isinstance(x, str):
@@ -33,16 +34,16 @@ def _ensure_list(x: StrOrList | None) -> List[str]:
 class RulesEngine:
     def __init__(self, path: str) -> None:
         self.path = path
-        self.rules: List[Dict[str, Any]] = self._load_rules()
+        self.rules: list[dict[str, Any]] = self._load_rules()
 
-    def _load_rules(self) -> List[Dict[str, Any]]:
+    def _load_rules(self) -> list[dict[str, Any]]:
         if not os.path.exists(self.path):
             return []
-        with open(self.path, "r", encoding="utf-8") as f:
+        with open(self.path, encoding="utf-8") as f:
             data = json.load(f)
             return data if isinstance(data, list) else []
 
-    def _match(self, when: Dict[str, Any], event: Dict[str, Any]) -> bool:
+    def _match(self, when: dict[str, Any], event: dict[str, Any]) -> bool:
         # source match
         src = when.get("source")
         if src and event.get("source") != src:
@@ -96,7 +97,7 @@ class RulesEngine:
 
         return True
 
-    def evaluate(self, event: Dict[str, Any]) -> Dict[str, str]:
+    def evaluate(self, event: dict[str, Any]) -> dict[str, str]:
         decision = {"level": "info", "reason": "no rule matched"}
         for rule in self.rules:
             when = rule.get("when", {})

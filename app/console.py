@@ -7,6 +7,7 @@ What this file does:
 - Streams events to a tiny in-memory event bus.
 - Prints integrity events directly (their severity comes from the checker).
 - Applies the JSON rules engine to other events.
+- Adds CSC trust scoring for process events and optionally escalates low-trust warnings to critical.
 - Auto-reloads:
     - data/rules.json                -> refreshes rule set on change
     - data/integrity_targets.json    -> refreshes integrity targets on change
@@ -25,23 +26,26 @@ Noise control options (console-side, no code changes elsewhere):
 
 from __future__ import annotations
 
-from pathlib import Path
-import sys
 import argparse
 import os
 import queue
+import sys
 import threading
 import time
-from typing import Any, Callable, Dict, Optional, Tuple
+from collections.abc import Callable
+from pathlib import Path
+from typing import Any
 
+from agent.integrity_check import IntegrityChecker
 from agent.monitor import ProcessMonitor
 from agent.network_scan import NetworkSnapshot
-from agent.integrity_check import IntegrityChecker
 from agent.rules_engine import RulesEngine
+from algorithm.csc_engine import CSCTrustEngine  # Phase 2: trust scoring
 
 # Dashboard is optional; console works fine without it
 try:
     from dashboard.app import run_dashboard
+
     HAVE_DASHBOARD = True
 except Exception:
     HAVE_DASHBOARD = False
@@ -55,9 +59,9 @@ class EventBus:
     """
 
     def __init__(self) -> None:
-        self._q: "queue.Queue[Dict[str, Any]]" = queue.Queue(maxsize=1000)
+        self._q: queue.Queue[dict[str, Any]] = queue.Queue(maxsize=1000)
 
-    def publish(self, event: Dict[str, Any]) -> None:
+    def publish(self, event: dict[str, Any]) -> None:
         # Non-blocking put with fallback drop-on-full to avoid agent stalls.
         try:
             self._q.put_nowait(event)
@@ -76,7 +80,7 @@ class EventBus:
                 yield None
 
 
-def file_mtime(path: str) -> Optional[float]:
+def file_mtime(path: str) -> float | None:
     """
     Safe mtime getter. Returns None if file does not exist.
     """
@@ -153,6 +157,11 @@ def main() -> None:
     rules_path = data_path("data/rules.json")
     targets_path = data_path("data/integrity_targets.json")
 
+    # Phase 2: CSC Trust scoring paths and engine
+    csc_weights_path = data_path("data/csc_weights.json")
+    csc_db_path = data_path("data/trust_db.json")
+    csc = CSCTrustEngine(weights_path=csc_weights_path, db_path=csc_db_path)
+
     # Components
     rules = RulesEngine(path=rules_path)
     monitor = ProcessMonitor(publish=bus.publish)
@@ -185,7 +194,7 @@ def main() -> None:
     # Console consumer: integrity prints directly; everything else goes through rules
     def console_loop() -> None:
         # Optional de-dup cache: (pid, level, reason) -> last_print_ts
-        seen: Dict[Tuple[Any, str, str], float] = {}
+        seen: dict[tuple[Any, str, str], float] = {}
 
         for ev in bus.iter_events():
             if not ev:
@@ -206,6 +215,19 @@ def main() -> None:
             if decision["level"] == "info":
                 continue
 
+            # Phase 2: compute trust for process events and optionally escalate
+            trust_frag = ""
+            if src == "process":
+                t = csc.evaluate(ev)
+                ev["trust"] = t["trust"]
+                ev["trust_label"] = t["label"]
+                ev["trust_reasons"] = t["reasons"]
+                # Optional escalation: low-trust warnings -> critical
+                if t["label"] == "low" and decision["level"] == "warning":
+                    decision["level"] = "critical"
+                    decision["reason"] = f"{decision['reason']} (low trust)"
+                trust_frag = f" | trust={t['trust']}({t['label']})"
+
             # Optional: suppress repeats for the same (pid, level, reason)
             if args.suppress_repeats:
                 key = (ev.get("pid"), decision["level"], decision["reason"])
@@ -213,13 +235,15 @@ def main() -> None:
                 last = seen.get(key)
                 # If repeat-window is 0 -> suppress forever until the tuple changes.
                 # If > 0 -> allow reprint only after that many seconds.
-                if last is not None and (args.repeat_window <= 0.0 or (now - last) < args.repeat_window):
+                if last is not None and (
+                    args.repeat_window <= 0.0 or (now - last) < args.repeat_window
+                ):
                     continue
                 seen[key] = now
 
             print(
                 f"[{decision['level'].upper()}] {decision['reason']} "
-                f"| source={src} | pid={ev.get('pid')} | name={ev.get('name')}"
+                f"| source={src} | pid={ev.get('pid')} | name={ev.get('name')}{trust_frag}"
             )
 
     threading.Thread(target=console_loop, name="console", daemon=True).start()

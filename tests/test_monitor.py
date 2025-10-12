@@ -1,6 +1,7 @@
 """
 Goal: Smoke test the monitor module to ensure event shape is sane.
 """
+
 from __future__ import annotations
 
 from agent.monitor import ProcessMonitor
@@ -17,7 +18,9 @@ def test_monitor_event_shape(monkeypatch):
     psutil.process_iter = lambda attrs=None: []  # type: ignore
     try:
         # Run a tiny slice of the loop
-        import threading, time
+        import threading
+        import time
+
         t = threading.Thread(target=m.run, daemon=True)
         t.start()
         time.sleep(0.05)

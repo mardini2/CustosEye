@@ -5,6 +5,21 @@
     "then": { "level": "info", "reason": "Known system listener" }
   },
   {
+    "name": "Allow CustosEye self-listener",
+    "when": { "source": "process", "listening_port": true, "name_contains": ["CustosEye"] },
+    "then": { "level": "info", "reason": "CustosEye dashboard" }
+  },
+  {
+    "name": "Allow local Python dev servers",
+    "when": { "source": "process", "listening_port": true, "name_contains": ["python"], "port_in": [8000, 8765] },
+    "then": { "level": "info", "reason": "Local development server" }
+  },
+  {
+    "name": "Allow OneDrive service",
+    "when": { "source": "process", "listening_port": true, "name_contains": ["OneDrive"], "port_not_in": [22, 3389, 4444, 5900] },
+    "then": { "level": "info", "reason": "OneDrive background service" }
+  },
+  {
     "name": "Allow Intel esrv service",
     "when": { "source": "process", "listening_port": true, "name_contains": ["esrv"], "port_not_in": [22, 3389, 4444, 5900] },
     "then": { "level": "info", "reason": "Intel background service" }
@@ -18,11 +33,6 @@
     "name": "Allow Logitech G Hub agent",
     "when": { "source": "process", "listening_port": true, "name_contains": ["lghub", "lghub_agent"], "port_not_in": [22, 3389, 4444, 5900] },
     "then": { "level": "info", "reason": "Logitech background service" }
-  },
-  {
-    "name": "Local dev server",
-    "when": { "source": "process", "listening_port": true, "name_contains": ["python"], "port_in": [8000] },
-    "then": { "level": "info", "reason": "Local dev server" }
   },
   {
     "name": "High-risk ports",

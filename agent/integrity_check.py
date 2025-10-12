@@ -25,9 +25,10 @@ import json
 import os
 import pathlib
 import time
-from typing import Any, Callable, Dict, List
+from collections.abc import Callable
+from typing import Any
 
-PublishFn = Callable[[Dict[str, Any]], None]
+PublishFn = Callable[[dict[str, Any]], None]
 
 
 class IntegrityChecker:
@@ -42,9 +43,9 @@ class IntegrityChecker:
         self.targets_path = targets_path
         self.publish = publish
         self.interval = interval_sec
-        self.targets: List[Dict[str, str]] = []
+        self.targets: list[dict[str, str]] = []
         # path -> "ok" | "mismatch" | "missing" | "noaccess" | "error"
-        self._last_status: Dict[str, str] = {}
+        self._last_status: dict[str, str] = {}
         self._load_targets()
 
     def _load_targets(self) -> None:
@@ -52,7 +53,7 @@ class IntegrityChecker:
         if not os.path.exists(self.targets_path):
             self.targets = []
             return
-        with open(self.targets_path, "r", encoding="utf-8") as f:
+        with open(self.targets_path, encoding="utf-8") as f:
             data = json.load(f)
         self.targets = data if isinstance(data, list) else []
 
@@ -74,7 +75,7 @@ class IntegrityChecker:
         normalized = str(pathlib.Path(expanded))
         return normalized
 
-    def _emit_if_changed(self, path: str, status: str, payload: Dict[str, Any]) -> None:
+    def _emit_if_changed(self, path: str, status: str, payload: dict[str, Any]) -> None:
         """
         Publish the event only if the status for this path changed since the last check.
         """

@@ -1,0 +1,16 @@
+{
+  "base": 70,
+  "deduct_listening": 10,
+  "deduct_risky_port": 25,
+  "deduct_remote": 10,
+  "deduct_temp_path": 15,
+  "deduct_susp_name": 10,
+  "bonus_known_hash": 15,
+  "bonus_system_dir": 10,
+  "risky_ports": [22, 3389, 4444, 5900],
+  "susp_name_tokens": ["tmp", "temp", "svhost", "update", "patch", "fix", "agent", "service"],
+  "system_paths": ["\\windows\\system32", "/windows/system32"],
+  "temp_paths": ["\\appdata\\local\\temp", "/appdata/local/temp", "\\temp\\", "/tmp/"],
+  "trust_low_threshold": 40,
+  "trust_high_threshold": 75
+}
