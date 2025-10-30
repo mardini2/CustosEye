@@ -18,10 +18,19 @@ import time
 import webbrowser
 from pathlib import Path
 from typing import Any
+import logging
 
 from agent.integrity_check import IntegrityChecker
 from agent.monitor import ProcessMonitor
 from agent.network_scan import NetworkSnapshot
+
+# Set root level high enough so library WARNINGs don't spam the console
+logging.basicConfig(level=logging.ERROR)
+
+# Silence Waitress chatter decisively
+logging.getLogger("waitress.queue").setLevel(logging.CRITICAL)
+logging.getLogger("waitress").setLevel(logging.CRITICAL)
+logging.getLogger("waitress.access").setLevel(logging.CRITICAL)
 
 
 # --- ASCII banner (CustosEye logo like-alike) ---
@@ -206,7 +215,7 @@ def main() -> None:
     # minimal terminal output (no live stream)
     print_banner()
     print("Welcome to CustosEye!")
-    print("Dashboard running at http://127.0.0.1:8765/ (Ctrl+C to quit)")
+    print("Dashboard running at http://127.0.0.1:8765/ 𒆙")
 
     # keep main alive
     try:

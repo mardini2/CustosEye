@@ -73,7 +73,8 @@
     /* integrity tab */
     .grid { display:grid; gap:10px; grid-template-columns: 1fr; }
     .card { background:var(--panel); border:1px solid var(--border); border-radius:12px; padding:12px; }
-    .tbl { width:100%; border-collapse: collapse; }
+    .tbl { width:100%; border-collapse: collapse; border-bottom:1px solid var(--border); }
+    .tbl tbody tr:last-child td { border-bottom:none; } /* avoid a double line */
     .tbl th, .tbl td { padding:8px; border-bottom:1px solid var(--border); text-align:left; font-size:12px; }
     .badge { display:inline-block; padding:2px 8px; border-radius:999px; border:1px solid var(--border); font-size:11px; }
     .badge.ok { color:var(--good); border-color: color-mix(in oklab, var(--good) 40%, var(--border)); }
@@ -82,6 +83,93 @@
     .row-actions { display:flex; gap:8px; }
     .small { font-size:11px; color:var(--muted); }
     .hint { color:var(--muted); font-size:12px; }
+
+    /* Keep the table inside its card */
+    .tbl { table-layout: fixed; width: 100%; }
+
+    /* Column sizing (adjust to taste) */
+    .tbl th:nth-child(1), .tbl td:nth-child(1) { width: 34%; } /* Path */
+    .tbl th:nth-child(2), .tbl td:nth-child(2) { width: 10%; } /* Rule */
+    .tbl th:nth-child(3), .tbl td:nth-child(3) { width: 36%; } /* Baseline */
+    .tbl th:nth-child(4), .tbl td:nth-child(4) { width: 12%; } /* Last result */
+    .tbl th:nth-child(5), .tbl td:nth-child(5) { width: 8%; }   /* Actions */
+    .row-actions { display:flex; flex-wrap:wrap; gap:8px; max-width:100%; }
+    .row-actions .btn { white-space:nowrap; }
+    .tbl th, .tbl td { vertical-align: top; overflow: hidden; text-overflow: ellipsis; }
+    /* Allow buttons to wrap without being clipped */
+    .tbl td:nth-child(5) { overflow: visible; }
+    /* Give Actions a floor so it never collapses too small */
+    .tbl td:nth-child(5) { min-width: 110px; position: relative; }
+
+    @media (max-width: 760px) {
+     .row-actions .btn { padding: 6px 8px; font-size: 11px; }
+    }
+
+    /* Slightly tighten button spacing on very small widths */
+    @media (max-width: 560px) {
+    .row-actions { gap: 6px; }
+    }
+
+    /* Clip inner borders to the rounded card */
+    .grid .card { overflow: hidden; }
+
+    /* Remove the table's extra bottom rule so nothing sticks out */
+    .tbl { border-bottom: 0; }
+
+    /* Put a divider above the integrity hint */
+    .tbl + .hint {
+    border-top: 1px solid var(--border);
+    margin-top: 8px;
+    padding-top: 8px;
+    }
+
+    /* Baseline cell as a small vertical stack */
+    .baseline {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    }
+
+    /* Full hash should wrap; allow breaks anywhere for long strings */
+    .baseline-cell { overflow: visible; }
+    .mono-wrap { overflow-wrap: anywhere; word-break: break-word; white-space: normal; }
+
+    /* Status cell: badge on first line, note on second */
+    .status {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    align-items: flex-start;
+    }
+
+    /* Actions: wrap buttons if needed on narrow screens */
+    .row-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+
+    /* --- Tooltips --- */
+    .tooltip {
+    position: fixed;
+    z-index: 9999;
+    max-width: 280px;
+    padding: 6px 8px;
+    border-radius: 8px;
+    font-size: 12px;
+    line-height: 1.3;
+    background: color-mix(in oklab, var(--panel) 80%, #000);
+    color: var(--text);
+    border: 1px solid var(--border);
+    box-shadow: 0 6px 16px rgba(0,0,0,.25);
+    pointer-events: none;
+    opacity: 0;
+    transform: translateY(-2px);
+    transition: opacity .12s ease, transform .12s ease;
+    }
+    .tooltip[data-show="true"] {
+    opacity: 1;
+    transform: translateY(0);
+    }
+    @media (prefers-reduced-motion: reduce) {
+    .tooltip { transition: none; }
+    }
   </style>
 </head>
 <body>
@@ -92,42 +180,43 @@
         CustosEye <span class="subtitle">local dashboard</span>
       </div>
 
+      <!-- tabs -->
       <div class="tabs">
-        <div class="tab on" data-tab="live">Live Events</div>
-        <div class="tab" data-tab="tree">Process Tree</div>
-        <div class="tab" data-tab="integrity">Integrity</div>
-        <div class="tab" data-tab="about">About</div>
+        <div class="tab on" data-tab="live" data-tip="View live events stream">Live Events</div>
+        <div class="tab" data-tab="tree" data-tip="Inspect the process tree with trust labels">Process Tree</div>
+        <div class="tab" data-tab="integrity" data-tip="Watch files for tamper (hash or mtime+size)">Integrity</div>
+        <div class="tab" data-tab="about" data-tip="Build info and buffer capacity">About</div>
       </div>
 
-      <!-- Live bar -->
+        <!-- Live bar -->
       <div class="panel" id="bar-live">
         <div class="controls">
-          <button class="chip info" data-on="true" data-level="info"><span class="dot"></span>Info</button>
-          <button class="chip warning" data-on="true" data-level="warning"><span class="dot"></span>Warning</button>
-          <button class="chip critical" data-on="true" data-level="critical"><span class="dot"></span>Critical</button>
-          <button class="chip ok" id="pause" data-on="false"><span class="dot"></span><span id="pauseText">Live</span></button>
-          <input id="search" class="input" placeholder="Search: reason, source, name, pid..." />
-          <button class="btn" id="refresh">Refresh</button>
-          <button class="btn" id="export">Export CSV</button>
+          <button class="chip info"     data-on="true"  data-level="info"     data-tip="Toggle Info events"><span class="dot"></span>Info</button>
+          <button class="chip warning"  data-on="true"  data-level="warning"  data-tip="Toggle Warnings"><span class="dot"></span>Warning</button>
+          <button class="chip critical" data-on="true"  data-level="critical" data-tip="Toggle Critical"><span class="dot"></span>Critical</button>
+          <button class="chip ok" id="pause" data-on="false" data-tip="Pause or resume background updates"><span class="dot"></span><span id="pauseText">Live</span></button>
+          <input id="search" class="input" placeholder="Search: reason, source, name, pid..." data-tip="Filter visible rows by text" />
+          <button class="btn" id="refresh" data-tip="Force an immediate refresh">Refresh</button>
+          <button class="btn" id="export"  data-tip="Export current view as CSV">Export CSV</button>
           <div class="muted">Showing <span id="count" class="count">0</span> / <span id="total" class="count">0</span></div>
         </div>
-      </div>
+       </div>
 
       <!-- Integrity bar -->
       <div class="panel" id="bar-integrity" style="display:none">
         <div class="grid">
           <div class="card">
             <div class="controls" style="gap:8px">
-              <button class="btn" id="i-browse">Browse (Windows)</button>
-              <input id="i-path" class="input" placeholder="File path (or use Browse)" style="min-width:360px" />
-              <select id="i-rule" class="input" style="min-width:160px">
+            <button class="btn" id="i-browse" data-tip="Pick a file (File Explorer)">Browse (Windows)</button>
+            <input id="i-path" class="input" placeholder="File path (or use Browse)" style="min-width:360px" data-tip="Target file to watch" />
+            <select id="i-rule" class="input" style="min-width:160px" data-tip="Choose exact hash or mtime+size rule">
                 <option value="sha256">Exact SHA-256</option>
                 <option value="mtime+size">mtime + size</option>
-              </select>
-              <input id="i-note" class="input" placeholder="Note (optional)" style="min-width:200px" />
-              <button class="btn" id="i-hash">Hash Now</button>
-              <button class="btn" id="i-add">Save</button>
-              <span class="hint" id="i-hint"></span>
+            </select>
+            <input id="i-note" class="input" placeholder="Note (optional)" style="min-width:200px" data-tip="Optional label for the target" />
+            <button class="btn" id="i-hash" data-tip="Compute a preview hash/attributes">Hash Now</button>
+            <button class="btn" id="i-add"  data-tip="Save target to the watch list">Save</button>
+            <span class="hint" id="i-hint"></span>
             </div>
             <div class="small" id="i-preview"></div>
           </div>
@@ -157,12 +246,12 @@
 
       <div id="tree" class="tree" style="display:none">
         <div class="treebar">
-          <input id="treeSearch" class="input" placeholder="Search PIDs, names, verdict/class..." />
-          <button class="btn" id="treeRefresh">Refresh</button>
-          <button class="btn" id="treeExpand">Expand all</button>
-          <button class="btn" id="treeCollapse">Collapse all</button>
-          <button class="btn" id="treeCopy">Copy</button>
-          <button class="btn" id="treeExport">Export JSON</button>
+        <input id="treeSearch" class="input" placeholder="Search PIDs, names, verdict/class..." data-tip="Filter nodes by PID, name, verdict/class" />
+        <button class="btn" id="treeRefresh"  data-tip="Refresh tree data">Refresh</button>
+        <button class="btn" id="treeExpand"   data-tip="Expand all nodes">Expand all</button>
+        <button class="btn" id="treeCollapse" data-tip="Collapse all nodes">Collapse all</button>
+        <button class="btn" id="treeCopy"     data-tip="Copy the visible tree to clipboard">Copy</button>
+        <button class="btn" id="treeExport"   data-tip="Download the process tree as JSON">Export JSON</button>
         </div>
         <div id="treeRoot"></div>
       </div>
@@ -172,7 +261,7 @@
   </main>
 
   <script>
-    const state = { tab:"live", levels:{info:true,warning:true,critical:true}, paused:false, q:"", timer:null, treeQ:"" };
+    const state = { tab:"live", levels:{info:true,warning:true,critical:true}, paused:false, q:"", timer:null, forceCollapsed:false,treeQ:"" };
     // sync initial from buttons (prevents drift)
     document.querySelectorAll('#bar-live .chip[data-level]').forEach(btn => {
       const lvl = btn.getAttribute('data-level');
@@ -184,6 +273,30 @@
     const countEl = document.getElementById('count'), totalEl = document.getElementById('total');
     const pauseBtn = document.getElementById('pause'), pauseText = document.getElementById('pauseText');
     const treeEl = document.getElementById('treeRoot'), aboutEl = document.getElementById('about');
+
+    // ----- Preserve <details> open state -----
+    const openKeys = new Set();
+
+    function captureOpenKeys() {
+    openKeys.clear();
+    document.querySelectorAll('#treeRoot details[data-k]').forEach(d => {
+        if (d.open) openKeys.add(d.dataset.k);
+    });
+    }
+
+    function restoreOpenKeys() {
+    document.querySelectorAll('#treeRoot details[data-k]').forEach(d => {
+        if (openKeys.has(d.dataset.k)) d.setAttribute('open', '');
+    });
+    }
+
+    document.getElementById('treeRoot').addEventListener('toggle', (e) => {
+    const d = e.target;
+    if (d.tagName !== 'DETAILS') return;
+    const k = d.dataset.k;
+    if (!k) return;
+    if (d.open) openKeys.add(k); else openKeys.delete(k);
+    });
 
     //integrity refs
     const iBar = document.getElementById('bar-integrity');
@@ -199,9 +312,10 @@
 
     //tabs
     document.querySelectorAll('.tab').forEach(t => {
-      t.addEventListener('click', () => {
+    t.addEventListener('click', () => {
         document.querySelectorAll('.tab').forEach(x => x.classList.remove('on'));
-        t.classList.add('on'); state.tab = t.getAttribute('data-tab');
+        t.classList.add('on'); 
+        state.tab = t.getAttribute('data-tab');
 
         document.getElementById('live').style.display = (state.tab==='live')?'':'none';
         document.getElementById('bar-live').style.display = (state.tab==='live')?'':'none';
@@ -209,10 +323,11 @@
         iBar.style.display = (state.tab==='integrity')?'':'none';
         aboutEl.style.display = (state.tab==='about')?'':'none';
 
-        if (state.tab==='tree') fetchTree();
-        if (state.tab==='about') fetchAbout();
-        if (state.tab==='integrity') loadTargets();
-      });
+        if (state.tab === 'integrity') loadTargets();
+
+        // render from caches; background poller keeps data fresh
+        renderActive();
+    });
     });
 
     //live filters
@@ -236,7 +351,7 @@
 
     //export live
     document.getElementById('export').addEventListener('click', () => {
-      const includeInfo = state.levels.info ? '1' : '0';
+      const includeInfo = '1';
       const lvls = Object.entries(state.levels).filter(([k,v]) => v).map(([k])=>k).join(',');
       const url = `/api/export?format=csv&include_info=${includeInfo}&levels=${encodeURIComponent(lvls)}&q=${encodeURIComponent(state.q)}`;
       window.location.href = url;
@@ -244,44 +359,49 @@
 
     //live list rendering
     function row(ev) {
-      const lvl = (ev.level || 'info').toLowerCase();
-      const reason = ev.reason || 'event';
-      const src = ev.source || '';
-      const pid = ev.pid || '';
-      const name = ev.name || '';
-      const path = ev.path || '';
-      const ts = ev.ts ? new Date(ev.ts * 1000).toLocaleTimeString() : '';
+      const lvl   = (ev.level || 'info').toLowerCase();
+      const reason= ev.reason || 'event';
+      const src   = ev.source || '';
+      const pid   = ev.pid || '';
+      const name  = ev.name || '';
+      const path  = ev.path || '';
+      const cmd   = ev.cmdline || '';
+      const ts    = ev.ts ? new Date(ev.ts * 1000).toLocaleTimeString() : '';
       const trust = ev.csc_verdict
-        ? ` | csc=${ev.csc_verdict}(${ev.csc_class||'unknown'}; ${Number(ev.csc_confidence||0).toFixed(2)})`
-        : '';
+          ? ` | csc=${ev.csc_verdict}(${ev.csc_class||'unknown'}; ${Number(ev.csc_confidence||0).toFixed(2)})`
+          : '';
 
-      const ident = (src === 'integrity')
-        ? `path=${path || name}`     // show file path for integrity events
-        : `pid=${pid} name=${name}`;
+    // Fall back gracefully so you don’t see "name=" blank
+    const nameOrPath = name || path || cmd || '(unknown)';
+    const ident = (src === 'integrity')
+        ? `path=${path || nameOrPath}`
+        : `pid=${pid} name=${nameOrPath}`;
 
-      return `
+    return `
         <div class="row">
-          <div class="nowrap"><span class="lvl ${lvl}">${lvl.toUpperCase()}</span></div>
-          <div class="mono muted nowrap">${ts}</div>
-          <div class="mono nowrap">${reason} | source=${src} ${ident}${trust}</div>
+        <div class="nowrap"><span class="lvl ${lvl}">${lvl.toUpperCase()}</span></div>
+        <div class="mono muted nowrap">${ts}</div>
+        <div class="mono nowrap">${reason} | source=${src} ${ident}${trust}</div>
         </div>
-      `;
+    `;
     }
 
     function render(data) {
-      const byLevel = data.filter(ev => state.levels[(ev.level || 'info').toLowerCase()]);
-      const q = state.q;
-      const byQuery = q ? byLevel.filter(ev => {
-        const s = (ev.reason || '') + ' ' + (ev.source || '') + ' ' + (ev.name || '') + ' ' + (ev.pid || '') + ' ' + (ev.path || '');
+    const byLevel = data.filter(ev => state.levels[(ev.level || 'info').toLowerCase()]);
+    const q = state.q;
+    const byQuery = q ? byLevel.filter(ev => {
+        const s = (ev.reason||'')+' '+(ev.source||'')+' '+(ev.name||'')+' '+(ev.pid||'')+' '+(ev.path||'')+' '+(ev.cmdline||'');
         return s.toLowerCase().includes(q);
-      }) : byLevel;
-      countEl.textContent = byQuery.length; totalEl.textContent = data.length;
-      listEl.innerHTML = byQuery.map(row).join('');
+    }) : byLevel;
+
+    countEl.textContent = byQuery.length;
+    totalEl.textContent = data.length;
+    listEl.innerHTML = byQuery.map(row).join('');
     }
 
     async function fetchData() {
       try {
-        const includeInfo = state.levels.info ? '1' : '0';
+        const includeInfo = '1';
         const res = await fetch('/api/events?include_info=' + includeInfo);
         const data = await res.json();
         window.__data = data;
@@ -289,24 +409,209 @@
       } catch (e) { /* ignore */ }
     }
 
+      // ---------- Tooltip Manager ----------
+  (function () {
+    const TOOLTIP_ATTR = 'data-tip';
+    let tipEl = null;
+    let hideTimer = null;
+
+    function createTip() {
+      tipEl = document.createElement('div');
+      tipEl.className = 'tooltip';
+      tipEl.setAttribute('role', 'tooltip');
+      document.body.appendChild(tipEl);
+    }
+
+    function showTip(target) {
+      if (!tipEl) createTip();
+      const text = target.getAttribute(TOOLTIP_ATTR);
+      if (!text) return;
+
+      tipEl.textContent = text;
+      tipEl.dataset.show = 'true';
+
+      // Position near the element, below or above based on viewport
+      const r = target.getBoundingClientRect();
+      const gap = 8;
+      const ttW = Math.min(280, Math.max(120, tipEl.offsetWidth || 200));
+      let x = r.left + (r.width/2) - (ttW/2);
+      x = Math.max(8, Math.min(x, window.innerWidth - ttW - 8));
+
+      // First set width, so height is known for Y position
+      tipEl.style.width = ttW + 'px';
+      tipEl.style.left = x + 'px';
+
+      // After layout, place vertically
+      requestAnimationFrame(() => {
+        const ttH = tipEl.offsetHeight || 34;
+        const above = (r.bottom + gap + ttH > window.innerHeight) && (r.top - gap - ttH > 0);
+        const y = above ? (r.top - ttH - gap) : (r.bottom + gap);
+        tipEl.style.top = y + 'px';
+      });
+
+      // a11y: connect describedby on focus
+      if (target.matches(':focus-visible') || document.activeElement === target) {
+        if (!tipEl.id) tipEl.id = 'tip-' + Math.random().toString(36).slice(2,8);
+        target.setAttribute('aria-describedby', tipEl.id);
+      }
+    }
+
+    function hideTip(target) {
+      if (!tipEl) return;
+      tipEl.dataset.show = 'false';
+      if (target) target.removeAttribute('aria-describedby');
+    }
+
+    function clearHideTimer() {
+      if (hideTimer) { clearTimeout(hideTimer); hideTimer = null; }
+    }
+
+    // Delegated events for elements with data-tip
+    document.addEventListener('pointerenter', (e) => {
+      const t = e.target.closest('['+TOOLTIP_ATTR+']');
+      if (!t) return;
+      clearHideTimer();
+      showTip(t);
+    }, true);
+
+    document.addEventListener('pointerleave', (e) => {
+      const t = e.target.closest('['+TOOLTIP_ATTR+']');
+      if (!t) return;
+      // small delay to prevent flicker if moving across small gaps
+      hideTimer = setTimeout(() => hideTip(t), 50);
+    }, true);
+
+    document.addEventListener('focusin', (e) => {
+      const t = e.target.closest('['+TOOLTIP_ATTR+']');
+      if (!t) return;
+      showTip(t);
+    });
+
+    document.addEventListener('focusout', (e) => {
+      const t = e.target.closest('['+TOOLTIP_ATTR+']');
+      if (!t) return;
+      hideTip(t);
+    });
+
+    // Hide on click so hover vs click don't get mixed up
+    document.addEventListener('pointerdown', (e) => {
+      const t = e.target.closest('['+TOOLTIP_ATTR+']');
+      if (t) hideTip(t);
+    });
+    // Reposition on scroll/resize
+    window.addEventListener('scroll', () => {
+      if (tipEl && tipEl.dataset.show === 'true') tipEl.dataset.show = 'false';
+    }, true);
+    window.addEventListener('resize', () => {
+      if (tipEl && tipEl.dataset.show === 'true') tipEl.dataset.show = 'false';
+    });
+  })();
+
+  // ---------- Background caches ----------
+  let __events = [];
+  let __tree = [];
+  let __targets = [];
+  let __about = null;
+
+  // --- warm the About cache early ---
+  fetchAboutLite().catch(() => {});
+
+  // Lightweight fetchers that update caches only
+  async function fetchEventsLite() {
+    const includeInfo = '1';
+    const r = await fetch('/api/events?include_info=' + includeInfo);
+    const j = await r.json();
+    __events = j;
+    // keep window.__data because your render() uses it
+    window.__data = j;
+  }
+  async function fetchTreeLite() {
+    const r = await fetch('/api/proctree');
+    __tree = await r.json();
+
+    // Seed roots only once on the very first successful load
+    if (openKeys.size === 0 && Array.isArray(__tree)) {
+        for (const root of __tree) openKeys.add(String(root.pid));
+    }
+  }
+  async function fetchTargetsLite() {
+    const r = await fetch('/api/integrity/targets');
+    __targets = await r.json();
+  }
+  async function fetchAboutLite() {
+    const r = await fetch('/api/about');
+    __about = await r.json();
+  }
+
+  // Render only the active tab using caches
+  function renderActive() {
+    if (state.tab === 'live') {
+      render(__events || []);
+      return;
+    }
+    if (state.tab === 'tree') {
+    const filtered = filterTreeList(__tree || [], state.treeQ);
+    captureOpenKeys(); // remember what is open
+    treeEl.innerHTML = (filtered || []).map(n => renderNode(n, 0)).join('');
+    restoreOpenKeys(); // re-open after render
+    return;
+    }
+    if (state.tab === 'integrity') {
+      renderTargets(__targets || []);
+      return;
+    }
+    if (state.tab === 'about') {
+      const a = __about;
+      if (!a) return;
+      aboutEl.innerHTML = `
+        <div class="mono"><b>CustosEye</b></div>
+        <div class="muted">Local-only dashboard for monitoring.</div>
+        <div class="mono" style="margin-top:6px">Version: ${a.version || 'dev'}</div>
+        <div class="mono">Build: ${a.build || '-'}</div>
+        <div class="mono">Buffer size: ${a.buffer_max}</div>
+      `;
+    }
+ }
+
     // ---------------- process tree ----------------
     const treeSearch = document.getElementById('treeSearch');
+    treeSearch.addEventListener('input', (e) => {
+    state.treeQ = e.target.value.toLowerCase().trim();
+    state.forceCollapsed = false;  // makes sure search can open nodes
+    renderActive();
+    });
     document.getElementById('treeRefresh').addEventListener('click', fetchTree);
-    document.getElementById('treeExpand').addEventListener('click', () => toggleAll(true));
-    document.getElementById('treeCollapse').addEventListener('click', () => toggleAll(false));
+    // Expand all handler: also clear the latch
+    document.getElementById('treeExpand').addEventListener('click', () => {
+    state.forceCollapsed = false;
+    document.querySelectorAll('#treeRoot details[data-k]').forEach(d => {
+        d.setAttribute('open','');
+        openKeys.add(d.dataset.k);
+    });
+    });
+    // Collapse all handler
+    document.getElementById('treeCollapse').addEventListener('click', () => {
+    document.querySelectorAll('#treeRoot details[data-k]').forEach(d => d.removeAttribute('open'));
+    openKeys.clear();
+    state.forceCollapsed = true;   // <— latch
+    renderActive();                // force re-render with everything closed
+    // clear the latch after render so future expands work normally
+    queueMicrotask(() => { state.forceCollapsed = false; });
+    });
     document.getElementById('treeCopy').addEventListener('click', copyTree);
     document.getElementById('treeExport').addEventListener('click', () => {
     window.location.href = `/api/proctree?as=json`;
     });
-    treeSearch.addEventListener('input', (e) => { state.treeQ = (e.target.value||'').toLowerCase().trim(); fetchTree(); });
 
     async function fetchTree() {
-      try {
+    try {
         const res = await fetch('/api/proctree');
         const data = await res.json();
         const filtered = filterTreeList(data, state.treeQ);
+        captureOpenKeys();
         treeEl.innerHTML = filtered.map(n => renderNode(n, 0)).join('');
-      } catch (e) {}
+        restoreOpenKeys();
+    } catch (e) {}
     }
 
     function filterTreeList(list, q) {
@@ -335,14 +640,18 @@
       return `<span class="pill ${style}">${text}</span>`;
     }
 
-    function renderNode(n, depth) {
-      const openAttr = depth < 1 ? " open" : "";
+    function renderNode(n, depth, parentKey = '') {
+      const key = parentKey ? `${parentKey}>${n.pid}` : String(n.pid);
+      const isOpen = state.forceCollapsed
+        ? false
+        : (state.treeQ ? true : openKeys.has(key));   // auto-open when searching
       const head = `<span class="caret"></span><span class="mono">PID ${n.pid}</span> <span class="mono">${n.name}</span> ${pill(n.csc_verdict, n.csc_class, n.csc_confidence)}`;
-      const kids = (n.children||[]).map(c => renderNode(c, depth+1)).join('');
-      if (!kids) {
+      const kidsHTML = (n.children || []).map(c => renderNode(c, depth + 1, key)).join('');
+      if (!kidsHTML) {
         return `<div style="margin-left:10px"><span class="mono">PID ${n.pid}</span> <span class="mono">${n.name}</span> ${pill(n.csc_verdict, n.csc_class, n.csc_confidence)}</div>`;
       }
-      return `<details${openAttr}><summary>${head}</summary>${kids}</details>`;
+      // IMPORTANT: data-k holds the stable key; we set open if in cache
+      return `<details data-k="${key}"${isOpen ? ' open' : ''}><summary>${head}</summary>${kidsHTML}</details>`;
     }
 
     function toggleAll(open) {
@@ -373,59 +682,105 @@
       } catch (e) {}
     }
 
+    function shortHash(h) {
+    if (!h) return '';
+    if (/^[0-9a-fA-F]{40,}$/.test(h)) return h.slice(0, 8) + '…' + h.slice(-6);
+    return h; // keep mtime+size as-is
+    }
+
+    function splitStatus(s) {
+    if (!s) return { main: '', note: '' };
+    const m = s.match(/^([^()]+)\s*\((.+)\)\s*$/); // "OK (baseline set)"
+    if (m) return { main: m[1].trim(), note: m[2].trim() };
+    return { main: s.trim(), note: '' };
+    }
+
     // ---------------- integrity tab logic ----------------
     async function loadTargets() {
-      try {
+    try {
         const res = await fetch('/api/integrity/targets');
         const data = await res.json();
         renderTargets(data);
-      } catch (e) {
+    } catch (e) {
         iTbody.innerHTML = `<tr><td colspan="5" class="small">Failed to load targets</td></tr>`;
-      }
+    }
     }
 
     function renderTargets(list) {
-      if (!Array.isArray(list) || list.length === 0) {
+    if (!Array.isArray(list) || list.length === 0) {
         iTbody.innerHTML = `<tr><td colspan="5" class="small">No files being watched yet.</td></tr>`;
         return;
-      }
-      iTbody.innerHTML = list.map(row => {
+    }
+
+    iTbody.innerHTML = list.map(row => {
+        // Path
+        const pathCell = `<td class="mono mono-wrap">${row.path || ''}</td>`;
+
+        // Rule
+        const ruleCell = `<td>${row.rule || 'sha256'}</td>`;
+
+        // Baseline (masked, vertical stack)
+        const baselineRaw = row.rule === 'sha256'
+        ? (row.sha256 || '')
+        : ((row.mtime && row.size) ? `mtime=${row.mtime} size=${row.size}` : '(none)');
+        const baselineCell = `
+        <td class="baseline-cell">
+            <div class="baseline">
+            <span class="mono mono-wrap">${baselineRaw}</span>
+            </div>
+        </td>
+        `;
+
+        // Status split into badge + small note
         const status = row.last_result || '';
-        const badgeCls = status.startsWith('OK') ? 'ok' : (status ? 'bad' : '');
-        const baseline = row.rule === 'sha256'
-          ? (row.sha256 || '')
-          : ((row.mtime && row.size) ? `mtime=${row.mtime} size=${row.size}` : '(none)');
-        return `
-          <tr>
-            <td class="mono">${(row.path||'')}</td>
-            <td>${(row.rule||'sha256')}</td>
-            <td class="mono">${baseline}</td>
-            <td>${status ? `<span class="badge ${badgeCls}">${status}</span>` : ''}</td>
-            <td class="row-actions">
-              <button class="btn" data-act="rehash" data-path="${encodeURIComponent(row.path||'')}">Re-hash</button>
-              <button class="btn" data-act="remove" data-path="${encodeURIComponent(row.path||'')}">Remove</button>
-            </td>
-          </tr>`;
-      }).join('');
-      //wire row actions
-      iTbody.querySelectorAll('button[data-act="remove"]').forEach(btn => {
+        const { main: statusMain, note: statusNote } = splitStatus(status);
+        const badgeCls = statusMain.toUpperCase().startsWith('OK') ? 'ok' : (status ? 'bad' : '');
+        const statusHTML = status
+        ? `<div class="status">
+            <span class="badge ${badgeCls}">${statusMain}</span>
+            ${statusNote ? `<span class="small muted">${statusNote}</span>` : ''}
+            </div>`
+        : '';
+        const statusCell = `<td>${statusHTML}</td>`;
+
+        // Actions
+        const actionsCell = `
+        <td class="row-actions">
+            <button class="btn" data-act="rehash" data-path="${encodeURIComponent(row.path || '')}">Re-hash</button>
+            <button class="btn" data-act="remove" data-path="${encodeURIComponent(row.path || '')}">Remove</button>
+        </td>
+        `;
+
+        return `<tr>${pathCell}${ruleCell}${baselineCell}${statusCell}${actionsCell}</tr>`;
+    }).join('');
+
+    // wire row actions
+    iTbody.querySelectorAll('button[data-act="remove"]').forEach(btn => {
         btn.addEventListener('click', async () => {
-          const path = decodeURIComponent(btn.getAttribute('data-path'));
-          if (!confirm('Remove from watch list?')) return;
-          await fetch('/api/integrity/targets', { method:'DELETE', headers:{'Content-Type':'application/json'}, body: JSON.stringify({path}) });
-          loadTargets();
+        const path = decodeURIComponent(btn.getAttribute('data-path'));
+        if (!confirm('Remove from watch list?')) return;
+        await fetch('/api/integrity/targets', {
+            method:'DELETE',
+            headers:{'Content-Type':'application/json'},
+            body: JSON.stringify({ path })
         });
-      });
-      iTbody.querySelectorAll('button[data-act="rehash"]').forEach(btn => {
+        loadTargets();
+        });
+    });
+
+    iTbody.querySelectorAll('button[data-act="rehash"]').forEach(btn => {
         btn.addEventListener('click', async () => {
-          const path = decodeURIComponent(btn.getAttribute('data-path'));
-          const r = await fetch('/api/integrity/hash', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({path}) });
-          const j = await r.json();
-          alert((j.sha256 ? `SHA-256:\n${j.sha256}` : 'No hash') + (j.error? `\n\nError: ${j.error}`:''));
-          // refresh table to reflect last_result / baseline promotion
-          loadTargets();
+        const path = decodeURIComponent(btn.getAttribute('data-path'));
+        const r = await fetch('/api/integrity/hash', {
+            method:'POST',
+            headers:{'Content-Type':'application/json'},
+            body: JSON.stringify({ path })
         });
-      });
+        const j = await r.json();
+        alert((j.sha256 ? `SHA-256:\n${j.sha256}` : 'No hash') + (j.error ? `\n\nError: ${j.error}` : ''));
+        loadTargets();
+        });
+    });
     }
 
     iBrowse.addEventListener('click', async () => {
@@ -473,18 +828,90 @@
       }
     });
 
-    // poller: keep draining regardless of tab; render only when on "live"
-    function tick() {
-      if (state.paused) return;
-      if (state.tab === 'live') {
-        fetchData(); // pulls & renders
-      } else {
-        // keep the backend draining without pulling the full payload
-        fetch('/api/ping').catch(()=>{});
-      }
+    // Background poller: keep ALL tabs live; render only the active one
+    let inFlight = false;
+    let lastTreeAt = 0;
+
+    async function tick() {
+    if (state.paused || inFlight) return;
+    inFlight = true;
+
+    try {
+        const wantsTree = state.tab === 'tree';
+        const now = Date.now();
+        const needTree = wantsTree || (now - lastTreeAt > 8000); // every 8s if not on tab
+
+        const includeInfo = '1';
+
+        // Always fetch About so the tab feels instant
+        const jobs = [
+        fetch(`/api/events?include_info=${includeInfo}`), // 0
+        fetch(`/api/integrity/targets`),                 // 1
+        fetch(`/api/about`),                             // 2
+        fetch(`/api/ping`).catch(() => ({ ok: true }))   // 3
+        ];
+        if (needTree) {
+        jobs.push(
+            fetch(`/api/proctree`).then(r => {
+            lastTreeAt = now;
+            return r;
+            })                                              // 4 (optional)
+        );
+        }
+
+        const results = await Promise.allSettled(jobs);
+
+        const evR    = results[0];
+        const targR  = results[1];
+        const aboutR = results[2];
+        // const pingR = results[3]; // not used, just a liveness check
+        const treeR  = needTree ? results[4] : null;
+
+        if (evR.status === 'fulfilled')   __events  = await evR.value.json();
+        if (targR.status === 'fulfilled') __targets = await targR.value.json();
+        if (aboutR.status === 'fulfilled') __about  = await aboutR.value.json();
+
+        if (needTree && treeR && treeR.status === 'fulfilled') {
+        __tree = await treeR.value.json();
+
+        // Seed roots only once on the very first successful load
+        if (openKeys.size === 0 && Array.isArray(__tree)) {
+            for (const root of __tree) openKeys.add(String(root.pid));
+        }
+
+        if (state.tab === 'tree') {
+            renderActive();
+            inFlight = false;
+            return;
+          }
+        }
+
+        renderActive();
+    } catch (_e) {
+        // ignore transient errors
+    } finally {
+        inFlight = false;
     }
-    state.timer = setInterval(tick, 1500);
-    tick(); // kick once at load
+    }
+
+    // pause when tab not visible
+    document.addEventListener('visibilitychange', () => {
+    state.paused = document.hidden;
+    pauseBtn?.setAttribute('data-on', state.paused ? 'true' : 'false');
+    if (pauseText) pauseText.textContent = state.paused ? 'Paused' : 'Live';
+    });
+
+    // avoid duplicate timers if this script runs twice
+    if (state.timer) clearInterval(state.timer);
+
+    // start the poller
+    state.timer = setInterval(tick, 2500);
+
+    // clean up the timer when leaving the page
+    window.addEventListener('beforeunload', () => { if (state.timer) clearInterval(state.timer); });
+
+    // initial render
+    tick();
   </script>
 </body>
 </html>

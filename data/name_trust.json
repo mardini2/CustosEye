@@ -13,11 +13,11 @@
   "taskhostw.exe": ["trusted", "system", 1.0],
   "runtimebroker.exe": ["trusted", "system", 0.99],
   "sihost.exe": ["trusted", "system", 1.0],
-  "explorer.exe": ["trusted", "system", 0.90],
+  "explorer.exe": ["trusted", "system", 0.95],
   "ctfmon.exe": ["trusted", "system", 0.95],
   "applicationframehost.exe": ["trusted", "system", 0.90],
   "lockapp.exe": ["trusted", "system", 0.90],
-  "startmenuexperiencehost.exe": ["trusted", "system", 0.90],
+  "startmenuexperiencehost.exe": ["trusted", "system", 0.95],
 
   "searchhost.exe": ["trusted", "system", 0.90],
   "searchindexer.exe": ["trusted", "system", 0.90],
@@ -33,7 +33,7 @@
 
   "igfxcuiservicen.exe": ["trusted", "utility", 0.85],
   "igfxemn.exe": ["trusted", "utility", 0.85],
-  "nvcontainer.exe": ["trusted", "utility", 0.85],
+  "nvcontainer.exe": ["trusted", "utility", 0.90],
   "nvidia share.exe": ["trusted", "utility", 0.85],
   "nvidia web helper.exe": ["trusted", "utility", 0.85],
   "intelsoftwareassetmanagerservice.exe": ["trusted", "utility", 0.85],
@@ -61,13 +61,13 @@
   "vivaldi.exe": ["trusted", "popular", 0.95],
 
 
-  "discord.exe": ["trusted", "popular", 0.97],
-  "discordcanary.exe": ["trusted", "popular", 0.97],
-  "discordptb.exe": ["trusted", "popular", 0.97],
-  "zoom.exe": ["trusted", "popular", 0.95],
-  "teams.exe": ["trusted", "popular", 0.95],
-  "slack.exe": ["trusted", "popular", 0.95],
-  "skype.exe": ["trusted", "popular", 0.90],
+  "discord.exe": ["trusted", "popular", 0.89],
+  "discordcanary.exe": ["trusted", "popular", 0.89],
+  "discordptb.exe": ["trusted", "popular", 0.89],
+  "zoom.exe": ["trusted", "popular", 0.89],
+  "teams.exe": ["trusted", "popular", 0.93],
+  "slack.exe": ["trusted", "popular", 0.90],
+  "skype.exe": ["trusted", "popular", 0.89],
 
 
   "code.exe": ["trusted", "utility", 0.95],
@@ -82,7 +82,7 @@
   "docker desktop.exe": ["trusted", "utility", 0.90],
 
 
-  "vlc.exe": ["trusted", "popular", 0.95],
+  "vlc.exe": ["trusted", "popular", 0.90],
   "spotify.exe": ["trusted", "popular", 0.95],
   "obs64.exe": ["trusted", "popular", 0.95],
   "audacity.exe": ["trusted", "popular", 0.90],
@@ -94,12 +94,12 @@
   "after effects.exe": ["trusted", "popular", 0.95],
 
   
-  "steam.exe": ["trusted", "popular", 0.97],
-  "epicgameslauncher.exe": ["trusted", "popular", 0.95],
-  "origin.exe": ["trusted", "popular", 0.95],
-  "battlenet.exe": ["trusted", "popular", 0.95],
-  "riotclientservices.exe": ["trusted", "popular", 0.95],
-  "uplay.exe": ["trusted", "popular", 0.95],
+  "steam.exe": ["trusted", "popular", 0.95],
+  "epicgameslauncher.exe": ["trusted", "popular", 0.90],
+  "origin.exe": ["trusted", "popular", 0.90],
+  "battlenet.exe": ["trusted", "popular", 0.93],
+  "riotclientservices.exe": ["trusted", "popular", 0.90],
+  "uplay.exe": ["trusted", "popular", 0.89],
   "xboxappservices.exe": ["trusted", "popular", 0.95],
 
  
