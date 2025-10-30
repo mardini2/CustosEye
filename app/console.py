@@ -42,9 +42,9 @@ def print_banner() -> None:
         cyan = blue = mag = red = dim = bold = reset = ""
 
     eye = rf"""
-{dim}┌──────────────────────────────────────────────────────────────┐{reset}
-{dim}│{reset}{cyan}{bold}                  C  u  s  t  o  s  E  y  e{reset}{dim}                   │{reset}
-{dim}├──────────────────────────────────────────────────────────────┤{reset}
+{dim}┌────────────────────────────────────────────────────────────┐{reset}
+{dim}│{reset}{cyan}{bold}                  C  u  s  t  o  s  E  y  e{reset}{dim}                 │{reset}
+{dim}├────────────────────────────────────────────────────────────┤{reset}
 {mag}                         ⠀⠀⠀⠀⠀⠀⠀⢀⣀⣀⣀⣀⣀⣀⠀⠀⠀⠀⠀⠀⠀⠀                         {reset}
 {mag}                    ⠀⠀⠀⠀⠀⣠⣶⣿⣿⣿⣿⣿⣿⣿⣿⣿⣶⣄⠀⠀⠀⠀⠀⠀                    {reset}
 {mag}                 ⠀⠀⠀⠀⣠⣾⣿⣿⣿⣿⠟⠛⠉⠉⠛⠻⣿⣿⣿⣿⣷⣄⠀⠀⠀⠀               {reset}
@@ -59,14 +59,14 @@ def print_banner() -> None:
 {mag}          ⣿⣿⣿⡇⠀⠀⢿⣿⣿⣿⣿⣿⣿{blue}██{cyan}█████{red}│{cyan}████{blue}██{mag}⣿⣿⣿⣿⣿⣿⡿⠀⠀⢸⣿⣿⣿       {reset}
 {mag}          ⢿⣿⣿⣧⠀⠀⠘⣿⣿⣿⣿⣿⣿{blue}███{cyan}████{red}│{cyan}███{blue}███{mag}⣿⣿⣿⣿⣿⣿⠃⠀⠀⣸⣿⣿⡿       {reset}
 {mag}          ⠀⢻⣿⣿⣷⠀⠀⠘⢿⣿⣿⣿⣿{blue}████{cyan}██████{blue}████{mag}⣿⣿⣿⣿⡿⠃⠀⠀⣾⣿⣿⡟        {reset}
-{mag}           ⠀⠙⢿⣿⣿⣧⠀⠀⠀⠙⠻⣿⣿{blue}███████████{mag}⣿⠟⠋⠀⠀⠀⣸⣿⣿⡿⠋         {reset}
-{mag}             ⠀⠀⠙⢿⣿⣿⣦⣀⠀⠀⠀⠉⠛⠿⣿⣿⠿⠛⠉⠀⠀⠀⣀⣴⣿⣿⠟⠀⠀           {reset}
+{mag}           ⠀⠙⢿⣿⣿⣧⠀⠀⠀⠙⠻⣿⣿⣿{blue}██████████{mag}⣿⠟⠋⠀⠀⠀ ⣸⣿⣿⡿⠋         {reset}
+{mag}             ⠀⠀⠙⢿⣿⣿⣦⣀⠀⠀⠀⠉⠛⠿⣿⣿⠿⠛⠉⠀⠀⠀  ⣀⣴⣿⣿⠟⠀⠀           {reset}
 {mag}                 ⠀⠀⠈⠛⠿⣿⣿⣶⣤⣄⣀⠀⠀⠀⠀⣀⣠⣤⣶⣿⣿⠿⠛⠁⠀⠀               {reset}
 {mag}                        ⠀⠀⠀⠈⠉⠛⠛⠛⠛⠉⠁⠀⠀⠀⠀                         {reset}
 {cyan}              Your Third Eye • Vigilant by Design                        {reset}
-{dim}├──────────────────────────────────────────────────────────────┤{reset}
-{dim}│{reset}  Tip: press Ctrl+C to quit.                                  {dim}│{reset}
-{dim}└──────────────────────────────────────────────────────────────┘{reset}
+{dim}├────────────────────────────────────────────────────────────┤{reset}
+{dim}│{reset}  Tip: press Ctrl+C to quit.                                {dim}│{reset}
+{dim}└────────────────────────────────────────────────────────────┘{reset}
 """
     print(eye)
 

@@ -30,9 +30,10 @@ from typing import Any, cast
 
 from flask import (
     Flask,
+    app,
     jsonify,
     make_response,
-    render_template_string,
+    render_template,
     request,
     send_file,
 )
@@ -47,7 +48,11 @@ except Exception:
     _serve = None  # type: ignore
 
 from agent.rules_engine import RulesEngine
-from algorithm.csc_engine import CSCTrustEngine
+# import the new v2 engine (same class name for painless upgrades)
+from algorithm.csc_engine import CSCTrustEngine  # v2 under the hood
+
+from dashboard.config import load_config, Config
+CFG: Config = load_config()
 
 
 # ---------------- Config / paths ----------------
@@ -59,20 +64,12 @@ def _resolve_base_dir() -> Path:
     return Path(__file__).resolve().parents[1]
 
 
-def _asset_path(rel: str) -> str:
-    import sys
-
-    base = Path(getattr(sys, "_MEIPASS", _resolve_base_dir()))
-    return str((base / rel).resolve())
-
-
-BASE_DIR = _resolve_base_dir()
-RULES_PATH = str((BASE_DIR / "data" / "rules.json").resolve())
-CSC_WEIGHTS_PATH = str((BASE_DIR / "data" / "csc_weights.json").resolve())
-CSC_DB_PATH = str((BASE_DIR / "data" / "trust_db.json").resolve())
-INTEGRITY_TARGETS_PATH = str((BASE_DIR / "data" / "integrity_targets.json").resolve())
-
-SELF_SUPPRESS_PATH = str((BASE_DIR / "data" / "self_suppress.json").resolve())
+BASE_DIR = CFG.base_dir
+RULES_PATH = str(CFG.rules_path)
+CSC_WEIGHTS_PATH = str(CFG.csc_weights_path)
+CSC_DB_PATH = str(CFG.csc_db_path)
+INTEGRITY_TARGETS_PATH = str(CFG.integrity_targets_path)
+SELF_SUPPRESS_PATH = str(CFG.self_suppress_path)
 
 
 def _load_self_suppress() -> dict[str, set[str]]:
@@ -95,6 +92,42 @@ _rules = RulesEngine(path=RULES_PATH)
 _rules_mtime = os.path.getmtime(RULES_PATH) if os.path.exists(RULES_PATH) else 0.0
 _csc = CSCTrustEngine(weights_path=CSC_WEIGHTS_PATH, db_path=CSC_DB_PATH)
 
+NAME_TRUST_PATH = str((BASE_DIR / "data" / "name_trust.json").resolve())
+_name_trust: dict[str, tuple[str, str, float]] = {}
+_name_trust_mtime: float = 0.0
+
+def _maybe_reload_name_trust() -> None:
+    global _name_trust, _name_trust_mtime
+    try:
+        mtime = os.path.getmtime(NAME_TRUST_PATH)
+    except OSError:
+        mtime = 0.0
+    if mtime > _name_trust_mtime:
+        _name_trust_mtime = mtime
+        try:
+            with open(NAME_TRUST_PATH, encoding="utf-8") as f:
+                obj = json.load(f)
+            # normalize to {name: (verdict, cls, confidence)}
+            nt: dict[str, tuple[str, str, float]] = {}
+            for k, v in (obj or {}).items():
+                if isinstance(v, list) and len(v) == 3:
+                    verdict, cls, conf = v
+                    nt[str(k).lower()] = (str(verdict), str(cls), float(conf))
+            _name_trust = nt
+        except Exception:
+            _name_trust = {}
+
+def _maybe_promote_to_trusted(ev: dict) -> bool:
+    nm = (ev.get("name") or "").lower()
+    verdict = _name_trust.get(nm)
+    if not verdict:
+        return False
+    v, cls, conf = verdict
+    ev["csc"] = {"version":"v2","verdict":v,"cls":cls,"confidence":conf,
+                 "reasons":["name+parent heuristic"],"signals":{}}
+    ev["csc_verdict"], ev["csc_class"], ev["csc_confidence"] = v, cls, conf
+    ev["csc_reasons"] = ["name+parent heuristic"]
+    return True
 
 def _maybe_reload_rules() -> None:
     global _rules, _rules_mtime
@@ -102,505 +135,20 @@ def _maybe_reload_rules() -> None:
         mtime = os.path.getmtime(RULES_PATH)
     except OSError:
         mtime = 0.0
-    if mtime != _rules_mtime:
+    if mtime > _rules_mtime:
         _rules_mtime = mtime
         _rules.rules = _rules._load_rules()
 
 
 # ---------------- Buffers / indices ----------------
-BUFFER_MAX = 1200
+BUFFER_MAX = CFG.buffer_max
 BUFFER: deque[dict[str, Any]] = deque(maxlen=BUFFER_MAX)
 PROC_INDEX: dict[int, dict[str, Any]] = {}
 
-DRAIN_LIMIT_PER_CALL = 300
-DRAIN_DEADLINE_SEC = 0.25
+DRAIN_LIMIT_PER_CALL = CFG.drain_limit_per_call
+DRAIN_DEADLINE_SEC = CFG.drain_deadline_sec
 
-HTML = """
-<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8" />
-  <title>CustosEye · Live</title>
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <link rel="icon" href="/favicon.ico?v=2">
-  <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png?v=2">
-  <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png?v=2">
-  <link rel="apple-touch-icon" href="/apple-touch-icon.png?v=2">
-  <style>
-    :root {
-      --bg:#0b0f14; --panel:#141a22; --text:#e7eef7; --muted:#9ab;
-      --chip-info:#2a6df1; --chip-warning:#e6a700; --chip-critical:#d43c3c; --chip-border:rgba(255,255,255,0.2);
-      --accent:#7cc5ff; --ok:#1db954; --border:#1f2a36; --row:#10161e; --rowAlt:#0d131a; --input:#0f141b;
-      --tab:#0f151d; --tabOn:#1b2634;
-      --trust-low:#c03d3d; --trust-medium:#c27b00; --trust-high:#1db954;
-      --bad:#c03d3d; --warn:#e6a700; --good:#1db954;
-    }
-    @media (prefers-color-scheme: light) {
-      :root {
-        --bg:#f6f8fb; --panel:#fff; --text:#10131a; --muted:#445;
-        --chip-info:#2a6df1; --chip-warning:#c27b00; --chip-critical:#b61e1e; --chip-border:rgba(0,0,0,0.15);
-        --accent:#1565c0; --ok:#128b3a; --border:#e7ebf0; --row:#fff; --rowAlt:#f8fafc; --input:#f3f6fa;
-        --tab:#f1f4f8; --tabOn:#e5ebf3;
-      }
-    }
-    * { box-sizing: border-box; }
-    body { margin:0; background:var(--bg); color:var(--text); font:14px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial; }
-    header { position:sticky; top:0; z-index:5; backdrop-filter: blur(6px); background:linear-gradient(180deg,rgba(0,0,0,0.2),transparent); border-bottom:1px solid var(--border); }
-    .wrap { max-width:1100px; margin:0 auto; padding:16px; }
-    .title { display:flex; align-items:center; gap:10px; margin:4px 0 10px; font-weight:700; letter-spacing:.2px; font-size:18px; }
-    .subtitle { color:var(--muted); font-size:12px; }
-    .panel { background:var(--panel); border:1px solid var(--border); border-radius:12px; padding:12px; box-shadow:0 6px 20px rgba(0,0,0,0.15); }
-    .tabs { display:flex; gap:8px; margin-bottom:10px; }
-    .tab { background:var(--tab); border:1px solid var(--border); border-radius:8px; padding:6px 10px; cursor:pointer; user-select:none; }
-    .tab.on { background:var(--tabOn); border-color:var(--accent); }
-    .controls { display:flex; flex-wrap:wrap; gap:10px; align-items:center; }
-    .chip { display:inline-flex; align-items:center; gap:6px; border:1px solid var(--chip-border); padding:4px 10px; border-radius:999px; font-size:12px; cursor:pointer; user-select:none; background:transparent; color:var(--text); }
-    .chip[data-on="true"] { background:rgba(124,197,255,0.1); border-color:var(--accent); }
-    .chip .dot { width:8px; height:8px; border-radius:999px; }
-    .chip.info .dot { background:var(--chip-info); }
-    .chip.warning .dot { background:var(--chip-warning); }
-    .chip.critical .dot { background:var(--chip-critical); }
-    .chip.ok .dot { background:var(--ok); }
-    .input { background:var(--input); border:1px solid var(--border); padding:8px 10px; border-radius:8px; color:var(--text); min-width:220px; }
-    .btn { background:var(--accent); color:white; border:0; padding:8px 12px; border-radius:8px; cursor:pointer; }
-    .list { margin-top:12px; border-top:1px dashed var(--border); }
-    .row { display:grid; grid-template-columns:108px 100px 1fr; gap:14px; padding:10px 4px; border-bottom:1px solid var(--border); background:var(--row); }
-    .row:nth-child(odd) { background:var(--rowAlt); }
-    .lvl { display:inline-flex; align-items:center; gap:8px; padding:4px 8px; border-radius:999px; font-weight:600; letter-spacing:.3px; }
-    .lvl.info { color:var(--chip-info); background: color-mix(in oklab, var(--chip-info) 14%, transparent); }
-    .lvl.warning { color:var(--chip-warning); background: color-mix(in oklab, var(--chip-warning) 18%, transparent); }
-    .lvl.critical { color:var(--chip-critical); background: color-mix(in oklab, var(--chip-critical) 18%, transparent); }
-    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace; font-size:12px; }
-    .muted { color:var(--muted); }
-    .count { font-weight:600; }
-    .nowrap { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-
-    /* process tree */
-    .tree { margin-top:12px; }
-    .treebar { display:flex; gap:8px; align-items:center; margin-bottom:8px; }
-    .pill { display:inline-block; padding:2px 6px; border-radius:999px; border:1px solid var(--border); font-size:11px; }
-    .pill.low { color: var(--trust-low); border-color: color-mix(in oklab, var(--trust-low) 40%, var(--border)); }
-    .pill.medium { color: var(--trust-medium); border-color: color-mix(in oklab, var(--trust-medium) 40%, var(--border)); }
-    .pill.high { color: var(--trust-high); border-color: color-mix(in oklab, var(--trust-high) 40%, var(--border)); }
-    details { border-left:2px solid var(--border); margin-left:10px; padding-left:8px; }
-    details > summary { list-style: none; cursor: pointer; }
-    summary::-webkit-details-marker { display:none; }
-    .caret { display:inline-block; width:0; height:0; border-top:6px solid transparent; border-bottom:6px solid transparent; border-left:6px solid var(--muted); margin-right:6px; transform: translateY(1px) rotate(-90deg); transition: transform .15s ease; }
-    details[open] > summary .caret { transform: translateY(1px) rotate(0deg); }
-
-    /* integrity tab */
-    .grid { display:grid; gap:10px; grid-template-columns: 1fr; }
-    .card { background:var(--panel); border:1px solid var(--border); border-radius:12px; padding:12px; }
-    .tbl { width:100%; border-collapse: collapse; }
-    .tbl th, .tbl td { padding:8px; border-bottom:1px solid var(--border); text-align:left; font-size:12px; }
-    .badge { display:inline-block; padding:2px 8px; border-radius:999px; border:1px solid var(--border); font-size:11px; }
-    .badge.ok { color:var(--good); border-color: color-mix(in oklab, var(--good) 40%, var(--border)); }
-    .badge.warn { color:var(--warn); border-color: color-mix(in oklab, var(--warn) 40%, var(--border)); }
-    .badge.bad { color:var(--bad); border-color: color-mix(in oklab, var(--bad) 40%, var(--border)); }
-    .row-actions { display:flex; gap:8px; }
-    .small { font-size:11px; color:var(--muted); }
-    .hint { color:var(--muted); font-size:12px; }
-  </style>
-</head>
-<body>
-  <header>
-    <div class="wrap">
-      <div class="title">
-        <img src="/favicon.ico" alt="" style="width:20px;height:20px;border-radius:4px;opacity:.9" />
-        CustosEye <span class="subtitle">local dashboard</span>
-      </div>
-
-      <div class="tabs">
-        <div class="tab on" data-tab="live">Live Events</div>
-        <div class="tab" data-tab="tree">Process Tree</div>
-        <div class="tab" data-tab="integrity">Integrity</div>
-        <div class="tab" data-tab="about">About</div>
-      </div>
-
-      <!-- Live bar -->
-      <div class="panel" id="bar-live">
-        <div class="controls">
-          <button class="chip info" data-on="true" data-level="info"><span class="dot"></span>Info</button>
-          <button class="chip warning" data-on="true" data-level="warning"><span class="dot"></span>Warning</button>
-          <button class="chip critical" data-on="true" data-level="critical"><span class="dot"></span>Critical</button>
-          <button class="chip ok" id="pause" data-on="false"><span class="dot"></span><span id="pauseText">Live</span></button>
-          <input id="search" class="input" placeholder="Search: reason, source, name, pid..." />
-          <button class="btn" id="refresh">Refresh</button>
-          <button class="btn" id="export">Export CSV</button>
-          <div class="muted">Showing <span id="count" class="count">0</span> / <span id="total" class="count">0</span></div>
-        </div>
-      </div>
-
-      <!-- Integrity bar -->
-      <div class="panel" id="bar-integrity" style="display:none">
-        <div class="grid">
-          <div class="card">
-            <div class="controls" style="gap:8px">
-              <button class="btn" id="i-browse">Browse (Windows)</button>
-              <input id="i-path" class="input" placeholder="File path (or use Browse)" style="min-width:360px" />
-              <select id="i-rule" class="input" style="min-width:160px">
-                <option value="sha256">Exact SHA-256</option>
-                <option value="mtime+size">mtime + size</option>
-              </select>
-              <input id="i-note" class="input" placeholder="Note (optional)" style="min-width:200px" />
-              <button class="btn" id="i-hash">Hash Now</button>
-              <button class="btn" id="i-add">Save</button>
-              <span class="hint" id="i-hint"></span>
-            </div>
-            <div class="small" id="i-preview"></div>
-          </div>
-          <div class="card">
-            <table class="tbl" id="i-table">
-              <thead>
-                <tr>
-                  <th>Path</th>
-                  <th>Rule</th>
-                  <th>Baseline</th>
-                  <th>Last result</th>
-                  <th>Actions</th>
-                </tr>
-              </thead>
-              <tbody id="i-tbody"></tbody>
-            </table>
-            <div class="hint">Targets are stored in <span class="mono">data/integrity_targets.json</span> and are hot-reloaded by the IntegrityChecker.</div>
-          </div>
-        </div>
-      </div>
-    </div>
-  </header>
-
-  <main>
-    <div class="wrap">
-      <div id="live" class="list"></div>
-
-      <div id="tree" class="tree" style="display:none">
-        <div class="treebar">
-          <input id="treeSearch" class="input" placeholder="Search PIDs, names, trust..." />
-          <button class="btn" id="treeRefresh">Refresh</button>
-          <button class="btn" id="treeExpand">Expand all</button>
-          <button class="btn" id="treeCollapse">Collapse all</button>
-          <button class="btn" id="treeCopy">Copy</button>
-          <button class="btn" id="treeExport">Export JSON/Excel</button>
-        </div>
-        <div id="treeRoot"></div>
-      </div>
-
-      <div id="about" class="panel" style="display:none"></div>
-    </div>
-  </main>
-
-  <script>
-    const state = { tab:"live", levels:{info:true,warning:true,critical:true}, paused:false, q:"", timer:null, treeQ:"" };
-    // sync initial from buttons (prevents drift)
-    document.querySelectorAll('#bar-live .chip[data-level]').forEach(btn => {
-      const lvl = btn.getAttribute('data-level');
-      const on = btn.getAttribute('data-on') === 'true';
-      state.levels[lvl] = on;
-    });
-
-    const listEl = document.getElementById('live'), searchEl = document.getElementById('search');
-    const countEl = document.getElementById('count'), totalEl = document.getElementById('total');
-    const pauseBtn = document.getElementById('pause'), pauseText = document.getElementById('pauseText');
-    const treeEl = document.getElementById('treeRoot'), aboutEl = document.getElementById('about');
-
-    //integrity refs
-    const iBar = document.getElementById('bar-integrity');
-    const iPath = document.getElementById('i-path');
-    const iRule = document.getElementById('i-rule');
-    const iNote = document.getElementById('i-note');
-    const iBrowse = document.getElementById('i-browse');
-    const iHash = document.getElementById('i-hash');
-    const iAdd = document.getElementById('i-add');
-    const iHint = document.getElementById('i-hint');
-    const iPreview = document.getElementById('i-preview');
-    const iTbody = document.getElementById('i-tbody');
-
-    //tabs
-    document.querySelectorAll('.tab').forEach(t => {
-      t.addEventListener('click', () => {
-        document.querySelectorAll('.tab').forEach(x => x.classList.remove('on'));
-        t.classList.add('on'); state.tab = t.getAttribute('data-tab');
-
-        document.getElementById('live').style.display = (state.tab==='live')?'':'none';
-        document.getElementById('bar-live').style.display = (state.tab==='live')?'':'none';
-        document.getElementById('tree').style.display = (state.tab==='tree')?'':'none';
-        iBar.style.display = (state.tab==='integrity')?'':'none';
-        aboutEl.style.display = (state.tab==='about')?'':'none';
-
-        if (state.tab==='tree') fetchTree();
-        if (state.tab==='about') fetchAbout();
-        if (state.tab==='integrity') loadTargets();
-      });
-    });
-
-    //live filters
-    document.querySelectorAll('#bar-live .chip[data-level]').forEach(btn => {
-      btn.addEventListener('click', () => {
-        const lvl = btn.getAttribute('data-level');
-        const on = btn.getAttribute('data-on') !== 'true';
-        btn.setAttribute('data-on', on ? 'true' : 'false');
-        state.levels[lvl] = on; render(window.__data || []);
-      });
-    });
-
-    pauseBtn.addEventListener('click', () => {
-      state.paused = !state.paused;
-      pauseBtn.setAttribute('data-on', state.paused ? 'true' : 'false');
-      pauseText.textContent = state.paused ? 'Paused' : 'Live';
-    });
-
-    searchEl.addEventListener('input', (e) => { state.q = e.target.value.toLowerCase().trim(); render(window.__data || []); });
-    document.getElementById('refresh').addEventListener('click', fetchData);
-
-    //export live
-    document.getElementById('export').addEventListener('click', () => {
-      const includeInfo = state.levels.info ? '1' : '0';
-      const lvls = Object.entries(state.levels).filter(([k,v]) => v).map(([k])=>k).join(',');
-      const url = `/api/export?format=csv&include_info=${includeInfo}&levels=${encodeURIComponent(lvls)}&q=${encodeURIComponent(state.q)}`;
-      window.location.href = url;
-    });
-
-    //live list rendering
-    function row(ev) {
-      const lvl = (ev.level || 'info').toLowerCase();
-      const reason = ev.reason || 'event';
-      const src = ev.source || '';
-      const pid = ev.pid || '';
-      const name = ev.name || '';
-      const path = ev.path || '';
-      const ts = ev.ts ? new Date(ev.ts * 1000).toLocaleTimeString() : '';
-      const trust = (typeof ev.trust === 'number') ? ` | trust=${ev.trust}(${ev.trust_label || ''})` : '';
-
-      const ident = (src === 'integrity')
-        ? `path=${path || name}`     // show file path for integrity events
-        : `pid=${pid} name=${name}`;
-
-      return `
-        <div class="row">
-          <div class="nowrap"><span class="lvl ${lvl}">${lvl.toUpperCase()}</span></div>
-          <div class="mono muted nowrap">${ts}</div>
-          <div class="mono nowrap">${reason} | source=${src} ${ident}${trust}</div>
-        </div>
-      `;
-    }
-
-    function render(data) {
-      const byLevel = data.filter(ev => state.levels[(ev.level || 'info').toLowerCase()]);
-      const q = state.q;
-      const byQuery = q ? byLevel.filter(ev => {
-        const s = (ev.reason || '') + ' ' + (ev.source || '') + ' ' + (ev.name || '') + ' ' + (ev.pid || '') + ' ' + (ev.path || '');
-        return s.toLowerCase().includes(q);
-      }) : byLevel;
-      countEl.textContent = byQuery.length; totalEl.textContent = data.length;
-      listEl.innerHTML = byQuery.map(row).join('');
-    }
-
-    async function fetchData() {
-      try {
-        const includeInfo = state.levels.info ? '1' : '0';
-        const res = await fetch('/api/events?include_info=' + includeInfo);
-        const data = await res.json();
-        window.__data = data;
-        if (!state.paused && state.tab==='live') render(data);
-      } catch (e) { /* ignore */ }
-    }
-
-    // ---------------- process tree ----------------
-    const treeSearch = document.getElementById('treeSearch');
-    document.getElementById('treeRefresh').addEventListener('click', fetchTree);
-    document.getElementById('treeExpand').addEventListener('click', () => toggleAll(true));
-    document.getElementById('treeCollapse').addEventListener('click', () => toggleAll(false));
-    document.getElementById('treeCopy').addEventListener('click', copyTree);
-    document.getElementById('treeExport').addEventListener('click', () => {
-      const useXlsx = confirm("Export Process Tree as Excel (OK) or JSON (Cancel)?");
-      const fmt = useXlsx ? "xlsx" : "json";
-      window.location.href = `/api/proctree?as=${fmt}`;
-    });
-    treeSearch.addEventListener('input', (e) => { state.treeQ = (e.target.value||'').toLowerCase().trim(); fetchTree(); });
-
-    async function fetchTree() {
-      try {
-        const res = await fetch('/api/proctree');
-        const data = await res.json();
-        const filtered = filterTreeList(data, state.treeQ);
-        treeEl.innerHTML = filtered.map(n => renderNode(n, 0)).join('');
-      } catch (e) {}
-    }
-
-    function filterTreeList(list, q) {
-      if (!q) return list;
-      function match(n) {
-        const s = `${n.pid} ${n.name} ${n.trust_label||''}`.toLowerCase();
-        return s.includes(q);
-      }
-      function filterNode(n) {
-        const kids = (n.children||[]).map(filterNode).filter(Boolean);
-        if (match(n) || kids.length) return { ...n, children: kids };
-        return null;
-      }
-      return list.map(filterNode).filter(Boolean);
-    }
-
-    function pill(trust) {
-      const t = (trust||'').toLowerCase();
-      return `<span class="pill ${t}">${t||''}</span>`;
-    }
-
-    function renderNode(n, depth) {
-      const openAttr = depth < 1 ? " open" : "";
-      const head = `<span class="caret"></span><span class="mono">PID ${n.pid}</span> <span class="mono">${n.name}</span> ${pill(n.trust_label)}`;
-      const kids = (n.children||[]).map(c => renderNode(c, depth+1)).join('');
-      if (!kids) {
-        return `<div style="margin-left:10px"><span class="mono">PID ${n.pid}</span> <span class="mono">${n.name}</span> ${pill(n.trust_label)}</div>`;
-      }
-      return `<details${openAttr}><summary>${head}</summary>${kids}</details>`;
-    }
-
-    function toggleAll(open) {
-      document.querySelectorAll('#treeRoot details').forEach(d => {
-        if (open) d.setAttribute('open','');
-        else d.removeAttribute('open');
-      });
-    }
-
-    function copyTree() {
-      const tmp = document.createElement('textarea');
-      tmp.value = document.getElementById('treeRoot').innerText.trim();
-      document.body.appendChild(tmp);
-      tmp.select(); document.execCommand('copy'); document.body.removeChild(tmp);
-    }
-
-    // ---------------- about ----------------
-    async function fetchAbout() {
-      try {
-        const res = await fetch('/api/about'); const a = await res.json();
-        aboutEl.innerHTML = `
-          <div class="mono"><b>CustosEye</b></div>
-          <div class="muted">Local-only dashboard for monitoring.</div>
-          <div class="mono" style="margin-top:6px">Version: ${a.version || 'dev'}</div>
-          <div class="mono">Build: ${a.build || '-'}</div>
-          <div class="mono">Buffer size: ${a.buffer_max}</div>
-        `;
-      } catch (e) {}
-    }
-
-    // ---------------- integrity tab logic ----------------
-    async function loadTargets() {
-      try {
-        const res = await fetch('/api/integrity/targets');
-        const data = await res.json();
-        renderTargets(data);
-      } catch (e) {
-        iTbody.innerHTML = `<tr><td colspan="5" class="small">Failed to load targets</td></tr>`;
-      }
-    }
-
-    function renderTargets(list) {
-      if (!Array.isArray(list) || list.length === 0) {
-        iTbody.innerHTML = `<tr><td colspan="5" class="small">No files being watched yet.</td></tr>`;
-        return;
-      }
-      iTbody.innerHTML = list.map(row => {
-        const status = row.last_result || '';
-        const badgeCls = status.startsWith('OK') ? 'ok' : (status ? 'bad' : '');
-        const baseline = row.rule === 'sha256'
-          ? (row.sha256 || '')
-          : ((row.mtime && row.size) ? `mtime=${row.mtime} size=${row.size}` : '(none)');
-        return `
-          <tr>
-            <td class="mono">${(row.path||'')}</td>
-            <td>${(row.rule||'sha256')}</td>
-            <td class="mono">${baseline}</td>
-            <td>${status ? `<span class="badge ${badgeCls}">${status}</span>` : ''}</td>
-            <td class="row-actions">
-              <button class="btn" data-act="rehash" data-path="${encodeURIComponent(row.path||'')}">Re-hash</button>
-              <button class="btn" data-act="remove" data-path="${encodeURIComponent(row.path||'')}">Remove</button>
-            </td>
-          </tr>`;
-      }).join('');
-      //wire row actions
-      iTbody.querySelectorAll('button[data-act="remove"]').forEach(btn => {
-        btn.addEventListener('click', async () => {
-          const path = decodeURIComponent(btn.getAttribute('data-path'));
-          if (!confirm('Remove from watch list?')) return;
-          await fetch('/api/integrity/targets', { method:'DELETE', headers:{'Content-Type':'application/json'}, body: JSON.stringify({path}) });
-          loadTargets();
-        });
-      });
-      iTbody.querySelectorAll('button[data-act="rehash"]').forEach(btn => {
-        btn.addEventListener('click', async () => {
-          const path = decodeURIComponent(btn.getAttribute('data-path'));
-          const r = await fetch('/api/integrity/hash', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({path}) });
-          const j = await r.json();
-          alert((j.sha256 ? `SHA-256:\n${j.sha256}` : 'No hash') + (j.error? `\n\nError: ${j.error}`:''));
-          // refresh table to reflect last_result / baseline promotion
-          loadTargets();
-        });
-      });
-    }
-
-    iBrowse.addEventListener('click', async () => {
-      iHint.textContent = 'Opening Windows file dialog...';
-      try {
-        const r = await fetch('/api/integrity/browse', { method:'POST' });
-        const j = await r.json();
-        if (j.path) { iPath.value = j.path; iHint.textContent = ''; } else { iHint.textContent = 'No file selected'; }
-      } catch(e) { iHint.textContent = 'Browse not available'; }
-    });
-
-    iHash.addEventListener('click', async () => {
-      const path = iPath.value.trim();
-      if (!path) { iHint.textContent = 'Pick a file first'; return; }
-      iHint.textContent = 'Hashing...';
-      const r = await fetch('/api/integrity/hash', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({path}) });
-      const j = await r.json();
-      if (j.sha256) {
-        iPreview.textContent = `SHA-256: ${j.sha256}  |  size=${j.size}  |  mtime=${j.mtime}`;
-        if (iRule.value === 'sha256') {
-          // pre-fill baseline preview; we store baseline server-side on Save
-        }
-        iHint.textContent = 'Preview ready';
-      } else {
-        iPreview.textContent = '';
-        iHint.textContent = j.error || 'Failed to hash';
-      }
-    });
-
-    iAdd.addEventListener('click', async () => {
-      const path = iPath.value.trim();
-      if (!path) { iHint.textContent = 'Pick a file first'; return; }
-      const rule = iRule.value;
-      const note = iNote.value.trim();
-      iHint.textContent = 'Saving...';
-      const r = await fetch('/api/integrity/targets', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({path, rule, note}) });
-      const j = await r.json();
-      if (j.ok) {
-        iHint.textContent = 'Saved';
-        iPreview.textContent = '';
-        iNote.value = '';
-        loadTargets();
-      } else {
-        iHint.textContent = j.error || 'Failed to save';
-      }
-    });
-
-    // poller: keep draining regardless of tab; render only when on "live"
-    function tick() {
-      if (state.paused) return;
-      if (state.tab === 'live') {
-        fetchData(); // pulls & renders
-      } else {
-        // keep the backend draining without pulling the full payload
-        fetch('/api/ping').catch(()=>{});
-      }
-    }
-    state.timer = setInterval(tick, 1500);
-    tick(); // kick once at load
-  </script>
-</body>
-</html>
-"""
-
+_DRAIN_LOCK = threading.Lock() # to prevent concurrent drains
 
 # ---------------- fan-out subscription plumbing ----------------
 def _bus_iterator(bus: Any) -> Iterator[dict[str, Any]]:
@@ -661,16 +209,6 @@ def _write_integrity_targets(rows: list[dict[str, Any]]) -> None:
         pass
 
 
-def _expand_user_vars(p: str) -> str:
-    # expand %VARS% and ~; keep relative paths as-is (agent resolves relative to BASE_DIR currently)
-    try:
-        p = os.path.expandvars(p)
-        p = os.path.expanduser(p)
-    except Exception:
-        pass
-    return p
-
-
 def _sha256_file(path: str) -> dict[str, Any]:
     # normalize (env vars, ~, quotes) but keep original text in "path"
     p = _norm_user_path(path)
@@ -710,110 +248,121 @@ def build_app(event_bus) -> Flask:
     # favicon routes
     @app.get("/favicon.ico")
     def favicon():
-        p = Path(_asset_path("assets/favicon.ico"))
-        if p.exists():
-            return send_file(str(p), mimetype="image/x-icon")
-        return ("", 204)
+        return app.send_static_file("assets/favicon.ico")
 
     @app.get("/favicon-32x32.png")
     def favicon_32():
-        p = Path(_asset_path("assets/favicon-32x32.png"))
-        if p.exists():
-            return send_file(str(p), mimetype="image/png")
-        return ("", 204)
+        return app.send_static_file("assets/favicon-32x32.png")
 
     @app.get("/favicon-16x16.png")
     def favicon_16():
-        p = Path(_asset_path("assets/favicon-16x16.png"))
-        if p.exists():
-            return send_file(str(p), mimetype="image/png")
-        return ("", 204)
+        return app.send_static_file("assets/favicon-16x16.png")
 
     @app.get("/apple-touch-icon.png")
     def apple_touch_icon():
-        p = Path(_asset_path("assets/apple-touch-icon.png"))
-        if p.exists():
-            return send_file(str(p), mimetype="image/png")
-        return ("", 204)
-
-    # each Flask app holds its own subscriber iterator
-    _iter = _bus_iterator(event_bus)
+        return app.send_static_file("assets/apple-touch-icon.png")
 
     def drain_into_buffer() -> int:
-        _maybe_reload_rules()
-        drained = 0
-        deadline = time.time() + DRAIN_DEADLINE_SEC
+        with _DRAIN_LOCK:
+          _maybe_reload_rules()
+          _maybe_reload_name_trust()
+          drained = 0
+          deadline = time.time() + DRAIN_DEADLINE_SEC
 
-        while time.time() < deadline and drained < DRAIN_LIMIT_PER_CALL:
-            try:
-                ev = next(_iter)
-            except StopIteration:
-                break
-            except Exception:
-                break
-            if not ev:
-                break
+          while time.time() < deadline and drained < DRAIN_LIMIT_PER_CALL:
+              try:
+                  ev = next(_iter)
+              except StopIteration:
+                  break
+              except Exception:
+                  break
+              if ev is None:
+                continue          # dont exit early; keep trying until deadline
 
-            ev.setdefault("level", "info")
-            ev.setdefault("reason", "event")
-            ev.setdefault("ts", time.time())
+              ev.setdefault("level", "info")
+              ev.setdefault("reason", "event")
+              ev.setdefault("ts", time.time())
 
-            if ev.get("source") != "integrity":
-                decision = _rules.evaluate(ev)
-                ev["level"] = decision.get("level", ev.get("level"))
-                ev["reason"] = decision.get("reason", ev.get("reason"))
+              if ev.get("source") != "integrity":
+                  decision = _rules.evaluate(ev)
+                  ev["level"] = decision.get("level", ev.get("level"))
+                  ev["reason"] = decision.get("reason", ev.get("reason"))
 
-            if ev.get("source") == "process":
-                # --- suppress our own process(es) before any scoring or tree updates ---
-                nm = str(ev.get("name") or "").lower()
-                ex = str(ev.get("exe") or "").lower()
-                h = str(ev.get("sha256") or "").lower()
-                if (
-                    (nm and nm in SELF_SUPPRESS["names"])
-                    or (ex and ex in SELF_SUPPRESS["exes"])
-                    or (h and h in SELF_SUPPRESS["sha256"])
-                ):
-                    continue  # skip buffering and tree indexing entirely
+              if ev.get("source") == "process":
+                  # --- suppress our own process(es) before any scoring or tree updates ---
+                  nm_lc = str(ev.get("name") or "").lower()
+                  ex_lc = str(ev.get("exe") or "").lower()
+                  h_lc  = str(ev.get("sha256") or "").lower()
+                  if (
+                      (nm_lc and nm_lc in SELF_SUPPRESS["names"]) or
+                      (ex_lc and ex_lc in SELF_SUPPRESS["exes"]) or
+                      (h_lc  and h_lc  in SELF_SUPPRESS["sha256"])
+                  ):
+                      continue  # skip buffering and tree indexing entirely
 
-                # trust evaluation
-                t = _csc.evaluate(ev)
-                ev["trust"], ev["trust_label"], ev["trust_reasons"] = (
-                    t["trust"],
-                    t["label"],
-                    t["reasons"],
-                )
+                  # --- trust scoring: name-based fast-path, then kernel/idle/registry, then model ---
+                  pid = ev.get("pid")
+                  nm = str(ev.get("name") or "")
 
-                # process tree index
-                pid = ev.get("pid")
-                if isinstance(pid, int):
-                    PROC_INDEX[pid] = {
-                        "pid": pid,
-                        "ppid": ev.get("ppid"),
-                        "name": ev.get("name") or "",
-                        "trust": t["trust"],
-                        "trust_label": t["label"],
-                    }
+                  # 1) known-good names (your NAME_TRUST map)
+                  if _maybe_promote_to_trusted(ev):
+                      pass  # already set by the heuristic
 
-            if ev.get("source") == "network" and not (ev.get("pid") or ev.get("name")):
-                continue
+                  # 2) kernel/idle/registry fast-path
+                  elif pid in (0, 4) or nm.lower() in ("system", "system idle process", "registry"):
+                      ev["csc"] = {
+                          "version": "v2",
+                          "verdict": "trusted",
+                          "cls": "system",
+                          "confidence": 0.98,
+                          "reasons": ["kernel/idle/registry fast-path"],
+                          "signals": {},
+                      }
+                      ev["csc_verdict"] = "trusted"
+                      ev["csc_class"] = "system"
+                      ev["csc_confidence"] = 0.98
+                      ev["csc_reasons"] = ["kernel/idle/registry fast-path"]
 
-            # if the event is from integrity, make sure we have a display name
-            if ev.get("source") == "integrity":
-                p = ev.get("path") or ev.get("file")
-                if p and not ev.get("name"):
-                    try:
-                        ev["name"] = os.path.basename(str(p))
-                    except Exception:
-                        ev["name"] = str(p)
+                  # 3) everything else → model
+                  else:
+                      csc_out = _csc.evaluate(ev)
+                      ev["csc"] = csc_out
+                      ev["csc_verdict"] = csc_out.get("verdict", "unknown")
+                      ev["csc_class"] = csc_out.get("cls", "unknown")
+                      ev["csc_confidence"] = float(csc_out.get("confidence", 0.5))
+                      ev["csc_reasons"] = csc_out.get("reasons", [])
 
-            BUFFER.append(ev)
-            drained += 1
+                  # process tree index (store the v2 fields)
+                  if isinstance(pid, int):
+                      PROC_INDEX[pid] = {
+                          "pid": pid,
+                          "ppid": ev.get("ppid"),
+                          "name": ev.get("name") or "",
+                          "csc_verdict": ev.get("csc_verdict", "unknown"),
+                          "csc_class": ev.get("csc_class", "unknown"),
+                          "csc_confidence": ev.get("csc_confidence", 0.5),
+                      }
 
-        return drained
+              if ev.get("source") == "network" and not (ev.get("pid") or ev.get("name")):
+                  continue
+
+              # if the event is from integrity, make sure we have a display name
+              if ev.get("source") == "integrity":
+                  p = ev.get("path") or ev.get("file")
+                  if p and not ev.get("name"):
+                      try:
+                          ev["name"] = os.path.basename(str(p))
+                      except Exception:
+                          ev["name"] = str(p)
+
+              BUFFER.append(ev)
+              drained += 1
+
+          return drained
 
     @app.get("/")
     def index():
-        return render_template_string(HTML)
+        return render_template("index.html")
 
     @app.get("/api/events")
     def events():
@@ -845,10 +394,8 @@ def build_app(event_bus) -> Flask:
 
         include_info = (request.args.get("include_info") or "").lower() in ("1", "true", "yes")
         q = (request.args.get("q") or "").lower().strip()
-        lvls = (request.args.get("levels") or "").lower().split(",")
-        lvls = [x for x in lvls if x] or ["warning", "critical"]
+        lvls = [x for x in (request.args.get("levels") or "").lower().split(",") if x]
         fmt = (request.args.get("format") or "csv").lower()
-
         def pass_filters(ev: dict[str, Any]) -> bool:
             lvl = (ev.get("level") or "info").lower()
             if lvl == "info" and not include_info:
@@ -856,7 +403,7 @@ def build_app(event_bus) -> Flask:
             if lvls and lvl not in lvls:
                 return False
             if q:
-                s = f"{ev.get('reason','')} {ev.get('source','')} {ev.get('name','')} {ev.get('pid','')}"
+                s = f"{ev.get('reason','')} {ev.get('source','')} {ev.get('name','')} {ev.get('pid','')} {ev.get('path','')}"
                 if q not in s.lower():
                     return False
             return True
@@ -867,7 +414,7 @@ def build_app(event_bus) -> Flask:
         if fmt == "jsonl":
             lines = [json.dumps(ev, ensure_ascii=False) for ev in rows]
             resp = make_response("\n".join(lines))
-            resp.headers["Content-Type"] = "application/json"
+            resp.headers["Content-Type"] = "application/x-ndjson"
             resp.headers["Content-Disposition"] = 'attachment; filename="custoseye_export.jsonl"'
             return resp
 
@@ -879,7 +426,10 @@ def build_app(event_bus) -> Flask:
             return resp
 
         # common tabular cols
-        cols = ["ts", "level", "reason", "source", "pid", "name", "path", "trust", "trust_label"]
+        cols = [
+            "ts", "level", "reason", "source", "pid", "name", "path",
+            "csc_verdict", "csc_class", "csc_confidence"
+        ]
 
         # XLSX
         if fmt == "xlsx":
@@ -970,7 +520,6 @@ def build_app(event_bus) -> Flask:
 
         Query params:
           as=json  -> download pretty JSON (custoseye_proctree.json)
-          as=xlsx  -> download Excel (custoseye_proctree.xlsx)
           (none)   -> return JSON to the browser (not as attachment)
         """
         drain_into_buffer()
@@ -990,59 +539,20 @@ def build_app(event_bus) -> Flask:
                 "pid": pid,
                 "ppid": r.get("ppid", None),
                 "name": r.get("name", ""),
-                "trust_label": r.get("trust_label", ""),
-                "children": [build(c) for c in sorted(children.get(pid, []))[:100]],
+                "csc_verdict": r.get("csc_verdict", "unknown"),
+                "csc_class": r.get("csc_class", "unknown"),
+                "csc_confidence": float(r.get("csc_confidence", 0.5)),
+                "children": [build(c) for c in sorted(children.get(pid, []))[:CFG.max_tree_children]],
             }
 
-        tree = [build(p) for p in sorted(roots)[:100]]
+        tree = [build(p) for p in sorted(roots)[:CFG.max_tree_roots]]
 
         fmt = (request.args.get("as") or "").lower()
-
         if fmt == "json":
             resp = make_response(json.dumps(tree, indent=2, ensure_ascii=False))
             resp.headers["Content-Type"] = "application/json"
             resp.headers["Content-Disposition"] = 'attachment; filename="custoseye_proctree.json"'
             return resp
-
-        if fmt == "xlsx":
-            try:
-                from openpyxl import Workbook
-                from openpyxl.utils import get_column_letter
-            except Exception:
-                return (
-                    jsonify(
-                        {
-                            "error": "xlsx export requires `openpyxl`",
-                            "hint": "pip install openpyxl or use ?as=json",
-                        }
-                    ),
-                    400,
-                )
-
-            wb = Workbook()
-            ws = wb.active
-            ws.title = "Process Tree"
-            ws.append(["PID", "Name", "Trust Label", "Parent PID"])
-
-            for pid, rec in sorted(PROC_INDEX.items()):
-                ws.append(
-                    [pid, rec.get("name", ""), rec.get("trust_label", ""), rec.get("ppid", "")]
-                )
-
-            for col_idx, width in enumerate((10, 32, 14, 12), start=1):
-                ws.column_dimensions[get_column_letter(col_idx)].width = width
-
-            from io import BytesIO
-
-            bio = BytesIO()
-            wb.save(bio)
-            bio.seek(0)
-            return send_file(
-                bio,
-                as_attachment=True,
-                download_name="custoseye_proctree.xlsx",
-                mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            )
 
         # default inline JSON
         return jsonify(tree)
@@ -1051,7 +561,7 @@ def build_app(event_bus) -> Flask:
     def about():
         version = "-"
         build = "-"
-        vpath = Path(_resolve_base_dir() / "VERSION.txt")
+        vpath = BASE_DIR / "VERSION.txt"
         if vpath.exists():
             try:
                 lines = [
@@ -1101,14 +611,22 @@ def build_app(event_bus) -> Flask:
                     break
             if target is None:
                 target = {"path": path, "rule": rule}
-                if note:
+                if note != "":
                     target["note"] = note
+                else:
+                    # allow clearing the note explicitly with empty string
+                    if "note" in target:
+                        del target["note"]
                 rows.append(target)
             else:
                 target["path"] = path  # keep users original text (env vars allowed)
                 target["rule"] = rule
-                if note:
+                if note != "":
                     target["note"] = note
+                else:
+                    # allow clearing the note explicitly with empty string
+                    if "note" in target:
+                        del target["note"]
 
             # auto-baseline for sha256 if missing
             if rule == "sha256" and not target.get("sha256"):
@@ -1247,9 +765,9 @@ def run_dashboard(event_bus) -> None:
             "build_app() returned None; check for exceptions or missing `return app`."
         )
     if HAVE_WAITRESS:
-        _serve(app, host="127.0.0.1", port=8765)
+        _serve(app, host=CFG.host, port=CFG.port)
     else:
-        app.run(host="127.0.0.1", port=8765, debug=False)
+        app.run(host=CFG.host, port=CFG.port, debug=False)
 
 
 # standalone mode (optional): if you run "python -m dashboard.app"
@@ -1296,7 +814,7 @@ if __name__ == "__main__":
         ProcessMonitor(publish=bus.publish).run,
         NetworkSnapshot(publish=bus.publish).run,
         IntegrityChecker(
-            targets_path=str((BASE_DIR / "data" / "integrity_targets.json").resolve()),
+            targets_path=INTEGRITY_TARGETS_PATH,
             publish=bus.publish,
             interval_sec=5.0,
         ).run,
