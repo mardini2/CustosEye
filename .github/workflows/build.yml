@@ -97,7 +97,7 @@ jobs:
           if (Test-Path dist\CustosEye.exe) { Copy-Item dist\CustosEye.exe release\ }
           if (Test-Path dist\VERSION.txt)   { Copy-Item dist\VERSION.txt   release\ }
           if (Test-Path dist\CUSTOSEYE_SHA256.txt) { Copy-Item dist\CUSTOSEYE_SHA256.txt release\ }
-          if (Test-Path README.md) { Copy-Item README.md release\ }
+          if (Test-Path README_howto.md) { Copy-Item README_howto.md -Destination release\README.md -Force }
 
           # configs
           if (Test-Path data\rules.json)         { Copy-Item data\rules.json          -Destination release\data\ -Force }
@@ -138,9 +138,5 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: |
-            CustosEye-Windows.zip
-            dist/CustosEye.exe
-            dist/VERSION.txt
-            dist/CUSTOSEYE_SHA256.txt
+          files: CustosEye-Windows.zip
           generate_release_notes: true
