@@ -83,15 +83,15 @@
 
 
   "vlc.exe": ["trusted", "popular", 0.90],
-  "spotify.exe": ["trusted", "popular", 0.95],
-  "obs64.exe": ["trusted", "popular", 0.95],
+  "spotify.exe": ["trusted", "popular", 0.90],
+  "obs64.exe": ["trusted", "popular", 0.90],
   "audacity.exe": ["trusted", "popular", 0.90],
-  "photoshop.exe": ["trusted", "popular", 0.95],
-  "adobe premiere pro.exe": ["trusted", "popular", 0.95],
-  "acrobat.exe": ["trusted", "popular", 0.95],
-  "acrobatreader.exe": ["trusted", "popular", 0.95],
-  "illustrator.exe": ["trusted", "popular", 0.95],
-  "after effects.exe": ["trusted", "popular", 0.95],
+  "photoshop.exe": ["trusted", "popular", 0.90],
+  "adobe premiere pro.exe": ["trusted", "popular", 0.90],
+  "acrobat.exe": ["trusted", "popular", 0.90],
+  "acrobatreader.exe": ["trusted", "popular", 0.90],
+  "illustrator.exe": ["trusted", "popular", 0.90],
+  "after effects.exe": ["trusted", "popular", 0.90],
 
   
   "steam.exe": ["trusted", "popular", 0.95],
