@@ -1,23 +1,34 @@
 <!doctype html>
 <html lang="en">
+
 <head>
   <!-- HTML & responsive viewport -->
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
 
-  <!-- page title and social preview -->
+  <!-- Title -->
   <title>CustosEye</title>
-  <meta name="description" content="CustosEye — local-first system visibility and integrity checks. Download the portable Windows build." />
-  <meta property="og:title" content="CustosEye" />
-  <meta property="og:description" content="Your Third Eye" />
-  <meta property="og:type" content="website" />
-  <meta property="og:url" content="https://www.custoseye.com/" />
-  <meta property="og:image" content="assets/favicon.png?v=1" />
 
-  <!-- favicon and CSS (with cache-busting ?v=1) -->
-  <link rel="icon" href="assets/favicon.ico?v=1" />
-  <link rel="stylesheet" href="styles.css?v=1" />
-  <link rel="preload" href="styles.css?v=1" as="style" />
+  <!-- SEO and structured metadata -->
+  <meta name="description" content="CustosEye - local-first system visibility and integrity checks. Portable, private, and telemetry-free." />
+  <meta name="robots" content="index, follow" />
+  <link rel="canonical" href="https://www.custoseye.com/" />
+
+  <!-- Open Graph (social preview) -->
+  <meta property="og:title" content="CustosEye" />
+  <meta property="og:description" content="Your Third Eye - local-first visibility and integrity monitoring." />
+  <meta property="og:url" content="https://www.custoseye.com/" />
+  <meta property="og:type" content="website" />
+  <meta property="og:image" content="https://www.custoseye.com/assets/favicon.png" />
+
+  <!-- Favicon (absolute URL helps Google pick it up) -->
+  <link rel="icon" href="https://www.custoseye.com/assets/favicon.png" type="image/png" />
+  <!-- keep the .ico too for legacy browsers -->
+  <link rel="icon" href="assets/favicon.ico?v=2" sizes="any" />
+
+  <!-- CSS (with cache-busting) -->
+  <link rel="stylesheet" href="styles.css?v=2" />
+  <link rel="preload" href="styles.css?v=2" as="style" />
 </head>
 
 <!-- we use flex on <body> to push footer to the bottom even on short pages -->
@@ -79,7 +90,7 @@
   </section>
 
   <!-- load the tiny renderer after the DOM -->
-  <script src="js/binary.js?v=1" defer></script>
+  <script src="js/binary.js?v=2" defer></script>
 
   <!-- true sticky footer with links -->
   <footer class="foot">
@@ -95,9 +106,9 @@
   </script>
 
   <!-- Cookie banner (shows once until a choice is stored) -->
-  <script src="js/consent.js?v=1"></script>
+  <script src="js/consent.js?v=2"></script>
 
   <!-- GA attaches only after consent; ?debug=1 enables DebugView + dev/test -->
-  <script src="js/analytics-attach.js?v=1" defer></script>
+  <script src="js/analytics-attach.js?v=2" defer></script>
 </body>
 </html>
