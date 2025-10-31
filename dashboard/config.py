@@ -1,14 +1,18 @@
 from __future__ import annotations
+
+import json
+import os
 from dataclasses import dataclass
 from pathlib import Path
-import json, os
+
 
 def _resolve_base_dir() -> Path:
     import sys
+
     if getattr(sys, "frozen", False):
         return Path(sys.executable).parent
-    # adjust to match your current layout (../ from this file → repo root)
     return Path(__file__).resolve().parents[1]
+
 
 @dataclass(frozen=True)
 class Config:
@@ -26,18 +30,24 @@ class Config:
     max_tree_roots: int
     max_tree_children: int
 
+
 def _get(obj: dict, key: str, default):
     env = os.getenv(f"CUSTOSEYE_{key.upper()}")
     if env is not None:
         # try to coerce to int/float when default is numeric
         if isinstance(default, int):
-            try: return int(env)
-            except: return default
+            try:
+                return int(env)
+            except Exception:
+                return default
         if isinstance(default, float):
-            try: return float(env)
-            except: return default
+            try:
+                return float(env)
+            except Exception:
+                return default
         return env
     return obj.get(key, default)
+
 
 def load_config() -> Config:
     base = Path(os.getenv("CUSTOSEYE_BASE_DIR") or _resolve_base_dir())
@@ -54,7 +64,8 @@ def load_config() -> Config:
         rules_path=base / _get(obj, "rules_path", "data/rules.json"),
         csc_weights_path=base / _get(obj, "csc_weights_path", "data/csc_weights.json"),
         csc_db_path=base / _get(obj, "csc_db_path", "data/trust_db.json"),
-        integrity_targets_path=base / _get(obj, "integrity_targets_path", "data/integrity_targets.json"),
+        integrity_targets_path=base
+        / _get(obj, "integrity_targets_path", "data/integrity_targets.json"),
         self_suppress_path=base / _get(obj, "self_suppress_path", "data/self_suppress.json"),
         buffer_max=_get(obj, "buffer_max", 1200),
         drain_limit_per_call=_get(obj, "drain_limit_per_call", 300),

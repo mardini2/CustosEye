@@ -10,6 +10,7 @@ CustosEye launcher: starts agents + dashboard and opens the UI.
 from __future__ import annotations
 
 import argparse
+import logging
 import os
 import queue
 import sys
@@ -18,7 +19,6 @@ import time
 import webbrowser
 from pathlib import Path
 from typing import Any
-import logging
 
 from agent.integrity_check import IntegrityChecker
 from agent.monitor import ProcessMonitor
@@ -106,7 +106,7 @@ def _resolve_base_dir() -> Path:
     return Path(__file__).resolve().parents[1]
 
 
-# -------------- fan-out EventBus --------------
+# fan-out EventBus
 class EventBus:
     """pub/sub fan-out: each subscriber gets every event."""
 

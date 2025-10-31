@@ -1,25 +1,76 @@
-# algorithm/csc_engine.py
-# CSC v2: categorical verdict + confidence with rich classification
-# every line is commented in plain developer English for clarity
+# ruff: noqa: E501
+"""
+goal: Trust engine for processes with a clear verdict, class, and confidence. Small, fast, local.
+
+What this file does
+• Scores a single process event and returns a categorical verdict:
+  malicious | suspicious | caution | trusted | unknown.
+• Adds a coarse class tag (system, popular_app, game, dev_tool, service, script, utility, embedded, unknown).
+• Produces a confidence number and short human reasons, plus a signals blob for debugging and UI.
+
+How it thinks
+• Uses a simple internal score S and a few cut points to map S → verdict.
+• Looks at path context (system, Program Files, temp/downloads).
+• Gives credit for a valid code signature and recognizes common publishers.
+• Heuristics for sketchy names: entropy, hexy strings, misspell tokens.
+• Flags risky network posture (listening ports, especially the spicy ones).
+• Watches parent launcher hints (powershell, cmd, wscript, etc.).
+• Notes elevation and service status, with extra caution if they live in user paths.
+• Learns local prevalence over time using a tiny decayed DB:
+  per-hash and per-basename sightings with a half-life. Common things earn trust.
+• Classifies with simple rules first-hit-wins. Falls back to service/dev_tool/utility/unknown.
+
+Inputs it expects (event dict)
+• source="process" or not (non-process returns unknown quickly)
+• name, exe, sha256
+• parent_name/parent_exe
+• signer_valid, signer_subject
+• is_service, elevation
+• listening_ports, remote_addrs|remote_endpoints
+• file_ctime, file_size_mb
+
+Outputs you get (always)
+{
+  "version": "csc-v2",
+  "verdict": "...",
+  "cls": "...",
+  "confidence": float 0..1,
+  "reasons": [str, ...],   # short, readable
+  "signals": { ... }       # raw flags and numbers for UI and tests
+}
+
+Config and data
+• Weights JSON is optional. Every knob has a sane default so the engine runs out of the box.
+• Tiny JSON DB tracks decayed sightings. Writes are best-effort so the pipeline never breaks.
+
+Notes for future
+• Cut points and bonuses are easy to tune in weights.json.
+• Prevalence half-life controls how quickly the engine forgets.
+• Reasons are intentionally short. Keep them punchy so the UI stays clean.
+"""
 
 from __future__ import annotations
 
 import json  # we load weights and a small local prevalence DB
 import math  # entropy calc and a couple small helpers
-import os    # path checks for context (system dirs, temp, downloads)
+import os  # path checks for context (system dirs, temp, downloads)
 import time  # time-decay and "last seen" tracking
+from numbers import Real  # for isinstance() without tuples (ruff UP038)
 from pathlib import Path  # safe, cross-platform filesystem ops
-from typing import Any, Dict, List, Tuple  # type hints for readability
+from typing import Any  # type hints for readability
 
-# --------- tiny utilities ---------
+# tiny utilities
+
 
 def _now() -> float:
     # return "now" as epoch seconds; used for decay and last_seen
     return time.time()
 
+
 def _safe_lower(x: Any) -> str:
     # best-effort to lower a value safely; empty string for None
     return str(x).lower() if x is not None else ""
+
 
 def _basename(p: str) -> str:
     # robust basename that never throws; falls back to original on odd inputs
@@ -28,9 +79,10 @@ def _basename(p: str) -> str:
     except Exception:
         return p
 
+
 def _to_float(x: Any) -> float | None:
     # try to coerce to float; if it fails just return None
-    if isinstance(x, (int, float)):
+    if isinstance(x, Real):
         return float(x)
     if isinstance(x, str):
         try:
@@ -39,11 +91,13 @@ def _to_float(x: Any) -> float | None:
             return None
     return None
 
+
 def _shannon_entropy(s: str) -> float:
     # quick-n-dirty entropy (higher means "more random-looking")
     if not s:
         return 0.0
     from collections import Counter
+
     counts = Counter(s)
     n = float(len(s))
     ent = 0.0
@@ -51,6 +105,7 @@ def _shannon_entropy(s: str) -> float:
         p = c / n
         ent -= p * math.log(p, 2.0)
     return ent
+
 
 def _looks_hexish(s: str) -> bool:
     # detect long, almost-hexish tokens (very rough, works fine for names)
@@ -63,6 +118,7 @@ def _looks_hexish(s: str) -> bool:
         return False
     return sum(1 for ch in alnum if ch in hex_chars) / len(alnum) >= 0.9
 
+
 def _safe_int(v: Any) -> int:
     # convert to int; on failure return sentinel -1
     try:
@@ -70,7 +126,9 @@ def _safe_int(v: Any) -> int:
     except Exception:
         return -1
 
-# --------- CSC v2 core ---------
+
+# CSC v2 core
+
 
 class CSCTrustEngine:
     """
@@ -101,7 +159,7 @@ class CSCTrustEngine:
         # load the tiny DB (hash/exe sightings with decay)
         self.db = self._load_db()
 
-    # ---------- config / db ----------
+    # config / db
 
     def _load_weights(self) -> dict[str, Any]:
         # defaults: every knob has a sane fallback so you can ship without a file
@@ -109,32 +167,49 @@ class CSCTrustEngine:
             # categorical thresholds live as logit-like cut points on an internal score S
             # we map S -> verdict using these boundaries (ordered low->high)
             "cut_malicious": -2.0,  # S <  -2.0 → malicious
-            "cut_suspicious": -0.5, # -2.0 ≤ S < -0.5 → suspicious
-            "cut_caution": 0.5,     # -0.5 ≤ S < 0.5 → caution
-            "cut_trusted": 1.6,     # 0.5 ≤ S < 1.6 → trusted; S ≥ 1.6 gets "trusted (high)"
+            "cut_suspicious": -0.5,  # -2.0 ≤ S < -0.5 → suspicious
+            "cut_caution": 0.5,  # -0.5 ≤ S < 0.5 → caution
+            "cut_trusted": 1.6,  # 0.5 ≤ S < 1.6 → trusted; S ≥ 1.6 gets "trusted (high)"
             # path groups (lower-cased substring checks)
             "system_paths": ["\\windows\\system32", "/windows/system32"],
             "program_files_paths": ["\\program files", "\\program files (x86)"],
             "temp_paths": [
-                "\\appdata\\local\\temp", "/appdata/local/temp",
-                "\\temp\\", "/tmp/", "\\users\\public\\"
+                "\\appdata\\local\\temp",
+                "/appdata/local/temp",
+                "\\temp\\",
+                "/tmp/",
+                "\\users\\public\\",
             ],
             "downloads_paths": ["\\downloads\\", "/downloads/"],
             # name heuristics
             "susp_name_tokens": [
-                "svhost","svch0st","updater","update","patch","fix","agent","service",
-                "driver","protect","defender","winlogin","security"
+                "svhost",
+                "svch0st",
+                "updater",
+                "update",
+                "patch",
+                "fix",
+                "agent",
+                "service",
+                "driver",
+                "protect",
+                "defender",
+                "winlogin",
+                "security",
             ],
             "misspell_tokens": [
-                ["svchost","svhost"], ["explorer","exploer"], ["chrome","chr0me"],
-                ["system","syst3m"], ["microsoft","micros0ft"]
+                ["svchost", "svhost"],
+                ["explorer", "exploer"],
+                ["chrome", "chr0me"],
+                ["system", "syst3m"],
+                ["microsoft", "micros0ft"],
             ],
             "entropy_name_thresh": 3.8,
             "hexish_name_len": 14,
             # signing and vendor hints
-            "prefer_signed_bonus": 0.8,   # bump on valid signature
-            "unsigned_system_penalty": 0.9,# unsigned in system dir is sketchy
-            "publisher_buckets": {        # quick vendor cues for classification
+            "prefer_signed_bonus": 0.8,  # bump on valid signature
+            "unsigned_system_penalty": 0.9,  # unsigned in system dir is sketchy
+            "publisher_buckets": {  # quick vendor cues for classification
                 "microsoft": "system",
                 "google": "popular_app",
                 "mozilla": "popular_app",
@@ -145,14 +220,14 @@ class CSCTrustEngine:
                 "jetbrains": "dev_tool",
                 "oracle": "popular_app",
                 "nvidia": "driver",
-                "amd": "driver"
+                "amd": "driver",
             },
             # file age/size
             "file_age_days_fresh": 3.0,
             "tiny_binary_mb": 0.15,
             # network posture
-            "risky_ports": [22,3389,4444,5900,135,139,445],
-            "common_ports": [80,443,53,123,587,993],
+            "risky_ports": [22, 3389, 4444, 5900, 135, 139, 445],
+            "common_ports": [80, 443, 53, 123, 587, 993],
             "listen_penalty": 0.6,
             "risky_listen_extra": 1.1,
             "many_listens_extra": 0.4,
@@ -161,8 +236,15 @@ class CSCTrustEngine:
             "remote_many_count": 10,
             # parent/launcher context
             "susp_launchers": [
-                "powershell.exe","pwsh.exe","cmd.exe","wscript.exe","cscript.exe",
-                "mshta.exe","regsvr32.exe","rundll32.exe","wmic.exe"
+                "powershell.exe",
+                "pwsh.exe",
+                "cmd.exe",
+                "wscript.exe",
+                "cscript.exe",
+                "mshta.exe",
+                "regsvr32.exe",
+                "rundll32.exe",
+                "wmic.exe",
             ],
             "susp_launcher_penalty": 0.7,
             # elevation/service context
@@ -178,23 +260,12 @@ class CSCTrustEngine:
             # class mapping thresholds (soft rules to pick a "cls" label)
             "class_rules": {
                 # these are evaluated in order; first hit wins
-                "system": {
-                    "if_system_dir": True,
-                    "if_signed": True
-                },
-                "service": {
-                    "if_service": True
-                },
-                "dev_tool": {
-                    "if_parent_is_dev_shell": True
-                },
-                "game": {
-                    "if_publisher_any": ["valve","epic","unity"]
-                },
-                "popular_app": {
-                    "if_publisher_any": ["google","mozilla","adobe","oracle"]
-                }
-            }
+                "system": {"if_system_dir": True, "if_signed": True},
+                "service": {"if_service": True},
+                "dev_tool": {"if_parent_is_dev_shell": True},
+                "game": {"if_publisher_any": ["valve", "epic", "unity"]},
+                "popular_app": {"if_publisher_any": ["google", "mozilla", "adobe", "oracle"]},
+            },
         }
         try:
             with open(self.weights_path, encoding="utf-8") as f:
@@ -243,7 +314,7 @@ class CSCTrustEngine:
         except Exception:
             pass
 
-    # ---------- small helpers ----------
+    # small helpers
 
     def _days_since(self, ts: float) -> float:
         # convert epoch to days ago; big number if 0/None
@@ -260,7 +331,7 @@ class CSCTrustEngine:
             return float(seen)
         return float(seen) * (0.5 ** (days / float(halflife_days)))
 
-    # ---------- main API ----------
+    # main API
 
     def evaluate(self, event: dict[str, Any]) -> dict[str, Any]:
         # non-process events get a neutral "unknown" verdict right away
@@ -271,14 +342,14 @@ class CSCTrustEngine:
                 "cls": "unknown",
                 "confidence": 0.35,
                 "reasons": ["not a process event"],
-                "signals": {}
+                "signals": {},
             }
 
         w = self.weights  # keep the alias short for readability
-        reasons: List[str] = []  # human messages we bubble up for the UI
-        signals: Dict[str, Any] = {}  # raw flags we expose for debugging/exports
+        reasons: list[str] = []  # human messages we bubble up for the UI
+        signals: dict[str, Any] = {}  # raw flags we expose for debugging/exports
 
-        # --- normalize inputs we care about ---
+        # normalize inputs we care about
         name = _safe_lower(event.get("name"))
         exe = _safe_lower(event.get("exe"))
         sha256 = _safe_lower(event.get("sha256"))
@@ -304,24 +375,16 @@ class CSCTrustEngine:
         file_ctime = float(event.get("file_ctime") or 0.0)
         file_size_mb = _to_float(event.get("file_size_mb"))
 
-        # keep a tiny prevalence memory; we update it on each sighting
-        if sha256:
-            h = self.db["hash_stats"].setdefault(sha256, {"seen": 0, "last_seen": 0.0})
-            h["seen"] = int(h.get("seen", 0)) + 1
-            h["last_seen"] = _now()
-        if base:
-            e = self.db["exe_stats"].setdefault(base.lower(), {"seen": 0, "last_seen": 0.0})
-            e["seen"] = int(e.get("seen", 0)) + 1
-            e["last_seen"] = _now()
-
-        # --- compute an internal score S (unbounded real) ---
+        # compute an internal score S (unbounded real)
         # we start near zero, then push up/down with small additive bumps
         S = 0.0
 
         # 1) path context (system vs program files vs temp/downloads)
         in_system = bool(exe and any(seg in exe for seg in w["system_paths"]))
         in_pf = bool(exe and any(seg in exe for seg in w["program_files_paths"]))
-        in_userish = bool(exe and any(seg in exe for seg in (w["temp_paths"] + w["downloads_paths"])))
+        in_userish = bool(
+            exe and any(seg in exe for seg in (w["temp_paths"] + w["downloads_paths"]))
+        )
 
         signals["in_system_dir"] = in_system
         signals["in_program_files"] = in_pf
@@ -426,11 +489,13 @@ class CSCTrustEngine:
 
         # 8) prevalence with time-decay (things seen often here earn trust gradually)
         halflife = float(w["prevalence_halflife_days"])
+
         if sha256:
             hs = self.db["hash_stats"].get(sha256, {"seen": 0, "last_seen": 0.0})
-            eff = self._decayed_seen(int(hs.get("seen", 0) or 0),
-                                     _to_float(hs.get("last_seen")) or 0.0,
-                                     halflife)
+            seen_prev = int(hs.get("seen", 0) or 0)
+            last_seen = _to_float(hs.get("last_seen")) or 0.0
+            # exclude current sighting from effective-seen
+            eff = self._decayed_seen(max(seen_prev - 1, 0), last_seen, halflife)
             signals["hash_eff_seen"] = eff
             if eff >= float(w["hash_seen_thresh"]):
                 S += float(w["prevalence_hash_bonus"])
@@ -438,11 +503,13 @@ class CSCTrustEngine:
             else:
                 S -= float(w["unknown_hash_penalty"])
                 reasons.append("hash is rare/unknown on this machine")
+
         if base:
             es = self.db["exe_stats"].get(base.lower(), {"seen": 0, "last_seen": 0.0})
-            eff2 = self._decayed_seen(int(es.get("seen", 0) or 0),
-                                      _to_float(es.get("last_seen")) or 0.0,
-                                      halflife)
+            seen_prev2 = int(es.get("seen", 0) or 0)
+            last_seen2 = _to_float(es.get("last_seen")) or 0.0
+            # exclude current sighting from effective-seen
+            eff2 = self._decayed_seen(max(seen_prev2 - 1, 0), last_seen2, halflife)
             signals["exe_eff_seen"] = eff2
             if eff2 >= float(w["exe_seen_thresh"]):
                 S += float(w["prevalence_exe_bonus"])
@@ -454,6 +521,21 @@ class CSCTrustEngine:
         # convert internal S into a categorical verdict and a confidence
         verdict, confidence = self._to_verdict_and_confidence(S, w)
 
+        # record the sighting *after* scoring so decay uses pre-update stats
+        try:
+            now_ts = _now()
+            if sha256:
+                h2 = self.db["hash_stats"].setdefault(sha256, {"seen": 0, "last_seen": 0.0})
+                h2["seen"] = int(h2.get("seen", 0)) + 1
+                h2["last_seen"] = now_ts
+            if base:
+                e2 = self.db["exe_stats"].setdefault(base.lower(), {"seen": 0, "last_seen": 0.0})
+                e2["seen"] = int(e2.get("seen", 0)) + 1
+                e2["last_seen"] = now_ts
+        except Exception:
+            # never fail scoring on telemetry bookkeeping
+            pass
+
         # persist DB at the end; never fail the flow if this throws
         self._save_db()
 
@@ -464,12 +546,14 @@ class CSCTrustEngine:
             "cls": cls,
             "confidence": confidence,
             "reasons": reasons,
-            "signals": signals
+            "signals": signals,
         }
 
-    # --------- helpers: class + verdict mapping ---------
+    # helpers: class + verdict mapping
 
-    def _classify(self, signals: Dict[str, Any], publisher: str, is_service: bool, parent_path: str) -> str:
+    def _classify(
+        self, signals: dict[str, Any], publisher: str, is_service: bool, parent_path: str
+    ) -> str:
         # this maps to a coarse "family" label that the UI can badge nicely
         w = self.weights
 
@@ -479,7 +563,7 @@ class CSCTrustEngine:
         parent_is_dev_shell = parent_base in {"powershell.exe", "pwsh.exe", "cmd.exe"}
 
         # evaluate rule buckets in order; first match wins
-        rules: Dict[str, Dict[str, Any]] = dict(w.get("class_rules", {}))
+        rules: dict[str, dict[str, Any]] = dict(w.get("class_rules", {}))
         for label, rule in rules.items():
             # simple checks; each key is optional and treated as AND within the rule
             if rule.get("if_system_dir") and not in_system:
@@ -504,7 +588,7 @@ class CSCTrustEngine:
             return "utility"
         return "unknown"
 
-    def _to_verdict_and_confidence(self, S: float, w: dict[str, Any]) -> Tuple[str, float]:
+    def _to_verdict_and_confidence(self, S: float, w: dict[str, Any]) -> tuple[str, float]:
         # map internal score S to categorical verdict using cut points
         # confidence uses a smooth logistic curve around the chosen region
         if S < float(w["cut_malicious"]):

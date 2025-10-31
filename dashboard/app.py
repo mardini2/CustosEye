@@ -1,20 +1,60 @@
 # ruff: noqa: E501
 """
-goal: local Flask dashboard for CustosEye — live telemetry + process tree, fast, simple, offline.
+goal: Local Flask dashboard for CustosEye — live telemetry, trust-aware process tree, and
+       privacy-preserving file-integrity baselining/diff. Fast, simple, offline.
 
 Highlights (this build):
-1. fan-out subscription to a shared EventBus (no races with the console).
-2. tabs: Live Events, Process Tree, About. no in-page console; terminal only prints “welcome + URL”.
-3. live stream: Info/Warning/Critical filters, search, pause, refresh, CSV/JSON/JSONL/XLSX export.
-4. trust overlay: CSCTrustEngine integration; trust score/label on rows and in the process tree.
-5. process tree: PPID→PID hierarchy via native <details>, search, expand/collapse, copy, JSON/XLSX export.
-6. hot-reload of rules.json; suppress noisy network events that lack pid/name.
-7. assets: favicon + apple-touch routes (versioned), compatible with PyInstaller bundling.
-8. performance guardrails: bounded ring buffer, per-call drain cap, short deadlines to keep the UI snappy.
+1) Event ingestion & performance
+   • Fan-out subscription to a shared EventBus; lightweight /api/ping keeps drains moving.
+   • Bounded ring buffer with fingerprint-based coalescing and “worse event” promotion.
+   • Guardrails: per-call drain cap + short deadlines + a drain lock to avoid concurrent drains.
+
+2) UI surface
+   • Tabs: Live Events, Process Tree, About. Terminal only prints “welcome + URL”.
+   • Static assets (favicon + Apple touch icons) are routed and PyInstaller-friendly.
+
+3) Live event stream
+   • Level filters (Info/Warning/Critical), free-text search, pause/refresh (client-side).
+   • Export current view as CSV / JSON / JSONL / XLSX (Excel-friendly BOM/quoting; auto-sized XLSX).
+   • Noise control: drop network events that lack pid/name; self-suppression by name/exe/sha256.
+
+4) Trust overlay (v2)
+   • CSCTrustEngine v2 (weights/db from config) scores processes; fields land on rows and in tree:
+     csc_verdict / csc_class / csc_confidence (+ reasons/signals blob).
+   • Fast-paths: kernel/idle/registry are auto-trusted; optional name_trust.json heuristic map.
+   • RulesEngine still evaluates non-integrity events for level/reason tagging (hot-reloaded).
+
+5) Process tree
+   • Compact PPID→PID hierarchy (native <details> in UI). Caps for roots/children from config.
+   • Trust labels/score propagate to each node. Export pretty JSON via /api/proctree?as=json.
+
+6) Integrity watch list & hashing
+   • CRUD: /api/integrity/targets GET/POST/DELETE (paths + rule="sha256" | "mtime+size" + note).
+   • Auto-baseline on first hash (sha256 or mtime+size). Emits live integrity events (OK/CHANGED/ERR).
+   • Per-chunk baseline hashes for diffs (algo, chunk_size, size, hashes).
+   • Optional content-addressed baseline snapshot (ALLOW_MTIME_SNAPSHOTS) with size-cap pruning and
+     download endpoint (/api/integrity/baseline/download?path=…).
+
+7) Privacy-preserving diff (Office-aware)
+   • /api/integrity/diff returns only: changed chunk ranges, tiny “after” previews (hex+ASCII),
+     and an estimated % changed.
+   • Office docs (docx/xlsx/pptx) use a ZIP member manifest (added/removed/modified) to estimate
+     change without 100% spikes from repacking.
+
+8) Quality-of-life
+   • Windows-only file picker (/api/integrity/browse) to add targets.
+   • About endpoint reads VERSION.txt (version/build/buffer_max).
+   • Config-driven paths/limits (rules_path, csc weights/db, integrity targets, self-suppress list).
+
+9) Packaging/runtime
+   • Optional Waitress serve; otherwise Flask dev server (debug off).
+   • Base dir and data paths resolve cleanly under PyInstaller bundles.
+
 """
 
 from __future__ import annotations
 
+# --- standard library ---
 import csv
 import hashlib
 import io
@@ -23,12 +63,13 @@ import os
 import sys
 import threading
 import time
+import zipfile
 from collections import deque
 from collections.abc import Iterator
 from pathlib import Path
-from typing import Any, cast
-import zipfile
+from typing import Any, TypedDict, cast
 
+# --- third-party ---
 from flask import (
     Flask,
     jsonify,
@@ -38,7 +79,20 @@ from flask import (
     send_file,
 )
 
-# waitress optional
+# --- local/project imports (move these up here) ---
+from agent.rules_engine import RulesEngine
+from algorithm.csc_engine import CSCTrustEngine  # v2 under the hood
+from dashboard.config import Config, load_config
+
+
+# (now we can define classes/variables/etc.)
+class RecentMeta(TypedDict, total=False):
+    ref: dict[str, Any]
+    seen: int
+    last_seen: float
+
+
+# single waitress optional block (we keep only this one, after all imports)
 try:
     from waitress import serve as _serve
 
@@ -47,11 +101,6 @@ except Exception:
     HAVE_WAITRESS = False
     _serve = None  # type: ignore
 
-from agent.rules_engine import RulesEngine
-# import the new v2 engine (same class name for painless upgrades)
-from algorithm.csc_engine import CSCTrustEngine  # v2 under the hood
-
-from dashboard.config import load_config, Config
 CFG: Config = load_config()
 
 ALLOW_MTIME_SNAPSHOTS: bool = bool(getattr(CFG, "allow_mtime_snapshots", True))
@@ -89,6 +138,7 @@ NAME_TRUST_PATH = str((BASE_DIR / "data" / "name_trust.json").resolve())
 _name_trust: dict[str, tuple[str, str, float]] = {}
 _name_trust_mtime: float = 0.0
 
+
 def _maybe_reload_name_trust() -> None:
     global _name_trust, _name_trust_mtime
     try:
@@ -110,17 +160,25 @@ def _maybe_reload_name_trust() -> None:
         except Exception:
             _name_trust = {}
 
+
 def _maybe_promote_to_trusted(ev: dict) -> bool:
     nm = (ev.get("name") or "").lower()
     verdict = _name_trust.get(nm)
     if not verdict:
         return False
     v, cls, conf = verdict
-    ev["csc"] = {"version":"v2","verdict":v,"cls":cls,"confidence":conf,
-                 "reasons":["name+parent heuristic"],"signals":{}}
+    ev["csc"] = {
+        "version": "v2",
+        "verdict": v,
+        "cls": cls,
+        "confidence": conf,
+        "reasons": ["name+parent heuristic"],
+        "signals": {},
+    }
     ev["csc_verdict"], ev["csc_class"], ev["csc_confidence"] = v, cls, conf
     ev["csc_reasons"] = ["name+parent heuristic"]
     return True
+
 
 def _maybe_reload_rules() -> None:
     global _rules, _rules_mtime
@@ -132,6 +190,7 @@ def _maybe_reload_rules() -> None:
         _rules_mtime = mtime
         _rules.rules = _rules._load_rules()
 
+
 # ---------------- Buffers / indices ----------------
 BUFFER_MAX = CFG.buffer_max
 BUFFER: deque[dict[str, Any]] = deque(maxlen=BUFFER_MAX)
@@ -139,14 +198,16 @@ PROC_INDEX: dict[int, dict[str, Any]] = {}
 
 # --- dedupe/coalesce guard for live events ---
 RECENT_TTL = 15.0  # seconds
-RECENT_MAP: dict[str, dict[str, Any]] = {}  # fp -> {"ref": ev_dict, "seen": int, "last_seen": float}
+RECENT_MAP: dict[str, RecentMeta] = {}  # fp -> {"ref": ev_dict, "seen": int, "last_seen": float}
 
 _SEV_RANK = {"info": 0, "warning": 1, "critical": 2}
 _VERDICT_RANK = {"trusted": 0, "caution": 1, "suspicious": 2, "malicious": 3, "unknown": 1}
 
+
 def _fingerprint_base(ev: dict) -> str:
     key_fields = ("source", "reason", "pid", "name", "path", "rule")
     return json.dumps({k: ev.get(k) for k in key_fields}, sort_keys=True, ensure_ascii=False)
+
 
 def _is_worse(prev: dict, cur: dict) -> bool:
     pl = _SEV_RANK.get(str(prev.get("level", "info")).lower(), 0)
@@ -169,12 +230,16 @@ def _is_worse(prev: dict, cur: dict) -> bool:
     if (prev.get("source") == "integrity") or (cur.get("source") == "integrity"):
         if str(prev.get("last_result", "")) != str(cur.get("last_result", "")):
             return True
-        if (str(cur.get("rule", "")).lower() == "sha256"
-            and cur.get("sha256") and prev.get("sha256")
-            and str(cur.get("sha256")).upper() != str(prev.get("sha256")).upper()):
+        if (
+            str(cur.get("rule", "")).lower() == "sha256"
+            and cur.get("sha256")
+            and prev.get("sha256")
+            and str(cur.get("sha256")).upper() != str(prev.get("sha256")).upper()
+        ):
             return True
 
     return False
+
 
 def _coalesce_or_admit(ev: dict) -> bool:
     """
@@ -183,19 +248,19 @@ def _coalesce_or_admit(ev: dict) -> bool:
     """
     now = time.time()
     # prune expired
-    for k, meta in list(RECENT_MAP.items()):
-        if now - float(meta.get("last_seen", 0)) > RECENT_TTL:
+    for k, rec in list(RECENT_MAP.items()):  # <— renamed from `entry`
+        if now - float(rec.get("last_seen", 0)) > RECENT_TTL:
             RECENT_MAP.pop(k, None)
 
     fp = _fingerprint_base(ev)
-    meta = RECENT_MAP.get(fp)
+    hit: RecentMeta | None = RECENT_MAP.get(fp)  # <— distinct name
 
-    if not meta:
+    if hit is None:
         ev["seen"] = 1
         RECENT_MAP[fp] = {"ref": ev, "seen": 1, "last_seen": now}
         return True
 
-    prev = meta["ref"]
+    prev: dict[str, Any] = hit["ref"]
 
     # admit if the new one is worse (higher severity, worse verdict/class/conf)
     if _is_worse(prev, ev):
@@ -204,16 +269,18 @@ def _coalesce_or_admit(ev: dict) -> bool:
         return True
 
     # otherwise coalesce
-    meta["seen"] = int(meta.get("seen", 1)) + 1
-    meta["last_seen"] = now
-    prev["seen"] = meta["seen"]
+    hit["seen"] = int(hit.get("seen", 1)) + 1
+    hit["last_seen"] = now
+    prev["seen"] = hit["seen"]
     prev["ts"] = ev.get("ts", now)  # keep the displayed timestamp fresh
     return False
+
 
 DRAIN_LIMIT_PER_CALL = CFG.drain_limit_per_call
 DRAIN_DEADLINE_SEC = CFG.drain_deadline_sec
 
-_DRAIN_LOCK = threading.Lock() # to prevent concurrent drains
+_DRAIN_LOCK = threading.Lock()  # to prevent concurrent drains
+
 
 # ---------------- fan-out subscription plumbing ----------------
 def _bus_iterator(bus: Any) -> Iterator[dict[str, Any]]:
@@ -306,31 +373,31 @@ def _norm_user_path(p: str) -> str:
 # ----- Integrity: chunk hashing + diff utilities -----
 def _chunk_hashes(path: str, chunk_size: int = 4096) -> dict[str, Any]:
     # compute sha256 for each fixed-size chunk to enable region-level diffs
-    p = _norm_user_path(path)                                        # normalize the path
+    p = _norm_user_path(path)  # normalize the path
     try:
-        st = os.stat(p)                                              # stat to get size quickly
-        total = int(st.st_size)                                      # total file size in bytes
+        st = os.stat(p)  # stat to get size quickly
+        total = int(st.st_size)  # total file size in bytes
     except Exception as e:
-        return {"error": f"stat failed: {e}"}                        # bubble error to caller
+        return {"error": f"stat failed: {e}"}  # bubble error to caller
 
-    hashes: list[str] = []                                           # per-chunk hex digests
+    hashes: list[str] = []  # per-chunk hex digests
     try:
-        with open(p, "rb") as f:                                     # open file in binary
+        with open(p, "rb") as f:  # open file in binary
             while True:
-                chunk = f.read(chunk_size)                           # read a fixed-size block
-                if not chunk:                                        # EOF
+                chunk = f.read(chunk_size)  # read a fixed-size block
+                if not chunk:  # EOF
                     break
-                h = hashlib.sha256()                                 # use sha256 for consistency
-                h.update(chunk)                                      # hash the chunk
-                hashes.append(h.hexdigest().upper())                 # store uppercase hex
+                h = hashlib.sha256()  # use sha256 for consistency
+                h.update(chunk)  # hash the chunk
+                hashes.append(h.hexdigest().upper())  # store uppercase hex
     except Exception as e:
-        return {"error": f"read failed: {e}"}                        # I/O errors return gracefully
+        return {"error": f"read failed: {e}"}  # I/O errors return gracefully
 
     return {
-        "algo": "sha256",                                            # hashing algorithm
-        "chunk_size": int(chunk_size),                               # size of each chunk in bytes
-        "size": total,                                               # total size at time of baselining
-        "hashes": hashes,                                            # list of per-chunk digests
+        "algo": "sha256",  # hashing algorithm
+        "chunk_size": int(chunk_size),  # size of each chunk in bytes
+        "size": total,  # total size at time of baselining
+        "hashes": hashes,  # list of per-chunk digests
     }
 
 
@@ -364,11 +431,11 @@ def _read_region_preview(path: str, start: int, length: int, cap: int = 64) -> b
     p = _norm_user_path(path)
     try:
         with open(p, "rb") as f:
-            f.seek(max(0, start))                                    # guard negative offsets
-            return f.read(max(0, min(cap, length)))                  # clamp to [0, cap]
+            f.seek(max(0, start))  # guard negative offsets
+            return f.read(max(0, min(cap, length)))  # clamp to [0, cap]
     except Exception:
-        return b""                                                   # on error, no preview
-    
+        return b""  # on error, no preview
+
 
 def _zip_manifest(path: str) -> dict[str, dict[str, int]]:
     """
@@ -399,25 +466,54 @@ def _zip_manifest(path: str) -> dict[str, dict[str, int]]:
         return {}
     return out
 
+
 def _nl_file_kind(path: str) -> str:
     p = (path or "").lower()
-    if p.endswith((".pptx", ".ppt")): return "PowerPoint"
-    if p.endswith((".docx", ".doc")): return "Word document"
-    if p.endswith((".xlsx", ".xls")): return "Excel workbook"
-    if p.endswith((".pdf",)):         return "PDF"
-    if p.endswith((".txt", ".log")):  return "text file"
-    if p.endswith((".py", ".js", ".ts", ".c", ".cpp", ".cs", ".java", ".rb", ".rs", ".go", ".php", ".sh", ".ps1", ".r", ".m", ".scala", ".kt")):
+    if p.endswith((".pptx", ".ppt")):
+        return "PowerPoint"
+    if p.endswith((".docx", ".doc")):
+        return "Word document"
+    if p.endswith((".xlsx", ".xls")):
+        return "Excel workbook"
+    if p.endswith((".pdf",)):
+        return "PDF"
+    if p.endswith((".txt", ".log")):
+        return "text file"
+    if p.endswith(
+        (
+            ".py",
+            ".js",
+            ".ts",
+            ".c",
+            ".cpp",
+            ".cs",
+            ".java",
+            ".rb",
+            ".rs",
+            ".go",
+            ".php",
+            ".sh",
+            ".ps1",
+            ".r",
+            ".m",
+            ".scala",
+            ".kt",
+        )
+    ):
         return "source code"
     return "file"
 
-def _nl_summary_for_diff(path: str,
-                         approx_bytes_changed: int,
-                         percent: float,
-                         ranges: list[tuple[int,int]],
-                         zip_changes: list[dict[str, Any]],
-                         chunk_size: int,
-                         base_size: int,
-                         cur_size: int) -> dict[str, str]:
+
+def _nl_summary_for_diff(
+    path: str,
+    approx_bytes_changed: int,
+    percent: float,
+    ranges: list[tuple[int, int]],
+    zip_changes: list[dict[str, Any]],
+    chunk_size: int,
+    base_size: int,
+    cur_size: int,
+) -> dict[str, str]:
     """Return {'headline': str, 'details': str}"""
     kind = _nl_file_kind(path)
     # Headline
@@ -444,16 +540,21 @@ def _nl_summary_for_diff(path: str,
     if chunk_regions:
         total_chunks = 0
         for s, e in ranges:
-            total_chunks += (e - s + 1)
-        parts.append(f"Changed regions: {chunk_regions} ({total_chunks} chunk(s) of {chunk_size} bytes).")
+            total_chunks += e - s + 1
+        parts.append(
+            f"Changed regions: {chunk_regions} ({total_chunks} chunk(s) of {chunk_size} bytes)."
+        )
 
     # Office containers (docx/xlsx/pptx)
     if zip_changes:
         a, r, m = len(added), len(removed), len(modified)
         bits = []
-        if a: bits.append(f"{a} added")
-        if r: bits.append(f"{r} removed")
-        if m: bits.append(f"{m} modified")
+        if a:
+            bits.append(f"{a} added")
+        if r:
+            bits.append(f"{r} removed")
+        if m:
+            bits.append(f"{m} modified")
         parts.append("ZIP members: " + ", ".join(bits) + ".")
 
     # Heuristics by type
@@ -474,13 +575,16 @@ def _nl_summary_for_diff(path: str,
     details = " ".join(parts)
     return {"headline": headline, "details": details}
 
+
 # -------- Baseline snapshot storage (content-addressed) --------
 BASELINES_DIR = str((BASE_DIR / "data" / "baselines").resolve())
 BASELINES_MAX_BYTES: int = int(getattr(CFG, "baselines_max_bytes", 1_000_000_000))  # ~1 GB default
 
+
 def _shard_dir_from_hex(h: str) -> str:
     # shard to avoid huge directories
     return os.path.join(BASELINES_DIR, h[:2], h[2:4], h)
+
 
 def _snapshot_file_to_cas(src_path: str) -> dict[str, Any]:
     """
@@ -517,6 +621,7 @@ def _snapshot_file_to_cas(src_path: str) -> dict[str, Any]:
         "created_at": int(time.time()),
     }
 
+
 def _validate_cas_blob(blob: dict[str, Any]) -> bool:
     try:
         p = blob.get("stored_path")
@@ -532,7 +637,8 @@ def _validate_cas_blob(blob: dict[str, Any]) -> bool:
         return h.hexdigest().upper() == str(blob.get("sha256", "")).upper()
     except Exception:
         return False
-    
+
+
 def _maybe_prune_baselines() -> None:
     """
     Keep total size of BASELINES_DIR under BASELINES_MAX_BYTES.
@@ -566,6 +672,7 @@ def _maybe_prune_baselines() -> None:
                     pass
     except Exception:
         pass
+
 
 # ---------------- Flask app build ----------------
 def build_app(event_bus) -> Flask:
@@ -628,104 +735,109 @@ def build_app(event_bus) -> Flask:
 
     def drain_into_buffer() -> int:
         with _DRAIN_LOCK:
-          _maybe_reload_rules()
-          _maybe_reload_name_trust()
-          drained = 0
-          deadline = time.time() + DRAIN_DEADLINE_SEC
+            _maybe_reload_rules()
+            _maybe_reload_name_trust()
+            drained = 0
+            deadline = time.time() + DRAIN_DEADLINE_SEC
 
-          while time.time() < deadline and drained < DRAIN_LIMIT_PER_CALL:
-              try:
-                  ev = next(_iter)
-              except StopIteration:
-                  break
-              except Exception:
-                  break
-              if ev is None:
-                continue          # dont exit early; keep trying until deadline
+            while time.time() < deadline and drained < DRAIN_LIMIT_PER_CALL:
+                try:
+                    ev = next(_iter)
+                except StopIteration:
+                    break
+                except Exception:
+                    break
+                if ev is None:
+                    continue  # dont exit early; keep trying until deadline
 
-              ev.setdefault("level", "info")
-              ev.setdefault("reason", "event")
-              ev.setdefault("ts", time.time())
+                ev.setdefault("level", "info")
+                ev.setdefault("reason", "event")
+                ev.setdefault("ts", time.time())
 
-              if ev.get("source") != "integrity":
-                  decision = _rules.evaluate(ev)
-                  ev["level"] = decision.get("level", ev.get("level"))
-                  ev["reason"] = decision.get("reason", ev.get("reason"))
+                if ev.get("source") != "integrity":
+                    # makes sure we always have a dict for mypy and runtime safety
+                    decision: dict[str, Any] = cast(dict[str, Any], _rules.evaluate(ev) or {})
+                    ev["level"] = decision.get("level", ev.get("level"))
+                    ev["reason"] = decision.get("reason", ev.get("reason"))
 
-              if ev.get("source") == "process":
-                  # --- suppress our own process(es) before any scoring or tree updates ---
-                  nm_lc = str(ev.get("name") or "").lower()
-                  ex_lc = str(ev.get("exe") or "").lower()
-                  h_lc  = str(ev.get("sha256") or "").lower()
-                  if (
-                      (nm_lc and nm_lc in SELF_SUPPRESS["names"]) or
-                      (ex_lc and ex_lc in SELF_SUPPRESS["exes"]) or
-                      (h_lc  and h_lc  in SELF_SUPPRESS["sha256"])
-                  ):
-                      continue  # skip buffering and tree indexing entirely
+                if ev.get("source") == "process":
+                    # --- suppress our own process(es) before any scoring or tree updates ---
+                    nm_lc = str(ev.get("name") or "").lower()
+                    ex_lc = str(ev.get("exe") or "").lower()
+                    h_lc = str(ev.get("sha256") or "").lower()
+                    if (
+                        (nm_lc and nm_lc in SELF_SUPPRESS["names"])
+                        or (ex_lc and ex_lc in SELF_SUPPRESS["exes"])
+                        or (h_lc and h_lc in SELF_SUPPRESS["sha256"])
+                    ):
+                        continue  # skip buffering and tree indexing entirely
 
-                  # --- trust scoring: name-based fast-path, then kernel/idle/registry, then model ---
-                  pid = ev.get("pid")
-                  nm = str(ev.get("name") or "")
+                    # --- trust scoring: name-based fast-path, then kernel/idle/registry, then model ---
+                    pid = ev.get("pid")
+                    nm = str(ev.get("name") or "")
 
-                  # 1) known-good names (your NAME_TRUST map)
-                  if _maybe_promote_to_trusted(ev):
-                      pass  # already set by the heuristic
+                    # 1) known-good names (your NAME_TRUST map)
+                    if _maybe_promote_to_trusted(ev):
+                        pass  # already set by the heuristic
 
-                  # 2) kernel/idle/registry fast-path
-                  elif pid in (0, 4) or nm.lower() in ("system", "system idle process", "registry"):
-                      ev["csc"] = {
-                          "version": "v2",
-                          "verdict": "trusted",
-                          "cls": "system",
-                          "confidence": 0.98,
-                          "reasons": ["kernel/idle/registry fast-path"],
-                          "signals": {},
-                      }
-                      ev["csc_verdict"] = "trusted"
-                      ev["csc_class"] = "system"
-                      ev["csc_confidence"] = 0.98
-                      ev["csc_reasons"] = ["kernel/idle/registry fast-path"]
+                    # 2) kernel/idle/registry fast-path
+                    elif pid in (0, 4) or nm.lower() in (
+                        "system",
+                        "system idle process",
+                        "registry",
+                    ):
+                        ev["csc"] = {
+                            "version": "v2",
+                            "verdict": "trusted",
+                            "cls": "system",
+                            "confidence": 0.98,
+                            "reasons": ["kernel/idle/registry fast-path"],
+                            "signals": {},
+                        }
+                        ev["csc_verdict"] = "trusted"
+                        ev["csc_class"] = "system"
+                        ev["csc_confidence"] = 0.98
+                        ev["csc_reasons"] = ["kernel/idle/registry fast-path"]
 
-                  # 3) everything else → model
-                  else:
-                      csc_out = _csc.evaluate(ev)
-                      ev["csc"] = csc_out
-                      ev["csc_verdict"] = csc_out.get("verdict", "unknown")
-                      ev["csc_class"] = csc_out.get("cls", "unknown")
-                      ev["csc_confidence"] = float(csc_out.get("confidence", 0.5))
-                      ev["csc_reasons"] = csc_out.get("reasons", [])
+                    # 3) everything else → model
+                    else:
+                        csc_out = _csc.evaluate(ev)
+                        ev["csc"] = csc_out
+                        ev["csc_verdict"] = csc_out.get("verdict", "unknown")
+                        ev["csc_class"] = csc_out.get("cls", "unknown")
+                        ev["csc_confidence"] = float(csc_out.get("confidence", 0.5))
+                        ev["csc_reasons"] = csc_out.get("reasons", [])
 
-                  # process tree index (store the v2 fields)
-                  if isinstance(pid, int):
-                      PROC_INDEX[pid] = {
-                          "pid": pid,
-                          "ppid": ev.get("ppid"),
-                          "name": ev.get("name") or "",
-                          "csc_verdict": ev.get("csc_verdict", "unknown"),
-                          "csc_class": ev.get("csc_class", "unknown"),
-                          "csc_confidence": ev.get("csc_confidence", 0.5),
-                      }
+                    # process tree index (store the v2 fields)
+                    if isinstance(pid, int):
+                        PROC_INDEX[pid] = {
+                            "pid": pid,
+                            "ppid": ev.get("ppid"),
+                            "name": ev.get("name") or "",
+                            "csc_verdict": ev.get("csc_verdict", "unknown"),
+                            "csc_class": ev.get("csc_class", "unknown"),
+                            "csc_confidence": ev.get("csc_confidence", 0.5),
+                        }
 
-              if ev.get("source") == "network" and not (ev.get("pid") or ev.get("name")):
-                  continue
+                if ev.get("source") == "network" and not (ev.get("pid") or ev.get("name")):
+                    continue
 
-              # --- integrity name fill ---
-              if ev.get("source") == "integrity":
-                  p = ev.get("path") or ev.get("file")
-                  if p and not ev.get("name"):
-                      try:
-                          ev["name"] = os.path.basename(str(p))
-                      except Exception:
-                          ev["name"] = str(p)
+                # --- integrity name fill ---
+                if ev.get("source") == "integrity":
+                    p = ev.get("path") or ev.get("file")
+                    if p and not ev.get("name"):
+                        try:
+                            ev["name"] = os.path.basename(str(p))
+                        except Exception:
+                            ev["name"] = str(p)
 
-              # --- safe coalesce (don’t drop worse events) ---
-              if _coalesce_or_admit(ev):
-                  BUFFER.append(ev)
-                  drained += 1
-              # else: merged into a recent identical event; no append
+                # --- safe coalesce (don’t drop worse events) ---
+                if _coalesce_or_admit(ev):
+                    BUFFER.append(ev)
+                    drained += 1
+                # else: merged into a recent identical event; no append
 
-          return drained
+            return drained
 
     @app.get("/")
     def index():
@@ -763,6 +875,7 @@ def build_app(event_bus) -> Flask:
         q = (request.args.get("q") or "").lower().strip()
         lvls = [x for x in (request.args.get("levels") or "").lower().split(",") if x]
         fmt = (request.args.get("format") or "csv").lower()
+
         def pass_filters(ev: dict[str, Any]) -> bool:
             lvl = (ev.get("level") or "info").lower()
             if lvl == "info" and not include_info:
@@ -794,8 +907,16 @@ def build_app(event_bus) -> Flask:
 
         # common tabular cols
         cols = [
-            "ts", "level", "reason", "source", "pid", "name", "path",
-            "csc_verdict", "csc_class", "csc_confidence"
+            "ts",
+            "level",
+            "reason",
+            "source",
+            "pid",
+            "name",
+            "path",
+            "csc_verdict",
+            "csc_class",
+            "csc_confidence",
         ]
 
         # XLSX
@@ -909,10 +1030,12 @@ def build_app(event_bus) -> Flask:
                 "csc_verdict": r.get("csc_verdict", "unknown"),
                 "csc_class": r.get("csc_class", "unknown"),
                 "csc_confidence": float(r.get("csc_confidence", 0.5)),
-                "children": [build(c) for c in sorted(children.get(pid, []))[:CFG.max_tree_children]],
+                "children": [
+                    build(c) for c in sorted(children.get(pid, []))[: CFG.max_tree_children]
+                ],
             }
 
-        tree = [build(p) for p in sorted(roots)[:CFG.max_tree_roots]]
+        tree = [build(p) for p in sorted(roots)[: CFG.max_tree_roots]]
 
         fmt = (request.args.get("as") or "").lower()
         if fmt == "json":
@@ -959,7 +1082,7 @@ def build_app(event_bus) -> Flask:
         behavior: if rule == "sha256" and no baseline stored yet, auto-hash now to set baseline.
         """
         try:
-            body = request.get_json(force=True) or {}
+            body: dict[str, Any] = cast(dict[str, Any], request.get_json(force=True) or {})
             path = str(body.get("path") or "").strip()
             rule = str(body.get("rule") or "sha256").strip().lower()
             note = str(body.get("note") or "").strip()
@@ -1031,7 +1154,7 @@ def build_app(event_bus) -> Flask:
             # note: we don't persist file content, only per-chunk hashes
             info_chunks = _chunk_hashes(path)
             if "error" not in info_chunks:
-                target["chunks"] = info_chunks                        # algo, chunk_size, size, hashes
+                target["chunks"] = info_chunks  # algo, chunk_size, size, hashes
             else:
                 # leave chunks absent if we couldn't read; UI can re-baseline later
                 target.pop("chunks", None)
@@ -1052,7 +1175,7 @@ def build_app(event_bus) -> Flask:
     @app.delete("/api/integrity/targets")
     def api_integrity_targets_delete():
         try:
-            body = request.get_json(force=True) or {}
+            body: dict[str, Any] = cast(dict[str, Any], request.get_json(force=True) or {})
             path = str(body.get("path") or "").strip()
             if not path:
                 return jsonify({"ok": False, "error": "missing path"}), 400
@@ -1072,20 +1195,24 @@ def build_app(event_bus) -> Flask:
         - also ensures we have a per chunk baseline so "View changes" can work
         """
         try:
-            body = request.get_json(force=True) or {}               # parse JSON body
-            path = str(body.get("path") or "").strip()              # normalize to a simple string
+            body: dict[str, Any] = cast(
+                dict[str, Any], request.get_json(force=True) or {}
+            )  # parse JSON body
+            path = str(body.get("path") or "").strip()  # normalize to a simple string
             if not path:
-                return jsonify({"error": "missing path"}), 400      # hard fail if no path
+                return jsonify({"error": "missing path"}), 400  # hard fail if no path
 
-            info = _sha256_file(path)                               # compute current file hash and attrs
-            rows = _read_integrity_targets()                        # load current targets file
-            changed = False                                         # track if we modified the stored record
+            info = _sha256_file(path)  # compute current file hash and attrs
+            rows = _read_integrity_targets()  # load current targets file
+            changed = False  # track if we modified the stored record
 
             # update corresponding row if present
             for r in rows:
-                if str(r.get("path") or "").lower() == path.lower():    # match on case-insensitive path
-                    rule = str(r.get("rule") or "sha256").lower()       # either "sha256" or "mtime+size"
-                    baseline = str(r.get("sha256") or "")               # baseline hash if present
+                if (
+                    str(r.get("path") or "").lower() == path.lower()
+                ):  # match on case-insensitive path
+                    rule = str(r.get("rule") or "sha256").lower()  # either "sha256" or "mtime+size"
+                    baseline = str(r.get("sha256") or "")  # baseline hash if present
 
                     if "error" in info:
                         # hashing failed, record the error but do not change baselines
@@ -1093,7 +1220,7 @@ def build_app(event_bus) -> Flask:
                         changed = True
                         _emit_integrity_event(path, r["last_result"], rule)
                     else:
-                        new_hash = info.get("sha256", "")               # current SHA-256 hex
+                        new_hash = info.get("sha256", "")  # current SHA-256 hex
                         if rule == "sha256":
                             if not baseline:
                                 # first time, promote to baseline
@@ -1133,7 +1260,9 @@ def build_app(event_bus) -> Flask:
                                 else:
                                     # compare to existing baseline
                                     r["last_result"] = (
-                                        "OK" if (r["mtime"] == cur_mtime and r["size"] == cur_size) else "CHANGED"
+                                        "OK"
+                                        if (r["mtime"] == cur_mtime and r["size"] == cur_size)
+                                        else "CHANGED"
                                     )
                                     changed = True
                                     _emit_integrity_event(path, r["last_result"], rule)
@@ -1145,19 +1274,20 @@ def build_app(event_bus) -> Flask:
                     # ensure we have per chunk baseline so the diff endpoint can work
                     # we only store per chunk hashes, not content
                     if "error" not in info:
-                        need_chunks = (
-                            "chunks" not in r
-                            or not isinstance(r.get("chunks", {}).get("hashes"), list)
+                        need_chunks = "chunks" not in r or not isinstance(
+                            r.get("chunks", {}).get("hashes"), list
                         )
                         if need_chunks:
-                            ch = _chunk_hashes(path)                     # build per chunk baseline
+                            ch = _chunk_hashes(path)  # build per chunk baseline
                             if "error" not in ch:
-                                r["chunks"] = ch                          # algo, chunk_size, size, hashes
+                                r["chunks"] = ch  # algo, chunk_size, size, hashes
                                 changed = True
 
                         # Only capture zip_manifest when (and only when) we establish a baseline
                         if "error" not in info:
-                            if (rule == "sha256" and not baseline) or (rule == "mtime+size" and (not r.get("mtime") or not r.get("size"))):
+                            if (rule == "sha256" and not baseline) or (
+                                rule == "mtime+size" and (not r.get("mtime") or not r.get("size"))
+                            ):
                                 zman = _zip_manifest(path)
                                 if zman:
                                     r["zip_manifest"] = zman
@@ -1199,7 +1329,7 @@ def build_app(event_bus) -> Flask:
         - For non-ZIP files, fall back to chunk-region coverage as before.
         """
         try:
-            body = request.get_json(force=True) or {}
+            body: dict[str, Any] = cast(dict[str, Any], request.get_json(force=True) or {})
             path = str(body.get("path") or "").strip()
             max_regions = int(body.get("max_regions") or 50)
             preview_cap = int(body.get("preview_bytes") or 64)
@@ -1209,7 +1339,9 @@ def build_app(event_bus) -> Flask:
 
             # Find target + baseline chunks
             rows = _read_integrity_targets()
-            target = next((r for r in rows if str(r.get("path") or "").lower() == path.lower()), None)
+            target = next(
+                (r for r in rows if str(r.get("path") or "").lower() == path.lower()), None
+            )
             if target is None:
                 return jsonify({"ok": False, "error": "not on watch list"}), 400
 
@@ -1223,44 +1355,53 @@ def build_app(event_bus) -> Flask:
                 return jsonify({"ok": False, "error": cur["error"]}), 400
 
             base_hashes = list(baseline.get("hashes") or [])
-            cur_hashes  = list(cur.get("hashes") or [])
-            chunk_size  = int(cur.get("chunk_size") or baseline.get("chunk_size") or 4096)
-            base_size   = int(baseline.get("size") or 0)
-            cur_size    = int(cur.get("size") or 0)
+            cur_hashes = list(cur.get("hashes") or [])
+            chunk_size = int(cur.get("chunk_size") or baseline.get("chunk_size") or 4096)
+            base_size = int(baseline.get("size") or 0)
+            cur_size = int(cur.get("size") or 0)
 
             # ----- ZIP member-level comparison (for docx/xlsx/pptx) -----
             zip_before = target.get("zip_manifest") or {}
-            zip_after  = _zip_manifest(path)
+            zip_after = _zip_manifest(path)
             zip_changes: list[dict[str, Any]] = []
 
             if zip_after or zip_before:
                 before_keys = set(zip_before.keys())
-                after_keys  = set(zip_after.keys())
+                after_keys = set(zip_after.keys())
                 added = sorted(after_keys - before_keys)
                 removed = sorted(before_keys - after_keys)
                 common = sorted(before_keys & after_keys)
 
                 for k in added:
                     z = zip_after[k]
-                    zip_changes.append({"member": k, "change": "added", "size": z["size"], "crc": z["crc"]})
+                    zip_changes.append(
+                        {"member": k, "change": "added", "size": z["size"], "crc": z["crc"]}
+                    )
                 for k in removed:
                     z = zip_before[k]
-                    zip_changes.append({"member": k, "change": "removed", "size": z["size"], "crc": z["crc"]})
+                    zip_changes.append(
+                        {"member": k, "change": "removed", "size": z["size"], "crc": z["crc"]}
+                    )
                 for k in common:
                     a, b = zip_after[k], zip_before[k]
                     if a["size"] != b["size"] or a["crc"] != b["crc"]:
-                        zip_changes.append({
-                            "member": k, "change": "modified",
-                            "size_before": b["size"], "size_after": a["size"],
-                            "crc_before": b["crc"],  "crc_after": a["crc"],
-                        })
+                        zip_changes.append(
+                            {
+                                "member": k,
+                                "change": "modified",
+                                "size_before": b["size"],
+                                "size_after": a["size"],
+                                "crc_before": b["crc"],
+                                "crc_after": a["crc"],
+                            }
+                        )
 
             # ----- Identify changed chunk indices (for regions UI only) -----
             max_len = max(len(base_hashes), len(cur_hashes))
             changed_idxs: list[int] = []
             for i in range(max_len):
                 old = base_hashes[i] if i < len(base_hashes) else None
-                new = cur_hashes[i]  if i < len(cur_hashes)  else None
+                new = cur_hashes[i] if i < len(cur_hashes) else None
                 if old != new:
                     changed_idxs.append(i)
 
@@ -1271,26 +1412,32 @@ def build_app(event_bus) -> Flask:
             chunk_floor_bytes = 0
             for start_idx, end_idx in ranges[:max_regions]:
                 start_off = start_idx * chunk_size
-                end_off   = min(cur_size, (end_idx + 1) * chunk_size)
-                length    = max(0, end_off - start_off)
+                end_off = min(cur_size, (end_idx + 1) * chunk_size)
+                length = max(0, end_off - start_off)
 
-                old_list = base_hashes[start_idx:end_idx + 1] if start_idx < len(base_hashes) else []
-                new_list = cur_hashes[start_idx:end_idx + 1]  if start_idx < len(cur_hashes)  else []
+                old_list = (
+                    base_hashes[start_idx : end_idx + 1] if start_idx < len(base_hashes) else []
+                )
+                new_list = (
+                    cur_hashes[start_idx : end_idx + 1] if start_idx < len(cur_hashes) else []
+                )
 
                 raw = _read_region_preview(path, start_off, length, cap=preview_cap)
                 hex_preview = raw.hex().upper()
                 ascii_preview = "".join(chr(b) if 32 <= b < 127 else "." for b in raw)
 
-                regions_out.append({
-                    "chunk_idx_start": start_idx,
-                    "chunk_idx_end": end_idx,
-                    "start_offset": start_off,
-                    "end_offset": end_off,
-                    "length": length,
-                    "old_chunk_hashes": old_list,
-                    "new_chunk_hashes": new_list,
-                    "preview": {"bytes": len(raw), "hex": hex_preview, "ascii": ascii_preview},
-                })
+                regions_out.append(
+                    {
+                        "chunk_idx_start": start_idx,
+                        "chunk_idx_end": end_idx,
+                        "start_offset": start_off,
+                        "end_offset": end_off,
+                        "length": length,
+                        "old_chunk_hashes": old_list,
+                        "new_chunk_hashes": new_list,
+                        "preview": {"bytes": len(raw), "hex": hex_preview, "ascii": ascii_preview},
+                    }
+                )
                 chunk_floor_bytes += length
 
             # ----- Estimate % changed -----
@@ -1352,7 +1499,10 @@ def build_app(event_bus) -> Flask:
                     "current_size": cur_size,
                 },
                 "estimation_method": estimation_method,  # "zip-members-delta" or "chunks"
-                "summary_text": {"headline": nl.get("headline", ""), "details": nl.get("details", "")},
+                "summary_text": {
+                    "headline": nl.get("headline", ""),
+                    "details": nl.get("details", ""),
+                },
                 "zip_changes": zip_changes,
                 "regions": regions_out,
             }
@@ -1360,7 +1510,6 @@ def build_app(event_bus) -> Flask:
 
         except Exception as e:
             return jsonify({"ok": False, "error": str(e)}), 500
-
 
     @app.get("/api/integrity/baseline/download")
     def api_integrity_baseline_download():
@@ -1374,7 +1523,9 @@ def build_app(event_bus) -> Flask:
                 return jsonify({"ok": False, "error": "missing path"}), 400
 
             rows = _read_integrity_targets()
-            target = next((r for r in rows if str(r.get("path") or "").lower() == path.lower()), None)
+            target = next(
+                (r for r in rows if str(r.get("path") or "").lower() == path.lower()), None
+            )
             if not target:
                 return jsonify({"ok": False, "error": "not on watch list"}), 404
 
