@@ -3,7 +3,7 @@
 **Local system visibility. No cloud, no accounts — just insight.**
 
 ## How to Run
-1. Download `CustosEye-Windows.zip`.
+1. Download `CustosEye.zip`.
 2. Unzip it anywhere (for example, Desktop).
 3. Double-click `CustosEye.exe`.
 4. Your browser will open the dashboard at `http://127.0.0.1:8765/`.

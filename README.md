@@ -149,7 +149,7 @@ pyinstaller --noconfirm --onefile --name CustosEye.exe --console `
 ```
 
 Artifacts:  
-`CustosEye.exe`, `VERSION.txt`, and `CustosEye-Windows.zip` (portable bundle).
+`CustosEye.exe`, `VERSION.txt`, and `CustosEye.zip` (portable bundle).
 
 GitHub Actions automatically runs this build, embeds version and commit hash, and updates integrity suppressions.
 
