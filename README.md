@@ -1,4 +1,4 @@
-# 𖦹 🛡 CustosEye 🛡 ꩜
+# 𖦹  CustosEye  ꩜
 
 CustosEye is a local-first visibility and integrity monitor with a lightweight rules engine, contextual trust scoring (CSC v2), and a clean web dashboard.  
 No cloud, no telemetry everything runs locally 𖣐
