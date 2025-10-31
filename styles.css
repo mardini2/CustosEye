@@ -1,0 +1,178 @@
+/* ========== Base and layout ========== */
+/* reset margins so spacing is predictable */
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+/* font stack uses system fonts for speed and a clean look */
+html, body {
+  height: 100%;
+  font-family: system-ui, -apple-system, Segoe UI, Roboto, Inter, Arial, sans-serif;
+  color: #e5e7eb;             /* light gray text */
+  background: radial-gradient(1000px 500px at 20% 0%, #0b1022 0%, #0b1022 40%, #0a0f1e 100%);
+}
+
+/* limit max width for readable line lengths and center content */
+.wrap {
+  width: 100%;
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 24px;
+}
+
+/* ========== Header ========== */
+/* simple top bar with logo and brand text side by side */
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 16px 24px;
+  border-bottom: 1px solid rgba(255,255,255,0.07);
+  background: rgba(0,0,0,0.15);
+  backdrop-filter: blur(4px);
+}
+
+/* control logo size */
+.logo {
+  height: 40px;
+  width: auto;
+}
+
+/* brand block next to the logo */
+.brand h1 {
+  font-size: 1.4rem;
+  font-weight: 700;
+}
+.brand .tagline {
+  color: #a8b1c0;
+  font-size: 0.95rem;
+}
+
+/* ========== cards and visual style ========== */
+.card {
+  background: rgba(17, 24, 39, 0.9); /* slate-900-ish */
+  border: 1px solid rgba(255,255,255,0.07);
+  border-radius: 16px;
+  padding: 24px;
+  box-shadow: 0 24px 60px rgba(0,0,0,0.35);
+}
+
+/* grid for features */
+.grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
+  margin-top: 16px;
+}
+
+/* stack cards on small screens */
+@media (max-width: 900px) {
+  .grid { grid-template-columns: 1fr; }
+}
+
+/* ========== hero section ========== */
+/* big, friendly title */
+.hero { margin-top: 24px; }
+.hero-title { font-size: 1.6rem; margin-bottom: 8px; }
+.hero-sub { color: #c8d0dd; margin-bottom: 16px; }
+
+/* ========== Buttons ========== */
+/* shared button look */
+.btn {
+  display: inline-block;
+  padding: 12px 16px;
+  border-radius: 12px;
+  border: 1px solid rgba(255,255,255,0.1);
+  text-decoration: none;
+  font-weight: 600;
+  transition: transform 120ms ease, background 120ms ease, border-color 120ms ease;
+  user-select: none;
+}
+
+/* primary: bright accent to stand out */
+.btn-primary {
+  background: #22c55e; /* green accent */
+  color: #062e12;      /* dark text on green */
+  border-color: rgba(34,197,94,0.45);
+  box-shadow: 0 12px 30px rgba(34,197,94,0.3);
+}
+.btn-primary:hover {
+  transform: translateY(-1px);
+}
+
+/* ghost: low-emphasis secondary buttons */
+.btn-ghost {
+  background: rgba(255,255,255,0.03);
+  color: #e5e7eb;
+}
+.btn-ghost:hover {
+  background: rgba(255,255,255,0.07);
+}
+
+/* row that holds secondary buttons */
+.btn-row {
+  margin-top: 12px;
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+/* muted helper text */
+.muted {
+  color: #9aa3b2;
+  font-size: 0.9rem;
+  margin-top: 8px;
+}
+
+/* ========== footer ========== */
+.foot {
+  padding: 20px 24px 40px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  border-top: 1px solid rgba(255,255,255,0.07);
+  margin-top: 28px;
+  color: #a8b1c0;
+}
+
+.foot-nav { display: flex; gap: 16px; }
+.foot-nav a { color: #c8d0dd; text-decoration: none; }
+.foot-nav a:hover { text-decoration: underline; }
+
+/* ========== cookie banner ========== */
+/* the banner is injected by JS. We style it here. */
+.cookie-banner {
+  position: fixed;
+  left: 16px;
+  right: 16px;
+  bottom: 16px;
+  padding: 16px;
+  background: #0f172a; /* dark slate */
+  border: 1px solid rgba(255,255,255,0.12);
+  border-radius: 12px;
+  box-shadow: 0 20px 50px rgba(0,0,0,0.45);
+  display: flex;
+  align-items: start;
+  gap: 16px;
+  z-index: 9999;
+}
+.cookie-text { color: #d1d7e4; line-height: 1.5; }
+.cookie-actions { display: flex; gap: 10px; margin-left: auto; }
+
+.cookie-btn { padding: 10px 14px; border-radius: 10px; border: 1px solid rgba(255,255,255,0.12); cursor: pointer; }
+.cookie-accept { background: #22c55e; color: #062e12; border-color: rgba(34,197,94,0.45); font-weight: 700; }
+.cookie-decline { background: rgba(255,255,255,0.06); color: #e5e7eb; }
+.cookie-settings { background: rgba(255,255,255,0.06); color: #e5e7eb; }
+
+/* focus styles for accessibility */
+:focus { outline: none; }
+.btn:focus,
+.cookie-btn:focus {
+  outline: 2px solid #93c5fd;   /* light blue ring */
+  outline-offset: 2px;
+  box-shadow: 0 0 0 2px rgba(147,197,253,0.35);
+}
+
+/* reduced motion respect */
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important; }
+}
