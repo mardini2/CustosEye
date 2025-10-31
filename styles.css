@@ -5,15 +5,16 @@
 html, body {
   height: 100%;
 }
+
 body.page {
-  min-height: 100svh;                 /* covers mobile safe area correctly */
-  display: flex;                       /* stack header, main, footer */
+  min-height: 100svh;
+  display: flex;
   flex-direction: column;
   font-family: system-ui, -apple-system, Segoe UI, Roboto, Inter, Arial, sans-serif;
   color: #e5e7eb;
   background: radial-gradient(1000px 500px at 20% 0%, #0b1022 0%, #0b1022 40%, #0a0f1e 100%);
-  user-select: none;                   /* prevent accidental text selection */
-  -webkit-user-select: none;           /* Safari prefix fix */
+  -webkit-user-select: none;  /* prefix first */
+  user-select: none;
 }
 
 /* add a slim royal-purple stripe at the very top for polish */
@@ -40,9 +41,10 @@ body.page {
   padding: 16px 24px;
   border-bottom: 1px solid rgba(255,255,255,0.07);
   background: rgba(0,0,0,0.15);
+  -webkit-backdrop-filter: blur(4px);  /* prefix first */
   backdrop-filter: blur(4px);
-  -webkit-backdrop-filter: blur(4px);  /* Safari prefix fix */
 }
+
 .home-link { display: inline-flex; text-decoration: none; }
 .logo { height: 40px; width: auto; }
 
@@ -198,8 +200,8 @@ html, body { overflow-x: hidden; }
   position: fixed;
   inset: 0;
   background: rgba(2, 6, 23, 0.75);
+  -webkit-backdrop-filter: blur(4px);  /* prefix first */
   backdrop-filter: blur(4px);
-  -webkit-backdrop-filter: blur(4px);
   display: grid;
   place-items: center;
   z-index: 99999;
