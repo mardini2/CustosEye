@@ -38,14 +38,17 @@ jobs:
       - name: Build EXE with icon and bundle assets
         shell: pwsh
         run: |
-          $IconPath = "assets\favicon.ico"
+          # Icon lives under dashboard/static/assets
+          $IconPath = "dashboard\static\assets\favicon.ico"
           $iconArgs = @()
           if (Test-Path $IconPath) { $iconArgs = @('--icon', $IconPath) }
 
+          # Include config/data and Flask static/templates
           pyinstaller --noconfirm --onefile --name CustosEye.exe --console `
             $iconArgs `
             --add-data "data;data" `
-            --add-data "assets;assets" `
+            --add-data "dashboard\static;dashboard\static" `
+            --add-data "dashboard\templates;dashboard\templates" `
             app/console.py
 
           New-Item -ItemType Directory -Force -Path dist | Out-Null
@@ -72,7 +75,6 @@ jobs:
           # Save the hash alongside the build
           $hash | Out-File -Encoding ascii dist\CUSTOSEYE_SHA256.txt
 
-          # If you keep a template suppress file, update a copy for the release
           if (Test-Path "data\self_suppress.json") {
             New-Item -ItemType Directory -Force release\data | Out-Null
             $content = Get-Content data\self_suppress.json -Raw
@@ -106,8 +108,10 @@ jobs:
           # optional self-suppress list if present (lets you hide our own EXE/process hash)
           if (Test-Path data\self_suppress.json) { Copy-Item data\self_suppress.json  -Destination release\data\ -Force }
 
-          # assets (icon)
-          if (Test-Path assets\favicon.ico)      { Copy-Item assets\favicon.ico       -Destination release\assets\ -Force }
+          # assets (icon) from Flask static path
+          if (Test-Path dashboard\static\assets\favicon.ico) {
+            Copy-Item dashboard\static\assets\favicon.ico -Destination release\assets\ -Force
+          }
 
           # zip it up
           Compress-Archive -Path release\* -DestinationPath CustosEye-Windows.zip -Force

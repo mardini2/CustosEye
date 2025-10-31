@@ -1,20 +1,60 @@
 # ruff: noqa: E501
 """
-goal: local Flask dashboard for CustosEye — live telemetry + process tree, fast, simple, offline.
+goal: Local Flask dashboard for CustosEye — live telemetry, trust-aware process tree, and
+       privacy-preserving file-integrity baselining/diff. Fast, simple, offline.
 
 Highlights (this build):
-1. fan-out subscription to a shared EventBus (no races with the console).
-2. tabs: Live Events, Process Tree, About. no in-page console; terminal only prints “welcome + URL”.
-3. live stream: Info/Warning/Critical filters, search, pause, refresh, CSV/JSON/JSONL/XLSX export.
-4. trust overlay: CSCTrustEngine integration; trust score/label on rows and in the process tree.
-5. process tree: PPID→PID hierarchy via native <details>, search, expand/collapse, copy, JSON/XLSX export.
-6. hot-reload of rules.json; suppress noisy network events that lack pid/name.
-7. assets: favicon + apple-touch routes (versioned), compatible with PyInstaller bundling.
-8. performance guardrails: bounded ring buffer, per-call drain cap, short deadlines to keep the UI snappy.
+1) Event ingestion & performance
+   • Fan-out subscription to a shared EventBus; lightweight /api/ping keeps drains moving.
+   • Bounded ring buffer with fingerprint-based coalescing and “worse event” promotion.
+   • Guardrails: per-call drain cap + short deadlines + a drain lock to avoid concurrent drains.
+
+2) UI surface
+   • Tabs: Live Events, Process Tree, About. Terminal only prints “welcome + URL”.
+   • Static assets (favicon + Apple touch icons) are routed and PyInstaller-friendly.
+
+3) Live event stream
+   • Level filters (Info/Warning/Critical), free-text search, pause/refresh (client-side).
+   • Export current view as CSV / JSON / JSONL / XLSX (Excel-friendly BOM/quoting; auto-sized XLSX).
+   • Noise control: drop network events that lack pid/name; self-suppression by name/exe/sha256.
+
+4) Trust overlay (v2)
+   • CSCTrustEngine v2 (weights/db from config) scores processes; fields land on rows and in tree:
+     csc_verdict / csc_class / csc_confidence (+ reasons/signals blob).
+   • Fast-paths: kernel/idle/registry are auto-trusted; optional name_trust.json heuristic map.
+   • RulesEngine still evaluates non-integrity events for level/reason tagging (hot-reloaded).
+
+5) Process tree
+   • Compact PPID→PID hierarchy (native <details> in UI). Caps for roots/children from config.
+   • Trust labels/score propagate to each node. Export pretty JSON via /api/proctree?as=json.
+
+6) Integrity watch list & hashing
+   • CRUD: /api/integrity/targets GET/POST/DELETE (paths + rule="sha256" | "mtime+size" + note).
+   • Auto-baseline on first hash (sha256 or mtime+size). Emits live integrity events (OK/CHANGED/ERR).
+   • Per-chunk baseline hashes for diffs (algo, chunk_size, size, hashes).
+   • Optional content-addressed baseline snapshot (ALLOW_MTIME_SNAPSHOTS) with size-cap pruning and
+     download endpoint (/api/integrity/baseline/download?path=…).
+
+7) Privacy-preserving diff (Office-aware)
+   • /api/integrity/diff returns only: changed chunk ranges, tiny “after” previews (hex+ASCII),
+     and an estimated % changed.
+   • Office docs (docx/xlsx/pptx) use a ZIP member manifest (added/removed/modified) to estimate
+     change without 100% spikes from repacking.
+
+8) Quality-of-life
+   • Windows-only file picker (/api/integrity/browse) to add targets.
+   • About endpoint reads VERSION.txt (version/build/buffer_max).
+   • Config-driven paths/limits (rules_path, csc weights/db, integrity targets, self-suppress list).
+
+9) Packaging/runtime
+   • Optional Waitress serve; otherwise Flask dev server (debug off).
+   • Base dir and data paths resolve cleanly under PyInstaller bundles.
+
 """
 
 from __future__ import annotations
 
+# --- standard library ---
 import csv
 import hashlib
 import io
@@ -23,21 +63,36 @@ import os
 import sys
 import threading
 import time
+import zipfile
 from collections import deque
 from collections.abc import Iterator
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, TypedDict, cast
 
+# --- third-party ---
 from flask import (
     Flask,
     jsonify,
     make_response,
-    render_template_string,
+    render_template,
     request,
     send_file,
 )
 
-# waitress optional
+# --- local/project imports (move these up here) ---
+from agent.rules_engine import RulesEngine
+from algorithm.csc_engine import CSCTrustEngine  # v2 under the hood
+from dashboard.config import Config, load_config
+
+
+# (now we can define classes/variables/etc.)
+class RecentMeta(TypedDict, total=False):
+    ref: dict[str, Any]
+    seen: int
+    last_seen: float
+
+
+# single waitress optional block (we keep only this one, after all imports)
 try:
     from waitress import serve as _serve
 
@@ -46,33 +101,17 @@ except Exception:
     HAVE_WAITRESS = False
     _serve = None  # type: ignore
 
-from agent.rules_engine import RulesEngine
-from algorithm.csc_engine import CSCTrustEngine
+CFG: Config = load_config()
 
+ALLOW_MTIME_SNAPSHOTS: bool = bool(getattr(CFG, "allow_mtime_snapshots", True))
 
 # ---------------- Config / paths ----------------
-def _resolve_base_dir() -> Path:
-    import sys
-
-    if getattr(sys, "frozen", False):
-        return Path(sys.executable).parent
-    return Path(__file__).resolve().parents[1]
-
-
-def _asset_path(rel: str) -> str:
-    import sys
-
-    base = Path(getattr(sys, "_MEIPASS", _resolve_base_dir()))
-    return str((base / rel).resolve())
-
-
-BASE_DIR = _resolve_base_dir()
-RULES_PATH = str((BASE_DIR / "data" / "rules.json").resolve())
-CSC_WEIGHTS_PATH = str((BASE_DIR / "data" / "csc_weights.json").resolve())
-CSC_DB_PATH = str((BASE_DIR / "data" / "trust_db.json").resolve())
-INTEGRITY_TARGETS_PATH = str((BASE_DIR / "data" / "integrity_targets.json").resolve())
-
-SELF_SUPPRESS_PATH = str((BASE_DIR / "data" / "self_suppress.json").resolve())
+BASE_DIR = CFG.base_dir
+RULES_PATH = str(CFG.rules_path)
+CSC_WEIGHTS_PATH = str(CFG.csc_weights_path)
+CSC_DB_PATH = str(CFG.csc_db_path)
+INTEGRITY_TARGETS_PATH = str(CFG.integrity_targets_path)
+SELF_SUPPRESS_PATH = str(CFG.self_suppress_path)
 
 
 def _load_self_suppress() -> dict[str, set[str]]:
@@ -95,6 +134,51 @@ _rules = RulesEngine(path=RULES_PATH)
 _rules_mtime = os.path.getmtime(RULES_PATH) if os.path.exists(RULES_PATH) else 0.0
 _csc = CSCTrustEngine(weights_path=CSC_WEIGHTS_PATH, db_path=CSC_DB_PATH)
 
+NAME_TRUST_PATH = str((BASE_DIR / "data" / "name_trust.json").resolve())
+_name_trust: dict[str, tuple[str, str, float]] = {}
+_name_trust_mtime: float = 0.0
+
+
+def _maybe_reload_name_trust() -> None:
+    global _name_trust, _name_trust_mtime
+    try:
+        mtime = os.path.getmtime(NAME_TRUST_PATH)
+    except OSError:
+        mtime = 0.0
+    if mtime > _name_trust_mtime:
+        _name_trust_mtime = mtime
+        try:
+            with open(NAME_TRUST_PATH, encoding="utf-8") as f:
+                obj = json.load(f)
+            # normalize to {name: (verdict, cls, confidence)}
+            nt: dict[str, tuple[str, str, float]] = {}
+            for k, v in (obj or {}).items():
+                if isinstance(v, list) and len(v) == 3:
+                    verdict, cls, conf = v
+                    nt[str(k).lower()] = (str(verdict), str(cls), float(conf))
+            _name_trust = nt
+        except Exception:
+            _name_trust = {}
+
+
+def _maybe_promote_to_trusted(ev: dict) -> bool:
+    nm = (ev.get("name") or "").lower()
+    verdict = _name_trust.get(nm)
+    if not verdict:
+        return False
+    v, cls, conf = verdict
+    ev["csc"] = {
+        "version": "v2",
+        "verdict": v,
+        "cls": cls,
+        "confidence": conf,
+        "reasons": ["name+parent heuristic"],
+        "signals": {},
+    }
+    ev["csc_verdict"], ev["csc_class"], ev["csc_confidence"] = v, cls, conf
+    ev["csc_reasons"] = ["name+parent heuristic"]
+    return True
+
 
 def _maybe_reload_rules() -> None:
     global _rules, _rules_mtime
@@ -102,504 +186,100 @@ def _maybe_reload_rules() -> None:
         mtime = os.path.getmtime(RULES_PATH)
     except OSError:
         mtime = 0.0
-    if mtime != _rules_mtime:
+    if mtime > _rules_mtime:
         _rules_mtime = mtime
         _rules.rules = _rules._load_rules()
 
 
 # ---------------- Buffers / indices ----------------
-BUFFER_MAX = 1200
+BUFFER_MAX = CFG.buffer_max
 BUFFER: deque[dict[str, Any]] = deque(maxlen=BUFFER_MAX)
 PROC_INDEX: dict[int, dict[str, Any]] = {}
 
-DRAIN_LIMIT_PER_CALL = 300
-DRAIN_DEADLINE_SEC = 0.25
+# --- dedupe/coalesce guard for live events ---
+RECENT_TTL = 15.0  # seconds
+RECENT_MAP: dict[str, RecentMeta] = {}  # fp -> {"ref": ev_dict, "seen": int, "last_seen": float}
 
-HTML = """
-<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8" />
-  <title>CustosEye · Live</title>
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <link rel="icon" href="/favicon.ico?v=2">
-  <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png?v=2">
-  <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png?v=2">
-  <link rel="apple-touch-icon" href="/apple-touch-icon.png?v=2">
-  <style>
-    :root {
-      --bg:#0b0f14; --panel:#141a22; --text:#e7eef7; --muted:#9ab;
-      --chip-info:#2a6df1; --chip-warning:#e6a700; --chip-critical:#d43c3c; --chip-border:rgba(255,255,255,0.2);
-      --accent:#7cc5ff; --ok:#1db954; --border:#1f2a36; --row:#10161e; --rowAlt:#0d131a; --input:#0f141b;
-      --tab:#0f151d; --tabOn:#1b2634;
-      --trust-low:#c03d3d; --trust-medium:#c27b00; --trust-high:#1db954;
-      --bad:#c03d3d; --warn:#e6a700; --good:#1db954;
-    }
-    @media (prefers-color-scheme: light) {
-      :root {
-        --bg:#f6f8fb; --panel:#fff; --text:#10131a; --muted:#445;
-        --chip-info:#2a6df1; --chip-warning:#c27b00; --chip-critical:#b61e1e; --chip-border:rgba(0,0,0,0.15);
-        --accent:#1565c0; --ok:#128b3a; --border:#e7ebf0; --row:#fff; --rowAlt:#f8fafc; --input:#f3f6fa;
-        --tab:#f1f4f8; --tabOn:#e5ebf3;
-      }
-    }
-    * { box-sizing: border-box; }
-    body { margin:0; background:var(--bg); color:var(--text); font:14px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial; }
-    header { position:sticky; top:0; z-index:5; backdrop-filter: blur(6px); background:linear-gradient(180deg,rgba(0,0,0,0.2),transparent); border-bottom:1px solid var(--border); }
-    .wrap { max-width:1100px; margin:0 auto; padding:16px; }
-    .title { display:flex; align-items:center; gap:10px; margin:4px 0 10px; font-weight:700; letter-spacing:.2px; font-size:18px; }
-    .subtitle { color:var(--muted); font-size:12px; }
-    .panel { background:var(--panel); border:1px solid var(--border); border-radius:12px; padding:12px; box-shadow:0 6px 20px rgba(0,0,0,0.15); }
-    .tabs { display:flex; gap:8px; margin-bottom:10px; }
-    .tab { background:var(--tab); border:1px solid var(--border); border-radius:8px; padding:6px 10px; cursor:pointer; user-select:none; }
-    .tab.on { background:var(--tabOn); border-color:var(--accent); }
-    .controls { display:flex; flex-wrap:wrap; gap:10px; align-items:center; }
-    .chip { display:inline-flex; align-items:center; gap:6px; border:1px solid var(--chip-border); padding:4px 10px; border-radius:999px; font-size:12px; cursor:pointer; user-select:none; background:transparent; color:var(--text); }
-    .chip[data-on="true"] { background:rgba(124,197,255,0.1); border-color:var(--accent); }
-    .chip .dot { width:8px; height:8px; border-radius:999px; }
-    .chip.info .dot { background:var(--chip-info); }
-    .chip.warning .dot { background:var(--chip-warning); }
-    .chip.critical .dot { background:var(--chip-critical); }
-    .chip.ok .dot { background:var(--ok); }
-    .input { background:var(--input); border:1px solid var(--border); padding:8px 10px; border-radius:8px; color:var(--text); min-width:220px; }
-    .btn { background:var(--accent); color:white; border:0; padding:8px 12px; border-radius:8px; cursor:pointer; }
-    .list { margin-top:12px; border-top:1px dashed var(--border); }
-    .row { display:grid; grid-template-columns:108px 100px 1fr; gap:14px; padding:10px 4px; border-bottom:1px solid var(--border); background:var(--row); }
-    .row:nth-child(odd) { background:var(--rowAlt); }
-    .lvl { display:inline-flex; align-items:center; gap:8px; padding:4px 8px; border-radius:999px; font-weight:600; letter-spacing:.3px; }
-    .lvl.info { color:var(--chip-info); background: color-mix(in oklab, var(--chip-info) 14%, transparent); }
-    .lvl.warning { color:var(--chip-warning); background: color-mix(in oklab, var(--chip-warning) 18%, transparent); }
-    .lvl.critical { color:var(--chip-critical); background: color-mix(in oklab, var(--chip-critical) 18%, transparent); }
-    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace; font-size:12px; }
-    .muted { color:var(--muted); }
-    .count { font-weight:600; }
-    .nowrap { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+_SEV_RANK = {"info": 0, "warning": 1, "critical": 2}
+_VERDICT_RANK = {"trusted": 0, "caution": 1, "suspicious": 2, "malicious": 3, "unknown": 1}
 
-    /* process tree */
-    .tree { margin-top:12px; }
-    .treebar { display:flex; gap:8px; align-items:center; margin-bottom:8px; }
-    .pill { display:inline-block; padding:2px 6px; border-radius:999px; border:1px solid var(--border); font-size:11px; }
-    .pill.low { color: var(--trust-low); border-color: color-mix(in oklab, var(--trust-low) 40%, var(--border)); }
-    .pill.medium { color: var(--trust-medium); border-color: color-mix(in oklab, var(--trust-medium) 40%, var(--border)); }
-    .pill.high { color: var(--trust-high); border-color: color-mix(in oklab, var(--trust-high) 40%, var(--border)); }
-    details { border-left:2px solid var(--border); margin-left:10px; padding-left:8px; }
-    details > summary { list-style: none; cursor: pointer; }
-    summary::-webkit-details-marker { display:none; }
-    .caret { display:inline-block; width:0; height:0; border-top:6px solid transparent; border-bottom:6px solid transparent; border-left:6px solid var(--muted); margin-right:6px; transform: translateY(1px) rotate(-90deg); transition: transform .15s ease; }
-    details[open] > summary .caret { transform: translateY(1px) rotate(0deg); }
 
-    /* integrity tab */
-    .grid { display:grid; gap:10px; grid-template-columns: 1fr; }
-    .card { background:var(--panel); border:1px solid var(--border); border-radius:12px; padding:12px; }
-    .tbl { width:100%; border-collapse: collapse; }
-    .tbl th, .tbl td { padding:8px; border-bottom:1px solid var(--border); text-align:left; font-size:12px; }
-    .badge { display:inline-block; padding:2px 8px; border-radius:999px; border:1px solid var(--border); font-size:11px; }
-    .badge.ok { color:var(--good); border-color: color-mix(in oklab, var(--good) 40%, var(--border)); }
-    .badge.warn { color:var(--warn); border-color: color-mix(in oklab, var(--warn) 40%, var(--border)); }
-    .badge.bad { color:var(--bad); border-color: color-mix(in oklab, var(--bad) 40%, var(--border)); }
-    .row-actions { display:flex; gap:8px; }
-    .small { font-size:11px; color:var(--muted); }
-    .hint { color:var(--muted); font-size:12px; }
-  </style>
-</head>
-<body>
-  <header>
-    <div class="wrap">
-      <div class="title">
-        <img src="/favicon.ico" alt="" style="width:20px;height:20px;border-radius:4px;opacity:.9" />
-        CustosEye <span class="subtitle">local dashboard</span>
-      </div>
+def _fingerprint_base(ev: dict) -> str:
+    key_fields = ("source", "reason", "pid", "name", "path", "rule")
+    return json.dumps({k: ev.get(k) for k in key_fields}, sort_keys=True, ensure_ascii=False)
 
-      <div class="tabs">
-        <div class="tab on" data-tab="live">Live Events</div>
-        <div class="tab" data-tab="tree">Process Tree</div>
-        <div class="tab" data-tab="integrity">Integrity</div>
-        <div class="tab" data-tab="about">About</div>
-      </div>
 
-      <!-- Live bar -->
-      <div class="panel" id="bar-live">
-        <div class="controls">
-          <button class="chip info" data-on="true" data-level="info"><span class="dot"></span>Info</button>
-          <button class="chip warning" data-on="true" data-level="warning"><span class="dot"></span>Warning</button>
-          <button class="chip critical" data-on="true" data-level="critical"><span class="dot"></span>Critical</button>
-          <button class="chip ok" id="pause" data-on="false"><span class="dot"></span><span id="pauseText">Live</span></button>
-          <input id="search" class="input" placeholder="Search: reason, source, name, pid..." />
-          <button class="btn" id="refresh">Refresh</button>
-          <button class="btn" id="export">Export CSV</button>
-          <div class="muted">Showing <span id="count" class="count">0</span> / <span id="total" class="count">0</span></div>
-        </div>
-      </div>
+def _is_worse(prev: dict, cur: dict) -> bool:
+    pl = _SEV_RANK.get(str(prev.get("level", "info")).lower(), 0)
+    cl = _SEV_RANK.get(str(cur.get("level", "info")).lower(), 0)
+    if cl > pl:
+        return True
 
-      <!-- Integrity bar -->
-      <div class="panel" id="bar-integrity" style="display:none">
-        <div class="grid">
-          <div class="card">
-            <div class="controls" style="gap:8px">
-              <button class="btn" id="i-browse">Browse (Windows)</button>
-              <input id="i-path" class="input" placeholder="File path (or use Browse)" style="min-width:360px" />
-              <select id="i-rule" class="input" style="min-width:160px">
-                <option value="sha256">Exact SHA-256</option>
-                <option value="mtime+size">mtime + size</option>
-              </select>
-              <input id="i-note" class="input" placeholder="Note (optional)" style="min-width:200px" />
-              <button class="btn" id="i-hash">Hash Now</button>
-              <button class="btn" id="i-add">Save</button>
-              <span class="hint" id="i-hint"></span>
-            </div>
-            <div class="small" id="i-preview"></div>
-          </div>
-          <div class="card">
-            <table class="tbl" id="i-table">
-              <thead>
-                <tr>
-                  <th>Path</th>
-                  <th>Rule</th>
-                  <th>Baseline</th>
-                  <th>Last result</th>
-                  <th>Actions</th>
-                </tr>
-              </thead>
-              <tbody id="i-tbody"></tbody>
-            </table>
-            <div class="hint">Targets are stored in <span class="mono">data/integrity_targets.json</span> and are hot-reloaded by the IntegrityChecker.</div>
-          </div>
-        </div>
-      </div>
-    </div>
-  </header>
+    pv = str(prev.get("csc_verdict", "unknown")).lower()
+    cv = str(cur.get("csc_verdict", "unknown")).lower()
+    if _VERDICT_RANK.get(cv, 1) > _VERDICT_RANK.get(pv, 1):
+        return True
+    if str(prev.get("csc_class", "")) != str(cur.get("csc_class", "")):
+        return True
+    try:
+        if abs(float(cur.get("csc_confidence", 0)) - float(prev.get("csc_confidence", 0))) >= 0.05:
+            return True
+    except Exception:
+        pass
 
-  <main>
-    <div class="wrap">
-      <div id="live" class="list"></div>
+    if (prev.get("source") == "integrity") or (cur.get("source") == "integrity"):
+        if str(prev.get("last_result", "")) != str(cur.get("last_result", "")):
+            return True
+        if (
+            str(cur.get("rule", "")).lower() == "sha256"
+            and cur.get("sha256")
+            and prev.get("sha256")
+            and str(cur.get("sha256")).upper() != str(prev.get("sha256")).upper()
+        ):
+            return True
 
-      <div id="tree" class="tree" style="display:none">
-        <div class="treebar">
-          <input id="treeSearch" class="input" placeholder="Search PIDs, names, trust..." />
-          <button class="btn" id="treeRefresh">Refresh</button>
-          <button class="btn" id="treeExpand">Expand all</button>
-          <button class="btn" id="treeCollapse">Collapse all</button>
-          <button class="btn" id="treeCopy">Copy</button>
-          <button class="btn" id="treeExport">Export JSON/Excel</button>
-        </div>
-        <div id="treeRoot"></div>
-      </div>
+    return False
 
-      <div id="about" class="panel" style="display:none"></div>
-    </div>
-  </main>
 
-  <script>
-    const state = { tab:"live", levels:{info:true,warning:true,critical:true}, paused:false, q:"", timer:null, treeQ:"" };
-    // sync initial from buttons (prevents drift)
-    document.querySelectorAll('#bar-live .chip[data-level]').forEach(btn => {
-      const lvl = btn.getAttribute('data-level');
-      const on = btn.getAttribute('data-on') === 'true';
-      state.levels[lvl] = on;
-    });
+def _coalesce_or_admit(ev: dict) -> bool:
+    """
+    Returns True to append ev to BUFFER, False if merged into a recent one.
+    Keeps a single representative event within RECENT_TTL unless the new event is 'worse'.
+    """
+    now = time.time()
+    # prune expired
+    for k, rec in list(RECENT_MAP.items()):  # <— renamed from `entry`
+        if now - float(rec.get("last_seen", 0)) > RECENT_TTL:
+            RECENT_MAP.pop(k, None)
 
-    const listEl = document.getElementById('live'), searchEl = document.getElementById('search');
-    const countEl = document.getElementById('count'), totalEl = document.getElementById('total');
-    const pauseBtn = document.getElementById('pause'), pauseText = document.getElementById('pauseText');
-    const treeEl = document.getElementById('treeRoot'), aboutEl = document.getElementById('about');
+    fp = _fingerprint_base(ev)
+    hit: RecentMeta | None = RECENT_MAP.get(fp)  # <— distinct name
 
-    //integrity refs
-    const iBar = document.getElementById('bar-integrity');
-    const iPath = document.getElementById('i-path');
-    const iRule = document.getElementById('i-rule');
-    const iNote = document.getElementById('i-note');
-    const iBrowse = document.getElementById('i-browse');
-    const iHash = document.getElementById('i-hash');
-    const iAdd = document.getElementById('i-add');
-    const iHint = document.getElementById('i-hint');
-    const iPreview = document.getElementById('i-preview');
-    const iTbody = document.getElementById('i-tbody');
+    if hit is None:
+        ev["seen"] = 1
+        RECENT_MAP[fp] = {"ref": ev, "seen": 1, "last_seen": now}
+        return True
 
-    //tabs
-    document.querySelectorAll('.tab').forEach(t => {
-      t.addEventListener('click', () => {
-        document.querySelectorAll('.tab').forEach(x => x.classList.remove('on'));
-        t.classList.add('on'); state.tab = t.getAttribute('data-tab');
+    prev: dict[str, Any] = hit["ref"]
 
-        document.getElementById('live').style.display = (state.tab==='live')?'':'none';
-        document.getElementById('bar-live').style.display = (state.tab==='live')?'':'none';
-        document.getElementById('tree').style.display = (state.tab==='tree')?'':'none';
-        iBar.style.display = (state.tab==='integrity')?'':'none';
-        aboutEl.style.display = (state.tab==='about')?'':'none';
+    # admit if the new one is worse (higher severity, worse verdict/class/conf)
+    if _is_worse(prev, ev):
+        ev["seen"] = 1
+        RECENT_MAP[fp] = {"ref": ev, "seen": 1, "last_seen": now}
+        return True
 
-        if (state.tab==='tree') fetchTree();
-        if (state.tab==='about') fetchAbout();
-        if (state.tab==='integrity') loadTargets();
-      });
-    });
+    # otherwise coalesce
+    hit["seen"] = int(hit.get("seen", 1)) + 1
+    hit["last_seen"] = now
+    prev["seen"] = hit["seen"]
+    prev["ts"] = ev.get("ts", now)  # keep the displayed timestamp fresh
+    return False
 
-    //live filters
-    document.querySelectorAll('#bar-live .chip[data-level]').forEach(btn => {
-      btn.addEventListener('click', () => {
-        const lvl = btn.getAttribute('data-level');
-        const on = btn.getAttribute('data-on') !== 'true';
-        btn.setAttribute('data-on', on ? 'true' : 'false');
-        state.levels[lvl] = on; render(window.__data || []);
-      });
-    });
 
-    pauseBtn.addEventListener('click', () => {
-      state.paused = !state.paused;
-      pauseBtn.setAttribute('data-on', state.paused ? 'true' : 'false');
-      pauseText.textContent = state.paused ? 'Paused' : 'Live';
-    });
+DRAIN_LIMIT_PER_CALL = CFG.drain_limit_per_call
+DRAIN_DEADLINE_SEC = CFG.drain_deadline_sec
 
-    searchEl.addEventListener('input', (e) => { state.q = e.target.value.toLowerCase().trim(); render(window.__data || []); });
-    document.getElementById('refresh').addEventListener('click', fetchData);
-
-    //export live
-    document.getElementById('export').addEventListener('click', () => {
-      const includeInfo = state.levels.info ? '1' : '0';
-      const lvls = Object.entries(state.levels).filter(([k,v]) => v).map(([k])=>k).join(',');
-      const url = `/api/export?format=csv&include_info=${includeInfo}&levels=${encodeURIComponent(lvls)}&q=${encodeURIComponent(state.q)}`;
-      window.location.href = url;
-    });
-
-    //live list rendering
-    function row(ev) {
-      const lvl = (ev.level || 'info').toLowerCase();
-      const reason = ev.reason || 'event';
-      const src = ev.source || '';
-      const pid = ev.pid || '';
-      const name = ev.name || '';
-      const path = ev.path || '';
-      const ts = ev.ts ? new Date(ev.ts * 1000).toLocaleTimeString() : '';
-      const trust = (typeof ev.trust === 'number') ? ` | trust=${ev.trust}(${ev.trust_label || ''})` : '';
-
-      const ident = (src === 'integrity')
-        ? `path=${path || name}`     // show file path for integrity events
-        : `pid=${pid} name=${name}`;
-
-      return `
-        <div class="row">
-          <div class="nowrap"><span class="lvl ${lvl}">${lvl.toUpperCase()}</span></div>
-          <div class="mono muted nowrap">${ts}</div>
-          <div class="mono nowrap">${reason} | source=${src} ${ident}${trust}</div>
-        </div>
-      `;
-    }
-
-    function render(data) {
-      const byLevel = data.filter(ev => state.levels[(ev.level || 'info').toLowerCase()]);
-      const q = state.q;
-      const byQuery = q ? byLevel.filter(ev => {
-        const s = (ev.reason || '') + ' ' + (ev.source || '') + ' ' + (ev.name || '') + ' ' + (ev.pid || '') + ' ' + (ev.path || '');
-        return s.toLowerCase().includes(q);
-      }) : byLevel;
-      countEl.textContent = byQuery.length; totalEl.textContent = data.length;
-      listEl.innerHTML = byQuery.map(row).join('');
-    }
-
-    async function fetchData() {
-      try {
-        const includeInfo = state.levels.info ? '1' : '0';
-        const res = await fetch('/api/events?include_info=' + includeInfo);
-        const data = await res.json();
-        window.__data = data;
-        if (!state.paused && state.tab==='live') render(data);
-      } catch (e) { /* ignore */ }
-    }
-
-    // ---------------- process tree ----------------
-    const treeSearch = document.getElementById('treeSearch');
-    document.getElementById('treeRefresh').addEventListener('click', fetchTree);
-    document.getElementById('treeExpand').addEventListener('click', () => toggleAll(true));
-    document.getElementById('treeCollapse').addEventListener('click', () => toggleAll(false));
-    document.getElementById('treeCopy').addEventListener('click', copyTree);
-    document.getElementById('treeExport').addEventListener('click', () => {
-      const useXlsx = confirm("Export Process Tree as Excel (OK) or JSON (Cancel)?");
-      const fmt = useXlsx ? "xlsx" : "json";
-      window.location.href = `/api/proctree?as=${fmt}`;
-    });
-    treeSearch.addEventListener('input', (e) => { state.treeQ = (e.target.value||'').toLowerCase().trim(); fetchTree(); });
-
-    async function fetchTree() {
-      try {
-        const res = await fetch('/api/proctree');
-        const data = await res.json();
-        const filtered = filterTreeList(data, state.treeQ);
-        treeEl.innerHTML = filtered.map(n => renderNode(n, 0)).join('');
-      } catch (e) {}
-    }
-
-    function filterTreeList(list, q) {
-      if (!q) return list;
-      function match(n) {
-        const s = `${n.pid} ${n.name} ${n.trust_label||''}`.toLowerCase();
-        return s.includes(q);
-      }
-      function filterNode(n) {
-        const kids = (n.children||[]).map(filterNode).filter(Boolean);
-        if (match(n) || kids.length) return { ...n, children: kids };
-        return null;
-      }
-      return list.map(filterNode).filter(Boolean);
-    }
-
-    function pill(trust) {
-      const t = (trust||'').toLowerCase();
-      return `<span class="pill ${t}">${t||''}</span>`;
-    }
-
-    function renderNode(n, depth) {
-      const openAttr = depth < 1 ? " open" : "";
-      const head = `<span class="caret"></span><span class="mono">PID ${n.pid}</span> <span class="mono">${n.name}</span> ${pill(n.trust_label)}`;
-      const kids = (n.children||[]).map(c => renderNode(c, depth+1)).join('');
-      if (!kids) {
-        return `<div style="margin-left:10px"><span class="mono">PID ${n.pid}</span> <span class="mono">${n.name}</span> ${pill(n.trust_label)}</div>`;
-      }
-      return `<details${openAttr}><summary>${head}</summary>${kids}</details>`;
-    }
-
-    function toggleAll(open) {
-      document.querySelectorAll('#treeRoot details').forEach(d => {
-        if (open) d.setAttribute('open','');
-        else d.removeAttribute('open');
-      });
-    }
-
-    function copyTree() {
-      const tmp = document.createElement('textarea');
-      tmp.value = document.getElementById('treeRoot').innerText.trim();
-      document.body.appendChild(tmp);
-      tmp.select(); document.execCommand('copy'); document.body.removeChild(tmp);
-    }
-
-    // ---------------- about ----------------
-    async function fetchAbout() {
-      try {
-        const res = await fetch('/api/about'); const a = await res.json();
-        aboutEl.innerHTML = `
-          <div class="mono"><b>CustosEye</b></div>
-          <div class="muted">Local-only dashboard for monitoring.</div>
-          <div class="mono" style="margin-top:6px">Version: ${a.version || 'dev'}</div>
-          <div class="mono">Build: ${a.build || '-'}</div>
-          <div class="mono">Buffer size: ${a.buffer_max}</div>
-        `;
-      } catch (e) {}
-    }
-
-    // ---------------- integrity tab logic ----------------
-    async function loadTargets() {
-      try {
-        const res = await fetch('/api/integrity/targets');
-        const data = await res.json();
-        renderTargets(data);
-      } catch (e) {
-        iTbody.innerHTML = `<tr><td colspan="5" class="small">Failed to load targets</td></tr>`;
-      }
-    }
-
-    function renderTargets(list) {
-      if (!Array.isArray(list) || list.length === 0) {
-        iTbody.innerHTML = `<tr><td colspan="5" class="small">No files being watched yet.</td></tr>`;
-        return;
-      }
-      iTbody.innerHTML = list.map(row => {
-        const status = row.last_result || '';
-        const badgeCls = status.startsWith('OK') ? 'ok' : (status ? 'bad' : '');
-        const baseline = row.rule === 'sha256'
-          ? (row.sha256 || '')
-          : ((row.mtime && row.size) ? `mtime=${row.mtime} size=${row.size}` : '(none)');
-        return `
-          <tr>
-            <td class="mono">${(row.path||'')}</td>
-            <td>${(row.rule||'sha256')}</td>
-            <td class="mono">${baseline}</td>
-            <td>${status ? `<span class="badge ${badgeCls}">${status}</span>` : ''}</td>
-            <td class="row-actions">
-              <button class="btn" data-act="rehash" data-path="${encodeURIComponent(row.path||'')}">Re-hash</button>
-              <button class="btn" data-act="remove" data-path="${encodeURIComponent(row.path||'')}">Remove</button>
-            </td>
-          </tr>`;
-      }).join('');
-      //wire row actions
-      iTbody.querySelectorAll('button[data-act="remove"]').forEach(btn => {
-        btn.addEventListener('click', async () => {
-          const path = decodeURIComponent(btn.getAttribute('data-path'));
-          if (!confirm('Remove from watch list?')) return;
-          await fetch('/api/integrity/targets', { method:'DELETE', headers:{'Content-Type':'application/json'}, body: JSON.stringify({path}) });
-          loadTargets();
-        });
-      });
-      iTbody.querySelectorAll('button[data-act="rehash"]').forEach(btn => {
-        btn.addEventListener('click', async () => {
-          const path = decodeURIComponent(btn.getAttribute('data-path'));
-          const r = await fetch('/api/integrity/hash', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({path}) });
-          const j = await r.json();
-          alert((j.sha256 ? `SHA-256:\n${j.sha256}` : 'No hash') + (j.error? `\n\nError: ${j.error}`:''));
-          // refresh table to reflect last_result / baseline promotion
-          loadTargets();
-        });
-      });
-    }
-
-    iBrowse.addEventListener('click', async () => {
-      iHint.textContent = 'Opening Windows file dialog...';
-      try {
-        const r = await fetch('/api/integrity/browse', { method:'POST' });
-        const j = await r.json();
-        if (j.path) { iPath.value = j.path; iHint.textContent = ''; } else { iHint.textContent = 'No file selected'; }
-      } catch(e) { iHint.textContent = 'Browse not available'; }
-    });
-
-    iHash.addEventListener('click', async () => {
-      const path = iPath.value.trim();
-      if (!path) { iHint.textContent = 'Pick a file first'; return; }
-      iHint.textContent = 'Hashing...';
-      const r = await fetch('/api/integrity/hash', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({path}) });
-      const j = await r.json();
-      if (j.sha256) {
-        iPreview.textContent = `SHA-256: ${j.sha256}  |  size=${j.size}  |  mtime=${j.mtime}`;
-        if (iRule.value === 'sha256') {
-          // pre-fill baseline preview; we store baseline server-side on Save
-        }
-        iHint.textContent = 'Preview ready';
-      } else {
-        iPreview.textContent = '';
-        iHint.textContent = j.error || 'Failed to hash';
-      }
-    });
-
-    iAdd.addEventListener('click', async () => {
-      const path = iPath.value.trim();
-      if (!path) { iHint.textContent = 'Pick a file first'; return; }
-      const rule = iRule.value;
-      const note = iNote.value.trim();
-      iHint.textContent = 'Saving...';
-      const r = await fetch('/api/integrity/targets', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({path, rule, note}) });
-      const j = await r.json();
-      if (j.ok) {
-        iHint.textContent = 'Saved';
-        iPreview.textContent = '';
-        iNote.value = '';
-        loadTargets();
-      } else {
-        iHint.textContent = j.error || 'Failed to save';
-      }
-    });
-
-    // poller: keep draining regardless of tab; render only when on "live"
-    function tick() {
-      if (state.paused) return;
-      if (state.tab === 'live') {
-        fetchData(); // pulls & renders
-      } else {
-        // keep the backend draining without pulling the full payload
-        fetch('/api/ping').catch(()=>{});
-      }
-    }
-    state.timer = setInterval(tick, 1500);
-    tick(); // kick once at load
-  </script>
-</body>
-</html>
-"""
+_DRAIN_LOCK = threading.Lock()  # to prevent concurrent drains
 
 
 # ---------------- fan-out subscription plumbing ----------------
@@ -661,16 +341,6 @@ def _write_integrity_targets(rows: list[dict[str, Any]]) -> None:
         pass
 
 
-def _expand_user_vars(p: str) -> str:
-    # expand %VARS% and ~; keep relative paths as-is (agent resolves relative to BASE_DIR currently)
-    try:
-        p = os.path.expandvars(p)
-        p = os.path.expanduser(p)
-    except Exception:
-        pass
-    return p
-
-
 def _sha256_file(path: str) -> dict[str, Any]:
     # normalize (env vars, ~, quotes) but keep original text in "path"
     p = _norm_user_path(path)
@@ -700,6 +370,310 @@ def _norm_user_path(p: str) -> str:
     return str(Path(p))
 
 
+# ----- Integrity: chunk hashing + diff utilities -----
+def _chunk_hashes(path: str, chunk_size: int = 4096) -> dict[str, Any]:
+    # compute sha256 for each fixed-size chunk to enable region-level diffs
+    p = _norm_user_path(path)  # normalize the path
+    try:
+        st = os.stat(p)  # stat to get size quickly
+        total = int(st.st_size)  # total file size in bytes
+    except Exception as e:
+        return {"error": f"stat failed: {e}"}  # bubble error to caller
+
+    hashes: list[str] = []  # per-chunk hex digests
+    try:
+        with open(p, "rb") as f:  # open file in binary
+            while True:
+                chunk = f.read(chunk_size)  # read a fixed-size block
+                if not chunk:  # EOF
+                    break
+                h = hashlib.sha256()  # use sha256 for consistency
+                h.update(chunk)  # hash the chunk
+                hashes.append(h.hexdigest().upper())  # store uppercase hex
+    except Exception as e:
+        return {"error": f"read failed: {e}"}  # I/O errors return gracefully
+
+    return {
+        "algo": "sha256",  # hashing algorithm
+        "chunk_size": int(chunk_size),  # size of each chunk in bytes
+        "size": total,  # total size at time of baselining
+        "hashes": hashes,  # list of per-chunk digests
+    }
+
+
+def _short_hex(s: str, left: int = 8, right: int = 6) -> str:
+    # shorten long hex strings for UI readability
+    if not s:
+        return ""
+    if len(s) <= left + right + 1:
+        return s
+    return f"{s[:left]}…{s[-right:]}"
+
+
+def _merge_changed_chunks(changed_idxs: list[int]) -> list[tuple[int, int]]:
+    # merge consecutive chunk indexes into ranges [start_idx, end_idx] inclusive
+    if not changed_idxs:
+        return []
+    ranges: list[tuple[int, int]] = []
+    start = prev = changed_idxs[0]
+    for idx in changed_idxs[1:]:
+        if idx == prev + 1:
+            prev = idx
+            continue
+        ranges.append((start, prev))
+        start = prev = idx
+    ranges.append((start, prev))
+    return ranges
+
+
+def _read_region_preview(path: str, start: int, length: int, cap: int = 64) -> bytes:
+    # return up to `cap` bytes from the start of a region to preview "after" content
+    p = _norm_user_path(path)
+    try:
+        with open(p, "rb") as f:
+            f.seek(max(0, start))  # guard negative offsets
+            return f.read(max(0, min(cap, length)))  # clamp to [0, cap]
+    except Exception:
+        return b""  # on error, no preview
+
+
+def _zip_manifest(path: str) -> dict[str, dict[str, int]]:
+    """
+    If file is a ZIP, return { member_name: {size, crc, date} }.
+    CRC is stored as unsigned int; date is an int like YYYYMMDD.
+    If not ZIP or on error, return {}.
+    """
+    p = _norm_user_path(path)
+    try:
+        with open(p, "rb") as f:
+            sig = f.read(4)
+        if sig != b"PK\x03\x04":
+            return {}
+    except Exception:
+        return {}
+
+    out: dict[str, dict[str, int]] = {}
+    try:
+        with zipfile.ZipFile(p, "r") as zf:
+            for zi in zf.infolist():
+                # crc is already computed by the ZipInfo; convert to unsigned 32
+                crc = zi.CRC & 0xFFFFFFFF
+                # ZipInfo.date_time -> (Y, M, D, h, m, s)
+                y, m, d = zi.date_time[:3]
+                date = y * 10000 + m * 100 + d
+                out[zi.filename] = {"size": zi.file_size, "crc": int(crc), "date": int(date)}
+    except Exception:
+        return {}
+    return out
+
+
+def _nl_file_kind(path: str) -> str:
+    p = (path or "").lower()
+    if p.endswith((".pptx", ".ppt")):
+        return "PowerPoint"
+    if p.endswith((".docx", ".doc")):
+        return "Word document"
+    if p.endswith((".xlsx", ".xls")):
+        return "Excel workbook"
+    if p.endswith((".pdf",)):
+        return "PDF"
+    if p.endswith((".txt", ".log")):
+        return "text file"
+    if p.endswith(
+        (
+            ".py",
+            ".js",
+            ".ts",
+            ".c",
+            ".cpp",
+            ".cs",
+            ".java",
+            ".rb",
+            ".rs",
+            ".go",
+            ".php",
+            ".sh",
+            ".ps1",
+            ".r",
+            ".m",
+            ".scala",
+            ".kt",
+        )
+    ):
+        return "source code"
+    return "file"
+
+
+def _nl_summary_for_diff(
+    path: str,
+    approx_bytes_changed: int,
+    percent: float,
+    ranges: list[tuple[int, int]],
+    zip_changes: list[dict[str, Any]],
+    chunk_size: int,
+    base_size: int,
+    cur_size: int,
+) -> dict[str, str]:
+    """Return {'headline': str, 'details': str}"""
+    kind = _nl_file_kind(path)
+    # Headline
+    if approx_bytes_changed == 0 and not zip_changes:
+        headline = f"No differences detected in the {kind}."
+        return {"headline": headline, "details": ""}
+
+    # Zip member changes summary
+    added = [z for z in zip_changes if z.get("change") == "added"]
+    removed = [z for z in zip_changes if z.get("change") == "removed"]
+    modified = [z for z in zip_changes if z.get("change") == "modified"]
+
+    chunk_regions = len(ranges)
+    headline = f"{kind.capitalize()} changed ~{percent:.2f}% ({approx_bytes_changed} bytes)."
+
+    parts: list[str] = []
+    # File sizes
+    if base_size and cur_size and base_size != cur_size:
+        delta = cur_size - base_size
+        sign = "+" if delta >= 0 else ""
+        parts.append(f"Size: {base_size} → {cur_size} bytes ({sign}{delta}).")
+
+    # Regions by chunks
+    if chunk_regions:
+        total_chunks = 0
+        for s, e in ranges:
+            total_chunks += e - s + 1
+        parts.append(
+            f"Changed regions: {chunk_regions} ({total_chunks} chunk(s) of {chunk_size} bytes)."
+        )
+
+    # Office containers (docx/xlsx/pptx)
+    if zip_changes:
+        a, r, m = len(added), len(removed), len(modified)
+        bits = []
+        if a:
+            bits.append(f"{a} added")
+        if r:
+            bits.append(f"{r} removed")
+        if m:
+            bits.append(f"{m} modified")
+        parts.append("ZIP members: " + ", ".join(bits) + ".")
+
+    # Heuristics by type
+    if kind in ("PowerPoint", "Word document", "Excel workbook"):
+        if zip_changes and modified:
+            parts.append("Likely content edits to internal parts (slides, document XML, or media).")
+        elif zip_changes and (added or removed):
+            parts.append("Likely added or removed embedded media, slides, or sheets.")
+        else:
+            parts.append("Container changed; content may have been edited or metadata updated.")
+    elif kind == "PDF":
+        parts.append("Binary regions changed; could be page content or metadata.")
+    elif kind == "source code":
+        parts.append("Code regions changed; review in your VCS for exact lines.")
+    elif kind == "text file":
+        parts.append("Text content changed; open in a diff tool for exact lines.")
+
+    details = " ".join(parts)
+    return {"headline": headline, "details": details}
+
+
+# -------- Baseline snapshot storage (content-addressed) --------
+BASELINES_DIR = str((BASE_DIR / "data" / "baselines").resolve())
+BASELINES_MAX_BYTES: int = int(getattr(CFG, "baselines_max_bytes", 1_000_000_000))  # ~1 GB default
+
+
+def _shard_dir_from_hex(h: str) -> str:
+    # shard to avoid huge directories
+    return os.path.join(BASELINES_DIR, h[:2], h[2:4], h)
+
+
+def _snapshot_file_to_cas(src_path: str) -> dict[str, Any]:
+    """
+    Save the *bytes* of src_path into content-addressed storage by SHA-256.
+    Returns a metadata dict suitable for storing in target["baseline_blob"].
+    """
+    src = _norm_user_path(src_path)
+    st = os.stat(src)
+    size = int(st.st_size)
+
+    h = hashlib.sha256()
+    with open(src, "rb") as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b""):
+            h.update(chunk)
+    sha = h.hexdigest().upper()
+
+    dst_root = _shard_dir_from_hex(sha)
+    os.makedirs(dst_root, exist_ok=True)
+
+    fname = os.path.basename(src_path) or sha
+    dst_path = os.path.join(dst_root, fname)
+
+    if not os.path.exists(dst_path):
+        tmp = dst_path + ".tmp"
+        with open(src, "rb") as rf, open(tmp, "wb") as wf:
+            for chunk in iter(lambda: rf.read(1024 * 1024), b""):
+                wf.write(chunk)
+        os.replace(tmp, dst_path)
+
+    return {
+        "sha256": sha,
+        "size": size,
+        "stored_path": dst_path,
+        "created_at": int(time.time()),
+    }
+
+
+def _validate_cas_blob(blob: dict[str, Any]) -> bool:
+    try:
+        p = blob.get("stored_path")
+        if not p or not os.path.exists(p):
+            return False
+        if int(os.path.getsize(p)) != int(blob.get("size", -1)):
+            return False
+        # Optional: verify hash matches
+        h = hashlib.sha256()
+        with open(p, "rb") as f:
+            for chunk in iter(lambda: f.read(1024 * 1024), b""):
+                h.update(chunk)
+        return h.hexdigest().upper() == str(blob.get("sha256", "")).upper()
+    except Exception:
+        return False
+
+
+def _maybe_prune_baselines() -> None:
+    """
+    Keep total size of BASELINES_DIR under BASELINES_MAX_BYTES.
+    Deletes oldest files first. Called after adding new baseline blobs.
+    """
+    try:
+        files: list[tuple[str, float, int]] = []
+        total_size = 0
+
+        # Walk recursively and collect all baseline files
+        for root, _dirs, fnames in os.walk(BASELINES_DIR):
+            for fn in fnames:
+                p = os.path.join(root, fn)
+                try:
+                    st = os.stat(p)
+                    total_size += st.st_size
+                    files.append((p, st.st_mtime, st.st_size))
+                except Exception:
+                    continue
+
+        # If we’re over the cap, remove oldest files until under limit
+        if total_size > BASELINES_MAX_BYTES:
+            files.sort(key=lambda x: x[1])  # oldest first
+            for p, _mtime, sz in files:
+                try:
+                    os.remove(p)
+                    total_size -= sz
+                    if total_size <= BASELINES_MAX_BYTES:
+                        break
+                except Exception:
+                    pass
+    except Exception:
+        pass
+
+
 # ---------------- Flask app build ----------------
 def build_app(event_bus) -> Flask:
     app = Flask(__name__)
@@ -707,113 +681,167 @@ def build_app(event_bus) -> Flask:
     # make sure our iterator type is clear for mypy
     _iter: Iterator[dict[str, Any]] = _bus_iterator(event_bus)
 
+    # publisher helper used to push live events immediately
+    def _publish(ev: dict[str, Any]) -> None:
+        try:
+            if hasattr(event_bus, "publish"):
+                event_bus.publish(ev)  # preferred
+            else:
+                # fallback: push into BUFFER so it appears right away
+                BUFFER.append(ev)
+        except Exception:
+            # never break the request on failed publish
+            pass
+
+    def _emit_integrity_event(path: str, status: str, rule: str) -> None:
+        """
+        Push an integrity-related event into the live event stream.
+        Used by /api/integrity/hash so that users see CHANGED/OK immediately.
+        """
+        lvl = "info"
+        s = (status or "").upper()
+        if s.startswith("CHANGED"):
+            lvl = "critical"
+        elif s.startswith("ERR"):
+            lvl = "warning"
+
+        ev = {
+            "source": "integrity",
+            "level": lvl,
+            "reason": f"integrity {status or 'update'}",
+            "path": path,
+            "rule": rule,
+            "ts": time.time(),
+            "name": os.path.basename(path) if path else "",
+        }
+        _publish(ev)
+
     # favicon routes
     @app.get("/favicon.ico")
     def favicon():
-        p = Path(_asset_path("assets/favicon.ico"))
-        if p.exists():
-            return send_file(str(p), mimetype="image/x-icon")
-        return ("", 204)
+        return app.send_static_file("assets/favicon.ico")
 
     @app.get("/favicon-32x32.png")
     def favicon_32():
-        p = Path(_asset_path("assets/favicon-32x32.png"))
-        if p.exists():
-            return send_file(str(p), mimetype="image/png")
-        return ("", 204)
+        return app.send_static_file("assets/favicon-32x32.png")
 
     @app.get("/favicon-16x16.png")
     def favicon_16():
-        p = Path(_asset_path("assets/favicon-16x16.png"))
-        if p.exists():
-            return send_file(str(p), mimetype="image/png")
-        return ("", 204)
+        return app.send_static_file("assets/favicon-16x16.png")
 
     @app.get("/apple-touch-icon.png")
     def apple_touch_icon():
-        p = Path(_asset_path("assets/apple-touch-icon.png"))
-        if p.exists():
-            return send_file(str(p), mimetype="image/png")
-        return ("", 204)
-
-    # each Flask app holds its own subscriber iterator
-    _iter = _bus_iterator(event_bus)
+        return app.send_static_file("assets/apple-touch-icon.png")
 
     def drain_into_buffer() -> int:
-        _maybe_reload_rules()
-        drained = 0
-        deadline = time.time() + DRAIN_DEADLINE_SEC
+        with _DRAIN_LOCK:
+            _maybe_reload_rules()
+            _maybe_reload_name_trust()
+            drained = 0
+            deadline = time.time() + DRAIN_DEADLINE_SEC
 
-        while time.time() < deadline and drained < DRAIN_LIMIT_PER_CALL:
-            try:
-                ev = next(_iter)
-            except StopIteration:
-                break
-            except Exception:
-                break
-            if not ev:
-                break
+            while time.time() < deadline and drained < DRAIN_LIMIT_PER_CALL:
+                try:
+                    ev = next(_iter)
+                except StopIteration:
+                    break
+                except Exception:
+                    break
+                if ev is None:
+                    continue  # dont exit early; keep trying until deadline
 
-            ev.setdefault("level", "info")
-            ev.setdefault("reason", "event")
-            ev.setdefault("ts", time.time())
+                ev.setdefault("level", "info")
+                ev.setdefault("reason", "event")
+                ev.setdefault("ts", time.time())
 
-            if ev.get("source") != "integrity":
-                decision = _rules.evaluate(ev)
-                ev["level"] = decision.get("level", ev.get("level"))
-                ev["reason"] = decision.get("reason", ev.get("reason"))
+                if ev.get("source") != "integrity":
+                    # makes sure we always have a dict for mypy and runtime safety
+                    decision: dict[str, Any] = cast(dict[str, Any], _rules.evaluate(ev) or {})
+                    ev["level"] = decision.get("level", ev.get("level"))
+                    ev["reason"] = decision.get("reason", ev.get("reason"))
 
-            if ev.get("source") == "process":
-                # --- suppress our own process(es) before any scoring or tree updates ---
-                nm = str(ev.get("name") or "").lower()
-                ex = str(ev.get("exe") or "").lower()
-                h = str(ev.get("sha256") or "").lower()
-                if (
-                    (nm and nm in SELF_SUPPRESS["names"])
-                    or (ex and ex in SELF_SUPPRESS["exes"])
-                    or (h and h in SELF_SUPPRESS["sha256"])
-                ):
-                    continue  # skip buffering and tree indexing entirely
+                if ev.get("source") == "process":
+                    # --- suppress our own process(es) before any scoring or tree updates ---
+                    nm_lc = str(ev.get("name") or "").lower()
+                    ex_lc = str(ev.get("exe") or "").lower()
+                    h_lc = str(ev.get("sha256") or "").lower()
+                    if (
+                        (nm_lc and nm_lc in SELF_SUPPRESS["names"])
+                        or (ex_lc and ex_lc in SELF_SUPPRESS["exes"])
+                        or (h_lc and h_lc in SELF_SUPPRESS["sha256"])
+                    ):
+                        continue  # skip buffering and tree indexing entirely
 
-                # trust evaluation
-                t = _csc.evaluate(ev)
-                ev["trust"], ev["trust_label"], ev["trust_reasons"] = (
-                    t["trust"],
-                    t["label"],
-                    t["reasons"],
-                )
+                    # --- trust scoring: name-based fast-path, then kernel/idle/registry, then model ---
+                    pid = ev.get("pid")
+                    nm = str(ev.get("name") or "")
 
-                # process tree index
-                pid = ev.get("pid")
-                if isinstance(pid, int):
-                    PROC_INDEX[pid] = {
-                        "pid": pid,
-                        "ppid": ev.get("ppid"),
-                        "name": ev.get("name") or "",
-                        "trust": t["trust"],
-                        "trust_label": t["label"],
-                    }
+                    # 1) known-good names (your NAME_TRUST map)
+                    if _maybe_promote_to_trusted(ev):
+                        pass  # already set by the heuristic
 
-            if ev.get("source") == "network" and not (ev.get("pid") or ev.get("name")):
-                continue
+                    # 2) kernel/idle/registry fast-path
+                    elif pid in (0, 4) or nm.lower() in (
+                        "system",
+                        "system idle process",
+                        "registry",
+                    ):
+                        ev["csc"] = {
+                            "version": "v2",
+                            "verdict": "trusted",
+                            "cls": "system",
+                            "confidence": 0.98,
+                            "reasons": ["kernel/idle/registry fast-path"],
+                            "signals": {},
+                        }
+                        ev["csc_verdict"] = "trusted"
+                        ev["csc_class"] = "system"
+                        ev["csc_confidence"] = 0.98
+                        ev["csc_reasons"] = ["kernel/idle/registry fast-path"]
 
-            # if the event is from integrity, make sure we have a display name
-            if ev.get("source") == "integrity":
-                p = ev.get("path") or ev.get("file")
-                if p and not ev.get("name"):
-                    try:
-                        ev["name"] = os.path.basename(str(p))
-                    except Exception:
-                        ev["name"] = str(p)
+                    # 3) everything else → model
+                    else:
+                        csc_out = _csc.evaluate(ev)
+                        ev["csc"] = csc_out
+                        ev["csc_verdict"] = csc_out.get("verdict", "unknown")
+                        ev["csc_class"] = csc_out.get("cls", "unknown")
+                        ev["csc_confidence"] = float(csc_out.get("confidence", 0.5))
+                        ev["csc_reasons"] = csc_out.get("reasons", [])
 
-            BUFFER.append(ev)
-            drained += 1
+                    # process tree index (store the v2 fields)
+                    if isinstance(pid, int):
+                        PROC_INDEX[pid] = {
+                            "pid": pid,
+                            "ppid": ev.get("ppid"),
+                            "name": ev.get("name") or "",
+                            "csc_verdict": ev.get("csc_verdict", "unknown"),
+                            "csc_class": ev.get("csc_class", "unknown"),
+                            "csc_confidence": ev.get("csc_confidence", 0.5),
+                        }
 
-        return drained
+                if ev.get("source") == "network" and not (ev.get("pid") or ev.get("name")):
+                    continue
+
+                # --- integrity name fill ---
+                if ev.get("source") == "integrity":
+                    p = ev.get("path") or ev.get("file")
+                    if p and not ev.get("name"):
+                        try:
+                            ev["name"] = os.path.basename(str(p))
+                        except Exception:
+                            ev["name"] = str(p)
+
+                # --- safe coalesce (don’t drop worse events) ---
+                if _coalesce_or_admit(ev):
+                    BUFFER.append(ev)
+                    drained += 1
+                # else: merged into a recent identical event; no append
+
+            return drained
 
     @app.get("/")
     def index():
-        return render_template_string(HTML)
+        return render_template("index.html")
 
     @app.get("/api/events")
     def events():
@@ -845,8 +873,7 @@ def build_app(event_bus) -> Flask:
 
         include_info = (request.args.get("include_info") or "").lower() in ("1", "true", "yes")
         q = (request.args.get("q") or "").lower().strip()
-        lvls = (request.args.get("levels") or "").lower().split(",")
-        lvls = [x for x in lvls if x] or ["warning", "critical"]
+        lvls = [x for x in (request.args.get("levels") or "").lower().split(",") if x]
         fmt = (request.args.get("format") or "csv").lower()
 
         def pass_filters(ev: dict[str, Any]) -> bool:
@@ -856,7 +883,7 @@ def build_app(event_bus) -> Flask:
             if lvls and lvl not in lvls:
                 return False
             if q:
-                s = f"{ev.get('reason','')} {ev.get('source','')} {ev.get('name','')} {ev.get('pid','')}"
+                s = f"{ev.get('reason','')} {ev.get('source','')} {ev.get('name','')} {ev.get('pid','')} {ev.get('path','')}"
                 if q not in s.lower():
                     return False
             return True
@@ -867,7 +894,7 @@ def build_app(event_bus) -> Flask:
         if fmt == "jsonl":
             lines = [json.dumps(ev, ensure_ascii=False) for ev in rows]
             resp = make_response("\n".join(lines))
-            resp.headers["Content-Type"] = "application/json"
+            resp.headers["Content-Type"] = "application/x-ndjson"
             resp.headers["Content-Disposition"] = 'attachment; filename="custoseye_export.jsonl"'
             return resp
 
@@ -879,7 +906,18 @@ def build_app(event_bus) -> Flask:
             return resp
 
         # common tabular cols
-        cols = ["ts", "level", "reason", "source", "pid", "name", "path", "trust", "trust_label"]
+        cols = [
+            "ts",
+            "level",
+            "reason",
+            "source",
+            "pid",
+            "name",
+            "path",
+            "csc_verdict",
+            "csc_class",
+            "csc_confidence",
+        ]
 
         # XLSX
         if fmt == "xlsx":
@@ -970,7 +1008,6 @@ def build_app(event_bus) -> Flask:
 
         Query params:
           as=json  -> download pretty JSON (custoseye_proctree.json)
-          as=xlsx  -> download Excel (custoseye_proctree.xlsx)
           (none)   -> return JSON to the browser (not as attachment)
         """
         drain_into_buffer()
@@ -990,59 +1027,22 @@ def build_app(event_bus) -> Flask:
                 "pid": pid,
                 "ppid": r.get("ppid", None),
                 "name": r.get("name", ""),
-                "trust_label": r.get("trust_label", ""),
-                "children": [build(c) for c in sorted(children.get(pid, []))[:100]],
+                "csc_verdict": r.get("csc_verdict", "unknown"),
+                "csc_class": r.get("csc_class", "unknown"),
+                "csc_confidence": float(r.get("csc_confidence", 0.5)),
+                "children": [
+                    build(c) for c in sorted(children.get(pid, []))[: CFG.max_tree_children]
+                ],
             }
 
-        tree = [build(p) for p in sorted(roots)[:100]]
+        tree = [build(p) for p in sorted(roots)[: CFG.max_tree_roots]]
 
         fmt = (request.args.get("as") or "").lower()
-
         if fmt == "json":
             resp = make_response(json.dumps(tree, indent=2, ensure_ascii=False))
             resp.headers["Content-Type"] = "application/json"
             resp.headers["Content-Disposition"] = 'attachment; filename="custoseye_proctree.json"'
             return resp
-
-        if fmt == "xlsx":
-            try:
-                from openpyxl import Workbook
-                from openpyxl.utils import get_column_letter
-            except Exception:
-                return (
-                    jsonify(
-                        {
-                            "error": "xlsx export requires `openpyxl`",
-                            "hint": "pip install openpyxl or use ?as=json",
-                        }
-                    ),
-                    400,
-                )
-
-            wb = Workbook()
-            ws = wb.active
-            ws.title = "Process Tree"
-            ws.append(["PID", "Name", "Trust Label", "Parent PID"])
-
-            for pid, rec in sorted(PROC_INDEX.items()):
-                ws.append(
-                    [pid, rec.get("name", ""), rec.get("trust_label", ""), rec.get("ppid", "")]
-                )
-
-            for col_idx, width in enumerate((10, 32, 14, 12), start=1):
-                ws.column_dimensions[get_column_letter(col_idx)].width = width
-
-            from io import BytesIO
-
-            bio = BytesIO()
-            wb.save(bio)
-            bio.seek(0)
-            return send_file(
-                bio,
-                as_attachment=True,
-                download_name="custoseye_proctree.xlsx",
-                mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            )
 
         # default inline JSON
         return jsonify(tree)
@@ -1051,7 +1051,7 @@ def build_app(event_bus) -> Flask:
     def about():
         version = "-"
         build = "-"
-        vpath = Path(_resolve_base_dir() / "VERSION.txt")
+        vpath = BASE_DIR / "VERSION.txt"
         if vpath.exists():
             try:
                 lines = [
@@ -1082,7 +1082,7 @@ def build_app(event_bus) -> Flask:
         behavior: if rule == "sha256" and no baseline stored yet, auto-hash now to set baseline.
         """
         try:
-            body = request.get_json(force=True) or {}
+            body: dict[str, Any] = cast(dict[str, Any], request.get_json(force=True) or {})
             path = str(body.get("path") or "").strip()
             rule = str(body.get("rule") or "sha256").strip().lower()
             note = str(body.get("note") or "").strip()
@@ -1101,14 +1101,22 @@ def build_app(event_bus) -> Flask:
                     break
             if target is None:
                 target = {"path": path, "rule": rule}
-                if note:
+                if note != "":
                     target["note"] = note
+                else:
+                    # allow clearing the note explicitly with empty string
+                    if "note" in target:
+                        del target["note"]
                 rows.append(target)
             else:
                 target["path"] = path  # keep users original text (env vars allowed)
                 target["rule"] = rule
-                if note:
+                if note != "":
                     target["note"] = note
+                else:
+                    # allow clearing the note explicitly with empty string
+                    if "note" in target:
+                        del target["note"]
 
             # auto-baseline for sha256 if missing
             if rule == "sha256" and not target.get("sha256"):
@@ -1116,6 +1124,12 @@ def build_app(event_bus) -> Flask:
                 if info.get("sha256"):
                     target["sha256"] = info["sha256"]
                     target["last_result"] = "OK (baseline set)"
+                    if ALLOW_MTIME_SNAPSHOTS:
+                        try:
+                            target["baseline_blob"] = _snapshot_file_to_cas(path)
+                            _maybe_prune_baselines()
+                        except Exception as e:
+                            target["baseline_blob"] = {"error": str(e)}
                 else:
                     # leave baseline empty; UI can re-hash later
                     target["last_result"] = f"ERR: {info.get('error', 'hash failed')}"
@@ -1127,8 +1141,30 @@ def build_app(event_bus) -> Flask:
                     target["mtime"] = int(st.st_mtime)
                     target["size"] = int(st.st_size)
                     target["last_result"] = "OK (baseline set)"
+                    if ALLOW_MTIME_SNAPSHOTS:
+                        try:
+                            target["baseline_blob"] = _snapshot_file_to_cas(path)
+                            _maybe_prune_baselines()
+                        except Exception as e:
+                            target["baseline_blob"] = {"error": str(e)}
                 except Exception as e:
                     target["last_result"] = f"ERR: {e}"
+
+            # build / refresh chunk baseline for diffs (both rules benefit)
+            # note: we don't persist file content, only per-chunk hashes
+            info_chunks = _chunk_hashes(path)
+            if "error" not in info_chunks:
+                target["chunks"] = info_chunks  # algo, chunk_size, size, hashes
+            else:
+                # leave chunks absent if we couldn't read; UI can re-baseline later
+                target.pop("chunks", None)
+
+            # If it's a ZIP (docx, xlsx, etc), store a member manifest for friendlier diffs
+            zman = _zip_manifest(path)
+            if zman:
+                target["zip_manifest"] = zman
+            else:
+                target.pop("zip_manifest", None)
 
             _write_integrity_targets(rows)
             return jsonify({"ok": True})
@@ -1139,7 +1175,7 @@ def build_app(event_bus) -> Flask:
     @app.delete("/api/integrity/targets")
     def api_integrity_targets_delete():
         try:
-            body = request.get_json(force=True) or {}
+            body: dict[str, Any] = cast(dict[str, Any], request.get_json(force=True) or {})
             path = str(body.get("path") or "").strip()
             if not path:
                 return jsonify({"ok": False, "error": "missing path"}), 400
@@ -1154,61 +1190,357 @@ def build_app(event_bus) -> Flask:
     def api_integrity_hash():
         """
         computes SHA-256 and updates stored target:
-          - sets last_result to OK/CHANGED/ERR
-          - if baseline missing and rule == sha256, promote this hash to baseline
+        - sets last_result to OK or CHANGED or ERR
+        - if baseline missing and rule == sha256, promote this hash to baseline
+        - also ensures we have a per chunk baseline so "View changes" can work
         """
         try:
-            body = request.get_json(force=True) or {}
-            path = str(body.get("path") or "").strip()
+            body: dict[str, Any] = cast(
+                dict[str, Any], request.get_json(force=True) or {}
+            )  # parse JSON body
+            path = str(body.get("path") or "").strip()  # normalize to a simple string
             if not path:
-                return jsonify({"error": "missing path"}), 400
+                return jsonify({"error": "missing path"}), 400  # hard fail if no path
 
-            info = _sha256_file(path)  # handles normalization internally
-            rows = _read_integrity_targets()
+            info = _sha256_file(path)  # compute current file hash and attrs
+            rows = _read_integrity_targets()  # load current targets file
+            changed = False  # track if we modified the stored record
 
             # update corresponding row if present
-            changed = False
             for r in rows:
-                if str(r.get("path") or "").lower() == path.lower():
-                    rule = str(r.get("rule") or "sha256").lower()
-                    baseline = str(r.get("sha256") or "")
+                if (
+                    str(r.get("path") or "").lower() == path.lower()
+                ):  # match on case-insensitive path
+                    rule = str(r.get("rule") or "sha256").lower()  # either "sha256" or "mtime+size"
+                    baseline = str(r.get("sha256") or "")  # baseline hash if present
+
                     if "error" in info:
+                        # hashing failed, record the error but do not change baselines
                         r["last_result"] = f"ERR: {info['error']}"
+                        changed = True
+                        _emit_integrity_event(path, r["last_result"], rule)
                     else:
-                        new_hash = info.get("sha256", "")
+                        new_hash = info.get("sha256", "")  # current SHA-256 hex
                         if rule == "sha256":
                             if not baseline:
+                                # first time, promote to baseline
                                 r["sha256"] = new_hash
                                 r["last_result"] = "OK (baseline set)"
+                                changed = True
+                                _emit_integrity_event(path, r["last_result"], rule)
+                                if ALLOW_MTIME_SNAPSHOTS:
+                                    try:
+                                        r["baseline_blob"] = _snapshot_file_to_cas(path)
+                                        _maybe_prune_baselines()
+                                    except Exception as e:
+                                        r["baseline_blob"] = {"error": str(e)}
                             else:
+                                # simple equality check against baseline
                                 r["last_result"] = "OK" if baseline == new_hash else "CHANGED"
+                                changed = True
+                                _emit_integrity_event(path, r["last_result"], rule)
                         else:
-                            # mtime+size rule — compare against baseline (or set it if missing)
+                            # mtime+size rule, compare against or establish baseline
                             try:
                                 st = os.stat(_norm_user_path(path))
                                 cur_mtime = int(st.st_mtime)
                                 cur_size = int(st.st_size)
                                 if not r.get("mtime") or not r.get("size"):
+                                    # no baseline yet, establish it now
                                     r["mtime"], r["size"] = cur_mtime, cur_size
                                     r["last_result"] = "OK (baseline set)"
+                                    changed = True
+                                    _emit_integrity_event(path, r["last_result"], rule)
+                                    if ALLOW_MTIME_SNAPSHOTS:
+                                        try:
+                                            r["baseline_blob"] = _snapshot_file_to_cas(path)
+                                            _maybe_prune_baselines()
+                                        except Exception as e:
+                                            r["baseline_blob"] = {"error": str(e)}
                                 else:
+                                    # compare to existing baseline
                                     r["last_result"] = (
                                         "OK"
                                         if (r["mtime"] == cur_mtime and r["size"] == cur_size)
                                         else "CHANGED"
                                     )
+                                    changed = True
+                                    _emit_integrity_event(path, r["last_result"], rule)
                             except Exception as e:
                                 r["last_result"] = f"ERR: {e}"
-                    changed = True
-                    break
+                                _emit_integrity_event(path, r["last_result"], rule)
+                                changed = True
 
+                    # ensure we have per chunk baseline so the diff endpoint can work
+                    # we only store per chunk hashes, not content
+                    if "error" not in info:
+                        need_chunks = "chunks" not in r or not isinstance(
+                            r.get("chunks", {}).get("hashes"), list
+                        )
+                        if need_chunks:
+                            ch = _chunk_hashes(path)  # build per chunk baseline
+                            if "error" not in ch:
+                                r["chunks"] = ch  # algo, chunk_size, size, hashes
+                                changed = True
+
+                        # Only capture zip_manifest when (and only when) we establish a baseline
+                        if "error" not in info:
+                            if (rule == "sha256" and not baseline) or (
+                                rule == "mtime+size" and (not r.get("mtime") or not r.get("size"))
+                            ):
+                                zman = _zip_manifest(path)
+                                if zman:
+                                    r["zip_manifest"] = zman
+                                    changed = True
+
+                    break  # stop after the first matching record
+
+            # if we edited anything, persist the targets file
             if changed:
                 _write_integrity_targets(rows)
+            if changed:
+                # find the updated row again to read last_result
+                for r in rows:
+                    if str(r.get("path") or "").lower() == path.lower():
+                        info["last_result"] = r.get("last_result", "")
+                        info["rule"] = r.get("rule", "")
+                        break
 
-            # return raw info for the alert preview
+            # return raw info for the alert preview in UI
             return jsonify(info)
+
         except Exception as e:
             return jsonify({"error": str(e)}), 500
+
+    @app.post("/api/integrity/diff")
+    def api_integrity_diff():
+        """
+        Privacy-preserving diff between baseline chunk hashes and the current file.
+
+        We never return file contents, only:
+        - which chunk ranges changed (by chunk-hash),
+        - tiny 'after' previews (hex + ASCII) capped per region.
+
+        Percent logic:
+        - For ZIP-based Office files (docx/xlsx/pptx), estimate change from ZIP
+            member deltas (added/removed = size, modified = abs(size diff), or a
+            small cap when only CRC differs). Ignore the chunk-floor here to avoid
+            100% spikes from container re-packing.
+        - For non-ZIP files, fall back to chunk-region coverage as before.
+        """
+        try:
+            body: dict[str, Any] = cast(dict[str, Any], request.get_json(force=True) or {})
+            path = str(body.get("path") or "").strip()
+            max_regions = int(body.get("max_regions") or 50)
+            preview_cap = int(body.get("preview_bytes") or 64)
+
+            if not path:
+                return jsonify({"ok": False, "error": "missing path"}), 400
+
+            # Find target + baseline chunks
+            rows = _read_integrity_targets()
+            target = next(
+                (r for r in rows if str(r.get("path") or "").lower() == path.lower()), None
+            )
+            if target is None:
+                return jsonify({"ok": False, "error": "not on watch list"}), 400
+
+            baseline = target.get("chunks")
+            if not baseline or not isinstance(baseline.get("hashes"), list):
+                return jsonify({"ok": False, "error": "no baseline chunks available"}), 400
+
+            # Current per-chunk hashes
+            cur = _chunk_hashes(path)
+            if "error" in cur:
+                return jsonify({"ok": False, "error": cur["error"]}), 400
+
+            base_hashes = list(baseline.get("hashes") or [])
+            cur_hashes = list(cur.get("hashes") or [])
+            chunk_size = int(cur.get("chunk_size") or baseline.get("chunk_size") or 4096)
+            base_size = int(baseline.get("size") or 0)
+            cur_size = int(cur.get("size") or 0)
+
+            # ----- ZIP member-level comparison (for docx/xlsx/pptx) -----
+            zip_before = target.get("zip_manifest") or {}
+            zip_after = _zip_manifest(path)
+            zip_changes: list[dict[str, Any]] = []
+
+            if zip_after or zip_before:
+                before_keys = set(zip_before.keys())
+                after_keys = set(zip_after.keys())
+                added = sorted(after_keys - before_keys)
+                removed = sorted(before_keys - after_keys)
+                common = sorted(before_keys & after_keys)
+
+                for k in added:
+                    z = zip_after[k]
+                    zip_changes.append(
+                        {"member": k, "change": "added", "size": z["size"], "crc": z["crc"]}
+                    )
+                for k in removed:
+                    z = zip_before[k]
+                    zip_changes.append(
+                        {"member": k, "change": "removed", "size": z["size"], "crc": z["crc"]}
+                    )
+                for k in common:
+                    a, b = zip_after[k], zip_before[k]
+                    if a["size"] != b["size"] or a["crc"] != b["crc"]:
+                        zip_changes.append(
+                            {
+                                "member": k,
+                                "change": "modified",
+                                "size_before": b["size"],
+                                "size_after": a["size"],
+                                "crc_before": b["crc"],
+                                "crc_after": a["crc"],
+                            }
+                        )
+
+            # ----- Identify changed chunk indices (for regions UI only) -----
+            max_len = max(len(base_hashes), len(cur_hashes))
+            changed_idxs: list[int] = []
+            for i in range(max_len):
+                old = base_hashes[i] if i < len(base_hashes) else None
+                new = cur_hashes[i] if i < len(cur_hashes) else None
+                if old != new:
+                    changed_idxs.append(i)
+
+            ranges = _merge_changed_chunks(changed_idxs)
+
+            # Build regions with offsets and tiny 'after' previews
+            regions_out: list[dict[str, Any]] = []
+            chunk_floor_bytes = 0
+            for start_idx, end_idx in ranges[:max_regions]:
+                start_off = start_idx * chunk_size
+                end_off = min(cur_size, (end_idx + 1) * chunk_size)
+                length = max(0, end_off - start_off)
+
+                old_list = (
+                    base_hashes[start_idx : end_idx + 1] if start_idx < len(base_hashes) else []
+                )
+                new_list = (
+                    cur_hashes[start_idx : end_idx + 1] if start_idx < len(cur_hashes) else []
+                )
+
+                raw = _read_region_preview(path, start_off, length, cap=preview_cap)
+                hex_preview = raw.hex().upper()
+                ascii_preview = "".join(chr(b) if 32 <= b < 127 else "." for b in raw)
+
+                regions_out.append(
+                    {
+                        "chunk_idx_start": start_idx,
+                        "chunk_idx_end": end_idx,
+                        "start_offset": start_off,
+                        "end_offset": end_off,
+                        "length": length,
+                        "old_chunk_hashes": old_list,
+                        "new_chunk_hashes": new_list,
+                        "preview": {"bytes": len(raw), "hex": hex_preview, "ascii": ascii_preview},
+                    }
+                )
+                chunk_floor_bytes += length
+
+            # ----- Estimate % changed -----
+            # Default: non-ZIP → chunk-floor estimate
+            approx_bytes_changed = chunk_floor_bytes
+            estimation_method = "chunks"
+
+            if zip_changes:
+                # For Office containers, use only ZIP delta for the %.
+                # This avoids "100%" when the whole archive gets re-packed.
+                changed_zip_bytes = 0
+                for z in zip_changes:
+                    ch = (z.get("change") or "").lower()
+                    if ch == "added":
+                        changed_zip_bytes += int(z.get("size", 0))
+                    elif ch == "removed":
+                        changed_zip_bytes += int(z.get("size", 0))
+                    elif ch == "modified":
+                        sb = int(z.get("size_before", 0))
+                        sa = int(z.get("size_after", 0))
+                        delta = abs(sa - sb)
+                        if delta == 0 and z.get("crc_before") != z.get("crc_after"):
+                            # Same size but different bytes → treat as a tiny content tweak.
+                            delta = min(sa, 512)  # cap the tiny edit at 1 KiB
+                        changed_zip_bytes += delta
+
+                # In case everything is metadata-only and delta rounds to zero, give a small floor.
+                if changed_zip_bytes == 0 and changed_idxs:
+                    changed_zip_bytes = min(cur_size, 1024)
+
+                approx_bytes_changed = min(int(changed_zip_bytes), cur_size)
+                estimation_method = "zip-members-delta"
+
+            # Percent is always relative to the outer file size users see on disk
+            denom = float(max(1, cur_size))
+            percent = round((approx_bytes_changed / denom) * 100.0, 2)
+
+            nl = _nl_summary_for_diff(
+                path=path,
+                approx_bytes_changed=approx_bytes_changed,
+                percent=percent,
+                ranges=ranges,
+                zip_changes=zip_changes,
+                chunk_size=chunk_size,
+                base_size=base_size,
+                cur_size=cur_size,
+            )
+
+            out = {
+                "ok": True,
+                "summary": {
+                    "file": path,
+                    "changed_chunks": len(changed_idxs),
+                    "regions_returned": len(regions_out),
+                    "approx_changed_bytes": approx_bytes_changed,
+                    "approx_percent_of_file": percent,
+                    "chunk_size": chunk_size,
+                    "baseline_size": base_size,
+                    "current_size": cur_size,
+                },
+                "estimation_method": estimation_method,  # "zip-members-delta" or "chunks"
+                "summary_text": {
+                    "headline": nl.get("headline", ""),
+                    "details": nl.get("details", ""),
+                },
+                "zip_changes": zip_changes,
+                "regions": regions_out,
+            }
+            return jsonify(out)
+
+        except Exception as e:
+            return jsonify({"ok": False, "error": str(e)}), 500
+
+    @app.get("/api/integrity/baseline/download")
+    def api_integrity_baseline_download():
+        """
+        Download the stored baseline blob for a given path, if present and valid.
+        Query: ?path=<watch-list path>
+        """
+        try:
+            path = (request.args.get("path") or "").strip()
+            if not path:
+                return jsonify({"ok": False, "error": "missing path"}), 400
+
+            rows = _read_integrity_targets()
+            target = next(
+                (r for r in rows if str(r.get("path") or "").lower() == path.lower()), None
+            )
+            if not target:
+                return jsonify({"ok": False, "error": "not on watch list"}), 404
+
+            blob = target.get("baseline_blob")
+            if not isinstance(blob, dict) or blob.get("error"):
+                return jsonify({"ok": False, "error": "no baseline blob available"}), 404
+
+            if not _validate_cas_blob(blob):
+                return jsonify({"ok": False, "error": "baseline blob failed validation"}), 409
+
+            p = blob.get("stored_path")
+            fname = os.path.basename(p) if p else "baseline.bin"
+            return send_file(p, as_attachment=True, download_name=fname)
+        except Exception as e:
+            return jsonify({"ok": False, "error": str(e)}), 500
 
     @app.post("/api/integrity/browse")
     def api_integrity_browse():
@@ -1247,9 +1579,9 @@ def run_dashboard(event_bus) -> None:
             "build_app() returned None; check for exceptions or missing `return app`."
         )
     if HAVE_WAITRESS:
-        _serve(app, host="127.0.0.1", port=8765)
+        _serve(app, host=CFG.host, port=CFG.port)
     else:
-        app.run(host="127.0.0.1", port=8765, debug=False)
+        app.run(host=CFG.host, port=CFG.port, debug=False)
 
 
 # standalone mode (optional): if you run "python -m dashboard.app"
@@ -1296,7 +1628,7 @@ if __name__ == "__main__":
         ProcessMonitor(publish=bus.publish).run,
         NetworkSnapshot(publish=bus.publish).run,
         IntegrityChecker(
-            targets_path=str((BASE_DIR / "data" / "integrity_targets.json").resolve()),
+            targets_path=INTEGRITY_TARGETS_PATH,
             publish=bus.publish,
             interval_sec=5.0,
         ).run,

@@ -1,0 +1,17 @@
+{
+  "rules_path": "data/rules.json",
+  "csc_weights_path": "data/csc_weights.json",
+  "csc_db_path": "data/trust_db.json",
+  "integrity_targets_path": "data/integrity_targets.json",
+  "self_suppress_path": "data/self_suppress.json",
+
+  "buffer_max": 1200,
+  "drain_limit_per_call": 300,
+  "drain_deadline_sec": 0.25,
+
+  "host": "127.0.0.1",
+  "port": 8765,
+
+  "max_tree_roots": 100,
+  "max_tree_children": 100
+}

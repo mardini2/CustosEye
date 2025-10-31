@@ -1,123 +1,140 @@
 # CustosEye
 
-Local-first system visibility with a lightweight rules engine, smart trust scoring, and a polished web dashboard. No cloud, no drama.. just signal.
+CustosEye is a local-first visibility and integrity monitor with a lightweight rules engine, contextual trust scoring (CSC v2), and a clean web dashboard.  
+No cloud, no telemetry—everything runs locally.
 
-## What it does
+---
 
-- Watches processes, network, and file integrity on your machine.
-- Scores trust per process (0–100) with explainable reasons (CSCTrustEngine).
-- Shows live events in a clean web UI at `http://127.0.0.1:8765/` with filters, search, and export.
-- Builds a collapsible Process Tree (PPID→PID) with trust labels.
-- Hot-reloads your rules when `data/rules.json` changes.
+## Overview
 
-The console now just prints a welcome banner and the dashboard URL.
+CustosEye continuously monitors processes, network activity, and file integrity, then classifies each event using an explainable trust model.  
+The dashboard presents this data in real time with filters, search, and export options.
+
+**Core features**
+- Local-only monitoring for process, network, and file changes.
+- Categorical trust scoring via `CSCTrustEngine` (Trusted / Caution / Suspicious / Malicious).
+- Real-time dashboard at [http://127.0.0.1:8765](http://127.0.0.1:8765) with live filters and export.
+- Integrity watcher that supports SHA-256 or `mtime+size` modes.
+- Automatic rule and configuration reloads on file changes.
 
 ---
 
 ## Quick start
 
 ```bash
-# 1. Create a virtual environment (this is optional)
+# (Optional) Create and activate a venv
 python -m venv .venv
 . .venv/Scripts/activate
 
-# 2. Install dependencies
-python -m pip install --upgrade pip
+# Install all dependencies
+python -m pip install -U pip
 python -m pip install -r requirements.txt
-python -m pip install waitress pystray pillow
 
-# 3. Run
+# 3. Launch
 python -m app.console
-# Console shows:
-# Welcome to CustosEye – Your Third Eye
-# Dashboard running at http://127.0.0.1:8765/
+# Console output:
+# CustosEye running at http://127.0.0.1:8765/
 ```
 
-Options:
+**Command-line options**
 ```bash
-python -m app.console --console   # run without opening browser
-python -m app.console --no-open   # dashboard only
-python -m app.console --tray      # system tray icon
+python -m app.console --console    # run headless (no browser)
+python -m app.console --no-open    # dashboard only
+python -m app.console --tray       # run with system tray icon
 ```
 
 ---
 
-## The Dashboard
+## Dashboard
 
-- Live feed with Info/Warning/Critical filters, search, pause, refresh, export.
-- Process Tree tab with expand/collapse, trust pills, search, export (JSON/XLSX), copy.
-- About tab shows version, build, and buffer info.
+### Tabs
+- **Live feed:** filter by level (Info / Warning / Critical), pause/resume, search, export JSON.
+- **Process Tree:** PPID→PID hierarchy with trust badges, search, expand/collapse, export.
+- **Integrity:** manage watched files, hash instantly, or browse and register new targets.
+- **About:** version, build, buffer size, and runtime information.
 
 ### API endpoints
-- `/api/events`
-- `/api/export`
-- `/api/proctree`
-- `/api/about`
-- Favicons: `/favicon.ico`, `/favicon-32x32.png`, `/apple-touch-icon.png`
-- `/api/integrity/targets` (GET, POST, DELETE)
-- `/api/integrity/hash` (POST)
-- `/api/integrity/browse` (POST, Windows only)
+| Endpoint | Description |
+|-----------|-------------|
+| `/api/events` | Live event stream |
+| `/api/export` | Export feed as JSON |
+| `/api/proctree` | Current process tree |
+| `/api/about` | Version and build info |
+| `/api/integrity/targets` | List, add, or remove integrity targets |
+| `/api/integrity/hash` | Compute hash for a given file |
+| `/api/integrity/browse` | Browse files (Windows only) |
 
 ---
 
-## Trust scoring
+## Trust Scoring (CSC v2)
 
-Explainable, local, and tunable (see `data/csc_weights.json`).
+`algorithm/csc_engine.py` implements **CSCTrustEngine**, a contextual trust classifier.
 
-Uses multiple signals:
-- Prevalence & decay
-- Path context
-- Name entropy
-- Signer validity
-- Windows Authenticode signature validation (signer subject and validity)
-- Network posture
+Each event is evaluated on:
+- Path context (system vs. user/temp)
+- Signing status and publisher cues
+- Name entropy and suspicious tokens
+- Network posture (listening ports, remote endpoints)
 - Parent process behavior
+- Elevation and service context
+- Prevalence with time-decay scoring
 
-Produces:
+It produces:
 ```json
 {
-  "trust": 0..100,
-  "label": "high|medium|low",
-  "reasons": [...]
+  "version": "csc-v2",
+  "verdict": "trusted | caution | suspicious | malicious | unknown",
+  "cls": "system | service | dev_tool | game | utility | unknown",
+  "confidence": 0.0–1.0,
+  "reasons": ["..."],
+  "signals": { "key": "value" }
 }
 ```
 
 ---
 
-## Rules engine
+## Rules Engine
 
-- Config: `data/rules.json`
-- Hot-reloads automatically
-- Applies `level` and `reason` to events
+- Config file: `data/rules.json`
+- Hot-reloads automatically.
+- Applies severity (`level`) and contextual `reason` to each event.
+- Coalesces duplicate events within a short window to reduce spam while preserving “worsened” ones.
 
 ---
 
-## Project structure
+## Project Layout
 
 ```
-app/           main console + setup
-dashboard/     Flask app & web UI
-agent/         process, network, integrity monitors
+app/           main console + entrypoint
+dashboard/     Flask dashboard and API
+agent/         system monitors (process, network, integrity)
 algorithm/     CSCTrustEngine & scoring logic
-data/          JSON config files
-assets/        favicon files
+data/          configuration JSON files
+assets/        icons and favicon resources
 tests/         pytest suite
 ```
 
 ---
 
-## Development
+## Development and Testing
+
+Formatting, linting, typing, and test coverage can be verified before committing:
 
 ```bash
+python -m black tests
+python -m black app agent algorithm dashboard
 python -m black --check app agent algorithm dashboard tests
+python -m ruff check app agent algorithm dashboard tests --fix
 python -m ruff check app agent algorithm dashboard tests
 python -m mypy app agent algorithm dashboard
 python -m pytest -q
 ```
 
-- Integrity tab: pick files to watch (Windows Browse or paste path), choose rule
-  (`sha256` or `mtime+size`), preview “Hash Now”, save/remove targets. Targets are written to
-  `data/integrity_targets.json` and hot-reloaded by the Integrity checker.
+### Automated test suite
+Located under `tests/`:
+- **Algorithm tests:** verify trust scoring, classification, decay, and boundary logic.
+- **Helper tests:** validate utility functions and entropy calculations.
+- **EXE smoke test:** ensures the PyInstaller build starts and exits cleanly.
 
 ---
 
@@ -131,57 +148,54 @@ pyinstaller --noconfirm --onefile --name CustosEye.exe --console `
   app/console.py
 ```
 
-GitHub Actions also handles this build automatically and uploads artifacts:
-`CustosEye.exe`, `VERSION.txt`, and a ZIP with assets.
+Artifacts:  
+`CustosEye.exe`, `VERSION.txt`, and `CustosEye-Windows.zip` (portable bundle).
 
-### Continuous Integration
-
-GitHub Actions automatically builds, tests, and packages each release.  
-Each tagged build (e.g., `v0.2.1`) includes:
-- `CustosEye.exe`
-- `VERSION.txt`
-- `CustosEye-Windows.zip` (portable bundle)
-
-The workflow embeds both the version and commit hash into the dashboard’s “About” section.  
-It also computes the EXE’s SHA-256 and updates `data/self_suppress.json` automatically.
+GitHub Actions automatically runs this build, embeds version and commit hash, and updates integrity suppressions.
 
 ---
 
 ## Configuration
 
-- Rules: `data/rules.json`
-- Weights: `data/csc_weights.json`
-- Integrity targets: `data/integrity_targets.json`
-- Trust DB: `data/trust_db.json`
+| Purpose | File |
+|----------|------|
+| Detection rules | `data/rules.json` |
+| Trust weights | `data/csc_weights.json` |
+| Integrity targets | `data/integrity_targets.json` |
+| Trust database | `data/trust_db.json` |
 
 ---
 
 ## Security
 
-- Local-only (`127.0.0.1`)
-- No external calls
-- Exports are manual and stay local
+- Serves only on `127.0.0.1`
+- No external calls or telemetry
+- Exports are manual and local
+- All rule and trust data stored under `data/`
 
 ---
 
 ## Troubleshooting
 
-- **Icon missing:** ensure favicon files exist and are bundled.
-- **No events:** some network events without PID/name are ignored.
-- **Missing assets:** confirm PyInstaller `--add-data` paths.
-- **Port conflict:** default is `127.0.0.1:8765`.
+| Issue | Check |
+|--------|--------|
+| Missing icon | Ensure files under `assets/` are bundled |
+| No events | Some short-lived or PID-less network events are filtered |
+| Missing assets | Confirm `--add-data` paths in PyInstaller command |
+| Port conflict | Default port `8765` can be changed via CLI or config |
 
 ---
 
 ## Roadmap
 
-- WebSocket updates
-- Rule suppressions
-- Inline trust details
+- WebSocket-based live updates
+- Rule suppression and exemptions
+- Inline trust details in dashboard
 - Trust DB import/export
 
 ---
 
 ## License
 
-MIT — do cool things, don’t sue me.
+MIT — do cool things, don’t sue me man.
+Use, modify, and share freely. Attribution appreciated.

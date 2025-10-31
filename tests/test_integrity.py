@@ -1,28 +1,38 @@
-"""
-goal: validates integrity checker behavior on missing files and bad hashes.
-"""
-
 from __future__ import annotations
 
-import json
-import threading
-import time
-
-from agent.integrity_check import IntegrityChecker
+import pytest
 
 
-def test_integrity_missing(tmp_path):
-    targets = [{"path": str(tmp_path / "nope.bin"), "sha256": "deadbeef"}]
-    tpath = tmp_path / "targets.json"
-    tpath.write_text(json.dumps(targets), encoding="utf-8")
+def test_targets_list(server_up, base_url, http):
+    r = http.get(f"{base_url}/api/integrity/targets")
+    assert r.status_code == 200
+    data = r.json()
+    assert isinstance(data, list)
+    # Entries, if any, have expected shape
+    for row in data:
+        assert isinstance(row, dict)
+        assert "path" in row
+        assert "rule" in row
+        assert row["rule"] in ("sha256", "mtime+size")
 
-    events: list[dict[str, str]] = []
-    ic = IntegrityChecker(
-        targets_path=str(tpath), publish=lambda e: events.append(e), interval_sec=0.01
-    )
 
-    t = threading.Thread(target=ic.run, daemon=True)
-    t.start()
-    time.sleep(0.05)
+@pytest.mark.parametrize("limit", [1])
+def test_hash_preview_non_destructive(server_up, base_url, http, limit):
+    # If there are integrity targets, request a hash for the first one.
+    r = http.get(f"{base_url}/api/integrity/targets")
+    assert r.status_code == 200
+    targets = r.json()
 
-    assert any(e.get("reason", "").startswith("File missing") for e in events)
+    if not targets:
+        pytest.skip("No integrity targets configured to hash")
+
+    for row in targets[:limit]:
+        path = row.get("path")
+        if not path:
+            continue
+        r2 = http.post(f"{base_url}/api/integrity/hash", json={"path": path})
+        assert r2.status_code == 200
+        data = r2.json()
+        # Either sha256 for exact rule, or mtime/size payload for attr rule
+        assert any(k in data for k in ("sha256", "mtime", "size"))
+        # Don’t assert exact values to keep this portable

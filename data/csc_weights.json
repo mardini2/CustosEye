@@ -1,34 +1,82 @@
 {
-  "base": 68,
+  "//": "CSC v2 weights; categorical cuts and heuristic knobs. All keys are optional but recommended.",
+  "cut_malicious": -2.0,
+  "cut_suspicious": -0.5,
+  "cut_caution": 0.5,
+  "cut_trusted": 1.6,
 
-  "deduct_listening": 8,
-  "deduct_risky_port": 30,
-  "deduct_remote": 8,
-  "deduct_temp_path": 18,
-  "deduct_susp_name": 12,
-
-  "bonus_known_hash": 22,
-  "bonus_system_dir": 18,
-
-  "risky_ports": [22, 23, 3389, 4444, 5900],
-
-  "susp_name_tokens": ["tmp", "temp", "svhost", "update", "patch", "fix", "agent", "service"],
-
-  "system_paths": [
-    "\\\\windows\\\\system32",
-    "\\\\windows\\\\syswow64",
-    "/windows/system32",
-    "/windows/syswow64"
-  ],
-
+  "system_paths": ["\\windows\\system32", "/windows/system32"],
+  "program_files_paths": ["\\program files", "\\program files (x86)"],
   "temp_paths": [
-    "\\\\appdata\\\\local\\\\temp",
+    "\\appdata\\local\\temp",
     "/appdata/local/temp",
-    "\\\\temp\\\\",
+    "\\temp\\",
     "/tmp/",
-    "\\\\users\\\\%USERNAME%\\\\appdata\\\\local\\\\temp"
+    "\\users\\public\\"
   ],
+  "downloads_paths": ["\\downloads\\", "/downloads/"],
 
-  "trust_low_threshold": 45,
-  "trust_high_threshold": 79
+  "susp_name_tokens": [
+    "svhost","svch0st","updater","update","patch","fix","agent","service",
+    "driver","protect","defender","winlogin","security"
+  ],
+  "misspell_tokens": [
+    ["svchost","svhost"], ["explorer","exploer"], ["chrome","chr0me"],
+    ["system","syst3m"], ["microsoft","micros0ft"]
+  ],
+  "entropy_name_thresh": 3.8,
+  "hexish_name_len": 14,
+
+  "prefer_signed_bonus": 0.8,
+  "unsigned_system_penalty": 0.9,
+
+  "publisher_buckets": {
+    "microsoft": "system",
+    "google": "popular_app",
+    "mozilla": "popular_app",
+    "valve": "game",
+    "epic": "game",
+    "unity": "game",
+    "adobe": "popular_app",
+    "jetbrains": "dev_tool",
+    "oracle": "popular_app",
+    "nvidia": "driver",
+    "amd": "driver"
+  },
+
+  "file_age_days_fresh": 3.0,
+  "tiny_binary_mb": 0.15,
+
+  "risky_ports": [22, 3389, 4444, 5900, 135, 139, 445],
+  "common_ports": [80, 443, 53, 123, 587, 993],
+  "listen_penalty": 0.6,
+  "risky_listen_extra": 1.1,
+  "many_listens_extra": 0.4,
+  "remote_bump": 0.2,
+  "remote_many_extra": 0.5,
+  "remote_many_count": 10,
+
+  "susp_launchers": [
+    "powershell.exe","pwsh.exe","cmd.exe","wscript.exe","cscript.exe",
+    "mshta.exe","regsvr32.exe","rundll32.exe","wmic.exe"
+  ],
+  "susp_launcher_penalty": 0.7,
+
+  "elev_from_user_penalty": 0.9,
+  "service_userdir_penalty": 0.9,
+
+  "prevalence_halflife_days": 14.0,
+  "hash_seen_thresh": 4.0,
+  "exe_seen_thresh": 8.0,
+  "prevalence_hash_bonus": 0.8,
+  "prevalence_exe_bonus": 0.4,
+  "unknown_hash_penalty": 0.4,
+
+  "class_rules": {
+    "system":  { "if_system_dir": true, "if_signed": true },
+    "service": { "if_service": true },
+    "dev_tool": { "if_parent_is_dev_shell": true },
+    "game": { "if_publisher_any": ["valve","epic","unity"] },
+    "popular_app": { "if_publisher_any": ["google","mozilla","adobe","oracle"] }
+  }
 }

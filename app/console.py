@@ -10,6 +10,7 @@ CustosEye launcher: starts agents + dashboard and opens the UI.
 from __future__ import annotations
 
 import argparse
+import logging
 import os
 import queue
 import sys
@@ -22,6 +23,14 @@ from typing import Any
 from agent.integrity_check import IntegrityChecker
 from agent.monitor import ProcessMonitor
 from agent.network_scan import NetworkSnapshot
+
+# Set root level high enough so library WARNINGs don't spam the console
+logging.basicConfig(level=logging.ERROR)
+
+# Silence Waitress chatter decisively
+logging.getLogger("waitress.queue").setLevel(logging.CRITICAL)
+logging.getLogger("waitress").setLevel(logging.CRITICAL)
+logging.getLogger("waitress.access").setLevel(logging.CRITICAL)
 
 
 # --- ASCII banner (CustosEye logo like-alike) ---
@@ -42,9 +51,9 @@ def print_banner() -> None:
         cyan = blue = mag = red = dim = bold = reset = ""
 
     eye = rf"""
-{dim}┌──────────────────────────────────────────────────────────────┐{reset}
-{dim}│{reset}{cyan}{bold}                  C  u  s  t  o  s  E  y  e{reset}{dim}                   │{reset}
-{dim}├──────────────────────────────────────────────────────────────┤{reset}
+{dim}┌────────────────────────────────────────────────────────────┐{reset}
+{dim}│{reset}{cyan}{bold}                  C  u  s  t  o  s  E  y  e{reset}{dim}                 │{reset}
+{dim}├────────────────────────────────────────────────────────────┤{reset}
 {mag}                         ⠀⠀⠀⠀⠀⠀⠀⢀⣀⣀⣀⣀⣀⣀⠀⠀⠀⠀⠀⠀⠀⠀                         {reset}
 {mag}                    ⠀⠀⠀⠀⠀⣠⣶⣿⣿⣿⣿⣿⣿⣿⣿⣿⣶⣄⠀⠀⠀⠀⠀⠀                    {reset}
 {mag}                 ⠀⠀⠀⠀⣠⣾⣿⣿⣿⣿⠟⠛⠉⠉⠛⠻⣿⣿⣿⣿⣷⣄⠀⠀⠀⠀               {reset}
@@ -59,14 +68,14 @@ def print_banner() -> None:
 {mag}          ⣿⣿⣿⡇⠀⠀⢿⣿⣿⣿⣿⣿⣿{blue}██{cyan}█████{red}│{cyan}████{blue}██{mag}⣿⣿⣿⣿⣿⣿⡿⠀⠀⢸⣿⣿⣿       {reset}
 {mag}          ⢿⣿⣿⣧⠀⠀⠘⣿⣿⣿⣿⣿⣿{blue}███{cyan}████{red}│{cyan}███{blue}███{mag}⣿⣿⣿⣿⣿⣿⠃⠀⠀⣸⣿⣿⡿       {reset}
 {mag}          ⠀⢻⣿⣿⣷⠀⠀⠘⢿⣿⣿⣿⣿{blue}████{cyan}██████{blue}████{mag}⣿⣿⣿⣿⡿⠃⠀⠀⣾⣿⣿⡟        {reset}
-{mag}           ⠀⠙⢿⣿⣿⣧⠀⠀⠀⠙⠻⣿⣿{blue}███████████{mag}⣿⠟⠋⠀⠀⠀⣸⣿⣿⡿⠋         {reset}
-{mag}             ⠀⠀⠙⢿⣿⣿⣦⣀⠀⠀⠀⠉⠛⠿⣿⣿⠿⠛⠉⠀⠀⠀⣀⣴⣿⣿⠟⠀⠀           {reset}
+{mag}           ⠀⠙⢿⣿⣿⣧⠀⠀⠀⠙⠻⣿⣿⣿{blue}██████████{mag}⣿⠟⠋⠀⠀⠀ ⣸⣿⣿⡿⠋         {reset}
+{mag}             ⠀⠀⠙⢿⣿⣿⣦⣀⠀⠀⠀⠉⠛⠿⣿⣿⠿⠛⠉⠀⠀⠀  ⣀⣴⣿⣿⠟⠀⠀           {reset}
 {mag}                 ⠀⠀⠈⠛⠿⣿⣿⣶⣤⣄⣀⠀⠀⠀⠀⣀⣠⣤⣶⣿⣿⠿⠛⠁⠀⠀               {reset}
 {mag}                        ⠀⠀⠀⠈⠉⠛⠛⠛⠛⠉⠁⠀⠀⠀⠀                         {reset}
 {cyan}              Your Third Eye • Vigilant by Design                        {reset}
-{dim}├──────────────────────────────────────────────────────────────┤{reset}
-{dim}│{reset}  Tip: press Ctrl+C to quit.                                  {dim}│{reset}
-{dim}└──────────────────────────────────────────────────────────────┘{reset}
+{dim}├────────────────────────────────────────────────────────────┤{reset}
+{dim}│{reset}  Tip: press Ctrl+C to quit.                                {dim}│{reset}
+{dim}└────────────────────────────────────────────────────────────┘{reset}
 """
     print(eye)
 
@@ -97,7 +106,7 @@ def _resolve_base_dir() -> Path:
     return Path(__file__).resolve().parents[1]
 
 
-# -------------- fan-out EventBus --------------
+# fan-out EventBus
 class EventBus:
     """pub/sub fan-out: each subscriber gets every event."""
 
@@ -206,7 +215,7 @@ def main() -> None:
     # minimal terminal output (no live stream)
     print_banner()
     print("Welcome to CustosEye!")
-    print("Dashboard running at http://127.0.0.1:8765/ (Ctrl+C to quit)")
+    print("Dashboard running at http://127.0.0.1:8765/ 𒆙")
 
     # keep main alive
     try:
