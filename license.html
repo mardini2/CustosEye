@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <!-- standard metadata -->
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+
+  <!-- page title -->
+  <title>License - CustosEye</title>
+  <meta name="description" content="License for CustosEye." />
+
+  <!-- favicon + shared styles (cache-bust with ?v=1) -->
+  <link rel="icon" href="assets/favicon.ico" />
+  <link rel="stylesheet" href="styles.css?v=1" />
+</head>
+<body class="page">
+  <!-- slim purple stripe for brand consistency -->
+  <div class="top-stripe" aria-hidden="true"></div>
+
+  <!-- header: logo + brand both link home -->
+  <header class="topbar">
+    <!-- logo links home -->
+    <a class="home-link" href="/" aria-label="Go to homepage">
+      <img class="logo" src="assets/favicon.png" alt="CustosEye logo" />
+    </a>
+    <!-- title + tagline link home -->
+    <a class="home-link brand" href="/" aria-label="Go to homepage">
+      <h1>CustosEye</h1>
+      <p class="tagline">Your Third Eye</p>
+    </a>
+  </header>
+
+  <!-- main content -->
+  <main class="wrap">
+    <section class="card">
+      <h2 style="margin-bottom:8px">License</h2>
+      <p class="muted" style="margin-bottom:16px">
+        Current license for CustosEye
+      </p>
+
+      <!-- container where we will render the LICENSE text -->
+      <div id="license-container" style="
+           white-space: pre-wrap;      /* keep line breaks from the LICENSE file */
+           font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
+           font-size: 0.95rem;
+           color: #e5e7eb;
+           background: rgba(0,0,0,0.15);
+           border: 1px solid rgba(255,255,255,0.07);
+           border-radius: 12px;
+           padding: 16px;
+      ">
+        Loading license…
+      </div>
+    </section>
+  </main>
+
+  <!-- footer: show Home + Cookie settings on this page -->
+  <footer class="foot">
+    <nav class="foot-nav">
+      <a href="/" rel="noopener">Home</a>
+      <a href="cookies.html">Cookie settings</a>
+    </nav>
+    <small class="muted">© <span id="year"></span> CustosEye. All rights reserved.</small>
+  </footer>
+
+  <!-- consent gate (only shows if no choice stored) -->
+  <script src="js/consent.js?v=1"></script>
+
+  <!-- GA attaches only after consent -->
+  <script src="js/analytics-attach.js?v=1" defer></script>
+
+    <script>
+    // write the current year in the footer
+    document.getElementById('year').textContent = new Date().getFullYear();
+
+    // try common license filenames in order
+    const CANDIDATES = ['LICENSE.md', 'LICENSE', 'LICENSE.txt'];
+
+    (async () => {
+        const el = document.getElementById('license-container');
+        for (const path of CANDIDATES) {
+        try {
+            const res = await fetch(path, { cache: 'no-store' });
+            if (!res.ok) continue; // try the next candidate
+            const text = await res.text();
+
+            // keep it simple: show the text exactly as written
+            // if we later want nicer Markdown rendering, we can add a tiny parser.
+            el.textContent = text;
+            return;
+        } catch {
+            // ignore and try next
+        }
+        }
+        el.textContent = 'Could not load license. Please try again later.';
+        console.warn('[license] None of the expected license files were found:', CANDIDATES.join(', '));
+    })();
+    </script>
+</body>
+</html>

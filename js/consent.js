@@ -1,91 +1,113 @@
-// js/consent.js
+// js/consent.js - Cookie consent modal for analytics opt-in
 
-// === simple consent store ===
-// we use localStorage to remember the users choice.
-// "granted" means we can attach analytics. "denied" means we cannot.
-function CE_hasConsent() {
-  return localStorage.getItem('analytics_consent') === 'granted';
-}
-function CE_setConsent(granted) {
-  localStorage.setItem('analytics_consent', granted ? 'granted' : 'denied');
-  if (granted) {
-    // let other scripts know that consent was just granted.
-    window.dispatchEvent(new Event('analytics:consent-granted'));
+(function () {
+  const KEY = 'analytics_consent';
+
+  // nuke any legacy banner/fab if the old CSS/JS ever sneaks in
+  document.addEventListener('DOMContentLoaded', () => {
+    document.querySelectorAll('.cookie-banner, .cookie-settings-fab').forEach(el => el.remove());
+  });
+
+  function hasChoice() {
+    const v = localStorage.getItem(KEY);
+    return v === 'granted' || v === 'denied';
   }
-}
+  function setConsent(granted) {
+    localStorage.setItem(KEY, granted ? 'granted' : 'denied');
+    if (granted) window.dispatchEvent(new Event('analytics:consent-granted'));
+  }
 
-// === banner UI creation ===
-// we build the DOM for the banner on the fly so you do not need extra HTML markup.
-function CE_buildBanner() {
-  // if the user already made a choice, do not show the banner.
-  if (localStorage.getItem('analytics_consent')) return;
+  // minimal gate modal (no status text)
+  function buildGateModal() {
+    const overlay = document.createElement('div');
+    overlay.className = 'cookie-modal-overlay';
+    overlay.setAttribute('role', 'dialog');
+    overlay.setAttribute('aria-modal', 'true');
+    overlay.setAttribute('aria-label', 'Cookie notice');
 
-  // create the container that sticks to the bottom.
-  const banner = document.createElement('div');
-  banner.className = 'cookie-banner';
-  banner.setAttribute('role', 'dialog');             // announce as a dialog
-  banner.setAttribute('aria-live', 'polite');        // read changes politely
-  banner.setAttribute('aria-label', 'Cookie consent');
+    const modal = document.createElement('div');
+    modal.className = 'cookie-modal card';
 
-  // text block that explains what we track.
-  const text = document.createElement('div');
-  text.className = 'cookie-text';
-  // keep the copy short and clear. Mention cookies and analytics.
-  text.innerHTML = `
-    We use cookies to run analytics after you accept. This helps us count visits,
-    see how long people stay, and understand devices and countries. You can change
-    your choice any time in “Cookie settings.”
-  `;
+    const h = document.createElement('h2');
+    h.textContent = 'Cookie settings';
+    h.style.marginBottom = '8px';
 
-  // buttons: Accept, Decline, and Settings (re-open later)
-  const actions = document.createElement('div');
-  actions.className = 'cookie-actions';
+    const p = document.createElement('p');
+    p.className = 'muted';
+    p.style.marginBottom = '16px';
+    p.textContent = 'Choose how cookies are used. It is safe and your choice helps us provide a better site experience. You can change this any time inside the Cookie settings.';
 
-  const accept = document.createElement('button');
-  accept.className = 'cookie-btn cookie-accept';
-  accept.textContent = 'Accept analytics';
-  accept.addEventListener('click', () => {
-    CE_setConsent(true);       // store granted
-    banner.remove();           // hide banner
+    const row = document.createElement('div');
+    row.className = 'btn-row';
+    row.style.marginTop = '8px';
+
+    const accept = document.createElement('button');
+    accept.className = 'btn btn-primary';
+    accept.textContent = 'Accept cookies';
+
+    const decline = document.createElement('button');
+    decline.className = 'btn btn-ghost';
+    decline.textContent = 'Decline';
+
+    // optional: a link to the full settings page (opens in a new tab)
+    const learn = document.createElement('a');
+    learn.className = 'btn btn-ghost';
+    learn.href = 'cookies.html';
+    learn.target = '_blank';
+    learn.rel = 'noopener';
+    learn.textContent = 'Open Cookie settings';
+
+    row.appendChild(accept);
+    row.appendChild(decline);
+    row.appendChild(learn);
+
+    modal.appendChild(h);
+    modal.appendChild(p);
+    modal.appendChild(row);
+    overlay.appendChild(modal);
+
+    // actions
+    accept.addEventListener('click', () => { setConsent(true);  closeModal(overlay); });
+    decline.addEventListener('click', () => { setConsent(false); closeModal(overlay); });
+
+    // focus trap + block Escape (force explicit choice)
+    overlay.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') { e.preventDefault(); return; }
+      if (e.key !== 'Tab') return;
+      const nodes = modal.querySelectorAll('button, a, [tabindex]:not([tabindex="-1"])');
+      if (!nodes.length) return;
+      const list = Array.from(nodes);
+      const first = list[0], last = list[list.length - 1];
+      if (e.shiftKey && document.activeElement === first) { last.focus(); e.preventDefault(); }
+      else if (!e.shiftKey && document.activeElement === last) { first.focus(); e.preventDefault(); }
+    });
+
+    setTimeout(() => accept.focus(), 0);
+    return overlay;
+  }
+
+  function openModal() {
+    if (document.querySelector('.cookie-modal-overlay')) return;
+    const overlay = buildGateModal();
+    document.body.appendChild(overlay);
+    document.body.classList.add('no-scroll');
+    document.documentElement.classList.add('no-scroll');
+  }
+
+  function closeModal(overlay) {
+    if (overlay && overlay.remove) overlay.remove();
+    document.body.classList.remove('no-scroll');
+    document.documentElement.classList.remove('no-scroll');
+  }
+
+  // public: call from footer if you want to *force* the gate again (optional)
+  window.showConsentModal = function showConsentModal() {
+    localStorage.removeItem(KEY);
+    openModal();
+  };
+
+  // show the gate only when no choice is stored
+  document.addEventListener('DOMContentLoaded', () => {
+    if (!hasChoice()) openModal();
   });
-
-  const decline = document.createElement('button');
-  decline.className = 'cookie-btn cookie-decline';
-  decline.textContent = 'Decline';
-  decline.addEventListener('click', () => {
-    CE_setConsent(false);      // store denied
-    banner.remove();           // hide banner
-  });
-
-  const settings = document.createElement('button');
-  settings.className = 'cookie-btn cookie-settings';
-  settings.textContent = 'Cookie settings';
-  settings.addEventListener('click', () => {
-    // clicking this when the banner is visible does nothing special.
-    // we leave it here to match the footer link behavior.
-    alert('Use the footer link “Cookie settings” to reopen this banner later.');
-  });
-
-  // put it all together and attach to the page.
-  actions.appendChild(accept);
-  actions.appendChild(decline);
-  actions.appendChild(settings);
-  banner.appendChild(text);
-  banner.appendChild(actions);
-  document.body.appendChild(banner);
-
-  // Move keyboard focus to the primary action for accessibility
-  accept.focus();
-}
-
-// === public helper to reopen the banner ===window.showConsentBanner = function
-// this lets the footer link “Cookie settings” bring the banner back.
-window.showConsentBanner = function showConsentBanner() {
-  // remove any existing choice so the banner appears again.
-  localStorage.removeItem('analytics_consent');
-  // build the banner UI again.
-  CE_buildBanner();
-};
-
-// build the banner once the page is ready.
-document.addEventListener('DOMContentLoaded', CE_buildBanner);
+})();

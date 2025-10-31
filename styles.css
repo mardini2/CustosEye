@@ -1,25 +1,38 @@
-/* ========== Base and layout ========== */
-/* reset margins so spacing is predictable */
+/* ===== base reset ===== */
 * { box-sizing: border-box; margin: 0; padding: 0; }
 
-/* font stack uses system fonts for speed and a clean look */
+/* body becomes a column flex container so footer sticks to bottom */
 html, body {
   height: 100%;
+}
+body.page {
+  min-height: 100svh;                 /* covers mobile safe area correctly */
+  display: flex;                       /* stack header, main, footer */
+  flex-direction: column;
   font-family: system-ui, -apple-system, Segoe UI, Roboto, Inter, Arial, sans-serif;
-  color: #e5e7eb;             /* light gray text */
+  color: #e5e7eb;
   background: radial-gradient(1000px 500px at 20% 0%, #0b1022 0%, #0b1022 40%, #0a0f1e 100%);
+  user-select: none;                   /* prevent accidental text selection */
+  -webkit-user-select: none;           /* Safari prefix fix */
 }
 
-/* limit max width for readable line lengths and center content */
+/* add a slim royal-purple stripe at the very top for polish */
+.top-stripe {
+  height: 3px;
+  background: linear-gradient(90deg, #6d28d9, #8b5cf6, #6d28d9);
+  opacity: 0.9;
+}
+
+/* content wrapper: main gets flex:1 so footer is pushed down */
 .wrap {
   width: 100%;
   max-width: 1100px;
   margin: 0 auto;
   padding: 24px;
+  flex: 1; /* <- this ensures main area expands, pushing footer to bottom */
 }
 
-/* ========== Header ========== */
-/* simple top bar with logo and brand text side by side */
+/* ===== header ===== */
 .topbar {
   display: flex;
   align-items: center;
@@ -28,54 +41,39 @@ html, body {
   border-bottom: 1px solid rgba(255,255,255,0.07);
   background: rgba(0,0,0,0.15);
   backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);  /* Safari prefix fix */
 }
+.home-link { display: inline-flex; text-decoration: none; }
+.logo { height: 40px; width: auto; }
 
-/* control logo size */
-.logo {
-  height: 40px;
-  width: auto;
-}
+.brand h1 { font-size: 1.4rem; font-weight: 700; }
+.brand .tagline { color: #a8b1c0; font-size: 0.95rem; }
 
-/* brand block next to the logo */
-.brand h1 {
-  font-size: 1.4rem;
-  font-weight: 700;
-}
-.brand .tagline {
-  color: #a8b1c0;
-  font-size: 0.95rem;
-}
-
-/* ========== cards and visual style ========== */
+/* ===== cards & visual style ===== */
 .card {
-  background: rgba(17, 24, 39, 0.9); /* slate-900-ish */
+  background: rgba(17, 24, 39, 0.9);
   border: 1px solid rgba(255,255,255,0.07);
   border-radius: 16px;
   padding: 24px;
   box-shadow: 0 24px 60px rgba(0,0,0,0.35);
+  /* subtle purple glow edge on cards for the “royal” touch */
+  outline: 1px solid rgba(109, 40, 217, 0.18); /* #6d28d9 */
 }
 
-/* grid for features */
 .grid {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
   gap: 16px;
   margin-top: 16px;
 }
+@media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
 
-/* stack cards on small screens */
-@media (max-width: 900px) {
-  .grid { grid-template-columns: 1fr; }
-}
-
-/* ========== hero section ========== */
-/* big, friendly title */
+/* ===== hero ===== */
 .hero { margin-top: 24px; }
 .hero-title { font-size: 1.6rem; margin-bottom: 8px; }
 .hero-sub { color: #c8d0dd; margin-bottom: 16px; }
 
-/* ========== Buttons ========== */
-/* shared button look */
+/* ===== buttons ===== */
 .btn {
   display: inline-block;
   padding: 12px 16px;
@@ -83,11 +81,12 @@ html, body {
   border: 1px solid rgba(255,255,255,0.1);
   text-decoration: none;
   font-weight: 600;
-  transition: transform 120ms ease, background 120ms ease, border-color 120ms ease;
+  transition: transform 120ms ease, background 120ms ease, border-color 120ms ease, box-shadow 120ms ease;
   user-select: none;
+  -webkit-user-select: none; /* Safari prefix fix */
 }
 
-/* primary: bright accent to stand out */
+/* primary — keep green but add purple hover ring to satisfy the purple ask */
 .btn-primary {
   background: #22c55e; /* green accent */
   color: #062e12;      /* dark text on green */
@@ -96,33 +95,20 @@ html, body {
 }
 .btn-primary:hover {
   transform: translateY(-1px);
+  box-shadow: 0 16px 36px rgba(109, 40, 217, 0.45); /* purple glow on hover */
 }
 
-/* ghost: low-emphasis secondary buttons */
-.btn-ghost {
-  background: rgba(255,255,255,0.03);
-  color: #e5e7eb;
-}
-.btn-ghost:hover {
-  background: rgba(255,255,255,0.07);
-}
+/* ghost button */
+.btn-ghost { background: rgba(255,255,255,0.03); color: #e5e7eb; }
+.btn-ghost:hover { background: rgba(255,255,255,0.07); }
 
-/* row that holds secondary buttons */
-.btn-row {
-  margin-top: 12px;
-  display: flex;
-  gap: 10px;
-  flex-wrap: wrap;
-}
+/* row that holds buttons */
+.btn-row { margin-top: 12px; display: flex; gap: 10px; flex-wrap: wrap; }
 
-/* muted helper text */
-.muted {
-  color: #9aa3b2;
-  font-size: 0.9rem;
-  margin-top: 8px;
-}
+/* subtle helper text */
+.muted { color: #9aa3b2; font-size: 0.9rem; margin-top: 8px; }
 
-/* ========== footer ========== */
+/* ===== footer (now truly at the bottom) ===== */
 .foot {
   padding: 20px 24px 40px;
   display: flex;
@@ -130,49 +116,105 @@ html, body {
   justify-content: space-between;
   gap: 14px;
   border-top: 1px solid rgba(255,255,255,0.07);
-  margin-top: 28px;
   color: #a8b1c0;
+  /* footer does not need absolute positioning; flex column handles it */
 }
-
 .foot-nav { display: flex; gap: 16px; }
 .foot-nav a { color: #c8d0dd; text-decoration: none; }
 .foot-nav a:hover { text-decoration: underline; }
 
-/* ========== cookie banner ========== */
-/* the banner is injected by JS. We style it here. */
-.cookie-banner {
-  position: fixed;
-  left: 16px;
-  right: 16px;
-  bottom: 16px;
-  padding: 16px;
-  background: #0f172a; /* dark slate */
-  border: 1px solid rgba(255,255,255,0.12);
-  border-radius: 12px;
-  box-shadow: 0 20px 50px rgba(0,0,0,0.45);
-  display: flex;
-  align-items: start;
-  gap: 16px;
-  z-index: 9999;
-}
 .cookie-text { color: #d1d7e4; line-height: 1.5; }
 .cookie-actions { display: flex; gap: 10px; margin-left: auto; }
-
 .cookie-btn { padding: 10px 14px; border-radius: 10px; border: 1px solid rgba(255,255,255,0.12); cursor: pointer; }
 .cookie-accept { background: #22c55e; color: #062e12; border-color: rgba(34,197,94,0.45); font-weight: 700; }
-.cookie-decline { background: rgba(255,255,255,0.06); color: #e5e7eb; }
-.cookie-settings { background: rgba(255,255,255,0.06); color: #e5e7eb; }
+.cookie-decline, .cookie-settings { background: rgba(255,255,255,0.06); color: #e5e7eb; }
 
-/* focus styles for accessibility */
+/* ===== accessibility: focus rings ===== */
 :focus { outline: none; }
-.btn:focus,
-.cookie-btn:focus {
-  outline: 2px solid #93c5fd;   /* light blue ring */
+.btn:focus, .cookie-btn:focus, .home-link:focus {
+  outline: 2px solid #93c5fd;  /* soft blue ring */
   outline-offset: 2px;
   box-shadow: 0 0 0 2px rgba(147,197,253,0.35);
 }
 
-/* reduced motion respect */
+/* ===== reduced motion ===== */
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; }
 }
+
+/* keep brand-as-link looking like text */
+.brand { color: inherit; text-decoration: none; display: inline-block; }
+.brand:hover { text-decoration: none; filter: brightness(1.05); }
+
+/* layout that pushes footer to page bottom */
+body.page { display: flex; flex-direction: column; min-height: 100svh; }
+.wrap { flex: 1; }
+
+/* ===== binary design section ===== */
+/* a card container so it matches your visual system */
+.binary-wrap {
+  margin-top: 16px;
+  padding: 0;                 /* canvas fills it */
+  overflow: hidden;           /* hide overspill while animating */
+  position: relative;
+  height: 420px;              /* nice, compact band; tweak if you want taller */
+  outline: 1px solid rgba(109, 40, 217, 0.18); /* keep the royal edge */
+}
+
+/* the canvas should fully cover this section */
+#binary-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  background: #0a0f1e; /* gentle dark base */
+}
+
+/* respect users who prefer reduced motion: freeze the animation */
+@media (prefers-reduced-motion: reduce) {
+  #binary-canvas { display: none; }  /* simplest: hide the animation entirely */
+  .binary-wrap { height: 0; padding: 0; border: 0; outline: 0; } /* collapse it */
+}
+
+/* make this section ignore the centered .wrap and stretch edge-to-edge */
+.full-bleed {
+  position: relative;
+  left: 50%;
+  right: 50%;
+  margin-left: -50vw;
+  margin-right: -50vw;
+  width: 100vw;       /* span full viewport width */
+  border-left: 0;     /* optional: remove card border edges when full-bleed */
+  border-right: 0;
+  border-radius: 0;   /* optional: square edges for the full-width band */
+}
+
+/* prevent any horizontal scrollbar due to full-bleed */
+html, body { overflow-x: hidden; }
+
+/* full-screen cookie modal overlay */
+.cookie-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(2, 6, 23, 0.75);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  display: grid;
+  place-items: center;
+  z-index: 99999;
+  padding: 24px;
+}
+
+/* dialog container (reuses your .card look) */
+.cookie-modal {
+  max-width: 560px;
+  width: 100%;
+  padding: 24px;
+}
+
+/* when modal is open, prevent the page from scrolling */
+.no-scroll { overflow: hidden !important; }
+
+/* kill any legacy bottom banner if its CSS/HTML is still around */
+.cookie-banner { display: none !important; }

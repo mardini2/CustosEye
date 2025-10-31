@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <!-- standard metadata -->
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+
+  <!-- page title for this standalone screen -->
+  <title>Cookie settings - CustosEye</title>
+
+  <!-- favicon + shared styles -->
+  <link rel="icon" href="assets/favicon.ico" />
+  <link rel="stylesheet" href="styles.css?v=1" />
+</head>
+<body class="page">
+  <!-- slim royal-purple stripe for polish -->
+  <div class="top-stripe" aria-hidden="true"></div>
+
+  <!-- header: logo + brand both link home -->
+  <header class="topbar">
+    <!-- logo is a link back home -->
+    <a class="home-link" href="/" aria-label="Go to homepage">
+      <img class="logo" src="assets/favicon.png" alt="CustosEye logo" />
+    </a>
+
+    <!-- title + tagline are also a link back home -->
+    <a class="home-link brand" href="/" aria-label="Go to homepage">
+      <h1>CustosEye</h1>
+      <p class="tagline">Your Third Eye</p>
+    </a>
+  </header>
+
+  <!-- main content -->
+  <main class="wrap">
+    <section class="card">
+      <h2 style="margin-bottom:8px">Cookie settings</h2>
+
+      <!-- neutral copy; no details about intent -->
+      <p class="muted" style="margin-bottom:16px">
+        Your choice helps us provide a better site experience. You can change this any time below.
+      </p>
+
+      <!-- two choices + a direct Home link -->
+      <div class="btn-row" style="margin-top:8px">
+        <button class="btn btn-primary" id="accept-cookies">Accept cookies</button>
+        <button class="btn btn-ghost" id="decline-cookies">Decline</button>
+        <!-- “Home” replaces “Cookie settings” when you’re on this page -->
+        <a class="btn btn-ghost" href="/" rel="noopener">Back Home</a>
+      </div>
+
+      <!-- where we reflect the current stored state -->
+      <div id="cookie-status" class="muted" style="margin-top:12px"></div>
+    </section>
+  </main>
+
+  <!-- footer: show Home (not Cookie settings) on this page -->
+  <footer class="foot">
+    <nav class="foot-nav">
+      <a href="/" rel="noopener">Home</a>
+      <a href="license.html" rel="noopener">License</a>
+    </nav>
+    <small class="muted">© <span id="year"></span> CustosEye. All rights reserved.</small>
+  </footer>
+
+  <script>
+    // write the current year in the footer
+    document.getElementById('year').textContent = new Date().getFullYear();
+
+    // use the same key as the banner/index page
+    const KEY = 'analytics_consent';
+    const statusEl = document.getElementById('cookie-status');
+
+    // helper to show the current choice
+    function setStatusText() {
+      const v = localStorage.getItem(KEY);
+      statusEl.textContent = v
+        ? (v === 'granted' ? 'Status: accepted' : 'Status: declined')
+        : 'Status: no choice stored yet';
+    }
+
+    // Accept => store 'granted', notify any listeners, go home
+    document.getElementById('accept-cookies').addEventListener('click', () => {
+      localStorage.setItem(KEY, 'granted');
+      window.dispatchEvent(new Event('analytics:consent-granted'));
+      setStatusText();
+      window.location.href = '/'; // back to homepage
+    });
+
+    // Decline => store 'denied', go home
+    document.getElementById('decline-cookies').addEventListener('click', () => {
+      localStorage.setItem(KEY, 'denied');
+      setStatusText();
+      window.location.href = '/'; // back to homepage
+    });
+
+    // show initial state
+    setStatusText();
+  </script>
+</body>
+</html>

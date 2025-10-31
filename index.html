@@ -1,74 +1,62 @@
 <!doctype html>
 <html lang="en">
 <head>
-  <!-- tell the browser this is HTML5 and set language to English -->
+  <!-- HTML & responsive viewport -->
   <meta charset="utf-8" />
-  <!-- make the layout adapt to phones and desktops -->
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <!-- title shows in the tab and search results -->
-  <title>CustosEye — System visibility & integrity</title>
 
-  <!-- optional small icon for the tab; replace with your own if you have it -->
+  <!-- page title and social preview -->
+  <title>CustosEye</title>
+  <meta name="description" content="CustosEye — local-first system visibility and integrity checks. Download the portable Windows build." />
+  <meta property="og:title" content="CustosEye" />
+  <meta property="og:description" content="Your Third Eye" />
+  <meta property="og:type" content="website" />
+  <meta property="og:url" content="https://www.custoseye.com/" />
+  <meta property="og:image" content="assets/favicon.png" />
+
+  <!-- favicon and CSS (with cache-busting ?v=1) -->
   <link rel="icon" href="assets/favicon.ico" />
-
-  <!-- our site styles -->
-  <link rel="stylesheet" href="styles.css" />
-
-    <meta name="description" content="CustosEye — local-first system visibility and integrity checks. Download the portable Windows build." />
-    <meta property="og:title" content="CustosEye" />
-    <meta property="og:description" content="Local-first system visibility and integrity checks." />
-    <meta property="og:type" content="website" />
-    <meta property="og:url" content="https://www.custoseye.com/" />
-    <meta property="og:image" content="assets/favicon.png" />
-    <link rel="preload" href="styles.css" as="style" />
+  <link rel="stylesheet" href="styles.css?v=1" />
+  <link rel="preload" href="styles.css?v=1" as="style" />
 </head>
+
+<!-- we use flex on <body> to push footer to the bottom even on short pages -->
 <body class="page">
 
-  <!-- header bar with logo and product name -->
+  <!-- a slim royal-purple stripe for subtle branding -->
+  <div class="top-stripe" aria-hidden="true"></div>
+
+  <!-- header bar with clickable logo that always returns home -->
   <header class="topbar">
-    <!-- replace the logo path if yours is a different filename or PNG -->
-    <img class="logo" src="assets/favicon.png" alt="CustosEye logo" />
-    <div class="brand">
+    <!-- logo links home -->
+    <a class="home-link" href="/" aria-label="Go to homepage">
+      <img class="logo" src="assets/favicon.png" alt="CustosEye logo" />
+    </a>
+
+    <!-- wrap the brand (title + tagline) in the same home link -->
+    <a class="home-link brand" href="/" aria-label="Go to homepage">
       <h1>CustosEye</h1>
-      <p class="tagline">Local-first system visibility and integrity checks.</p>
-    </div>
+      <p class="tagline">Your Third Eye</p>
+    </a>
   </header>
 
-  <!-- main content area -->
+  <!-- main grows to fill leftover vertical space so footer sits at bottom -->
   <main class="wrap">
-    <!-- hero section: short pitch + clear call to action -->
     <section class="hero card">
       <h2 class="hero-title">Download and run locally</h2>
       <p class="hero-sub">
         Portable Windows bundle. No installer. No background telemetry.
       </p>
 
+      <!-- primary download CTA -->
       <a id="download-btn"
          class="btn btn-primary"
          href="https://github.com/mardini2/CustosEye/releases/download/v0.2.0/CustosEye.zip"
          rel="noopener">
         Download for Windows
       </a>
-
-      <!-- Secondary actions -->
-      <div class="btn-row">
-        <a class="btn btn-ghost"
-           href="https://github.com/mardini2/CustosEye/releases"
-           rel="noopener">
-          View all releases
-        </a>
-        <a class="btn btn-ghost"
-           href="https://github.com/mardini2/CustosEye"
-           rel="noopener">
-          View source on GitHub
-        </a>
-      </div>
-
-      <!-- Optional: where we will show a total download badge (from GitHub API) -->
-      <div id="download-stats" class="muted"></div>
     </section>
 
-    <!-- features / bullets -->
     <section class="features grid">
       <article class="card">
         <h3>Integrity checks</h3>
@@ -79,37 +67,37 @@
         <p>Runs on your machine. No external dependency for core features.</p>
       </article>
       <article class="card">
-        <h3>Open-source</h3>
-        <p>Read the code, file issues, and contribute on GitHub.</p>
+        <h3>Secure by design</h3>
+        <p>Minimal surface, explicit actions, transparent behavior.</p>
       </article>
     </section>
   </main>
 
-  <!-- footer with tiny legal and privacy links -->
+  <!-- decorative section: subtle moving binary "rain" -->
+  <section class="binary-wrap card full-bleed" aria-hidden="true">
+    <canvas id="binary-canvas"></canvas>
+  </section>
+
+  <!-- load the tiny renderer after the DOM -->
+  <script src="js/binary.js?v=1" defer></script>
+
+  <!-- true sticky footer with links -->
   <footer class="foot">
     <nav class="foot-nav">
-      <a href="#" id="open-consent">Cookie settings</a>
-      <a href="https://github.com/mardini2/CustosEye/blob/main/LICENSE" rel="noopener">License</a>
-      <a href="https://github.com/mardini2/CustosEye" rel="noopener">GitHub</a>
+      <a href="cookies.html">Cookie settings</a>
+      <a href="license.html">License</a>
     </nav>
     <small class="muted">© <span id="year"></span> CustosEye. All rights reserved.</small>
   </footer>
 
-  <!-- cookie banner injected by this script if no prior choice -->
-  <script src="js/consent.js"></script>
-  <!-- this attaches Google Analytics only after consent is granted -->
-  <script src="js/analytics-attach.js" defer></script>
-
   <script>
-    // tiny helper that writes the current year in the footer
-    // this avoids hardcoding and forgetting to update it next year
     document.getElementById('year').textContent = new Date().getFullYear();
-
-    // expose a way for users to reopen the consent banner from footer
-    document.getElementById('open-consent').addEventListener('click', function (e) {
-      e.preventDefault();         // stop the default link navigation
-      window.showConsentBanner(); // function defined in consent.js
-    });
   </script>
+
+  <!-- Cookie banner (shows once until a choice is stored) -->
+  <script src="js/consent.js?v=1"></script>
+
+  <!-- GA attaches only after consent; ?debug=1 enables DebugView + dev/test -->
+  <script src="js/analytics-attach.js?v=1" defer></script>
 </body>
 </html>

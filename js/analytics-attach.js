@@ -1,59 +1,68 @@
 // js/analytics-attach.js
-// loads Google Analytics 4 only AFTER cookie consent,
-// tracks download clicks, and (optionally) shows a GitHub release download count.
+// Loads GA4 only AFTER consent, tracks 'file_download', and shows a private
+// debug-only badge (tag · count · timestamp) when ?debug=1 is present.
 
 // === GA4 Measurement ID ===
-// already created a GA4 Web stream for https://www.custoseye.com in GA.
 const GA_MEASUREMENT_ID = 'G-0YTLKPFY3R';
 
-// GitHub release download badge ===
-// set these to show "Total downloads: N" for a specific asset name.
+// Only send analytics on these hostnames (or when ?debug=1)
+const GA_ALLOWED_HOSTS = ['www.custoseye.com', 'custoseye.com'];
+
+// Optional GitHub release debug badge (hidden unless ?debug=1)
 const GH_OWNER = 'mardini2';
 const GH_REPO = 'CustosEye';
 const GH_TAG_OR_LATEST = 'latest';          // 'latest' or a specific tag like 'v0.2.0'
-const GH_ASSET_FILENAME = 'CustosEye.zip';  // exact asset filename in your release
+const GH_ASSET_FILENAME = 'CustosEye.zip';  // exact asset filename
 
-// small helper to load external scripts (like GA)
 function loadScript(src, async = true) {
   return new Promise((resolve, reject) => {
     const s = document.createElement('script');
-    s.src = src;          // where to load from
-    s.async = async;      // do not block page rendering
-    s.onload = resolve;   // resolve when it finishes
-    s.onerror = reject;   // reject if network error
-    document.head.appendChild(s); // attach to <head>
+    s.src = src;
+    s.async = async;
+    s.onload = resolve;
+    s.onerror = reject;
+    document.head.appendChild(s);
   });
 }
 
-// attach Google Analytics ONLY after consent
+function shouldAttachGA() {
+  const params = new URLSearchParams(location.search);
+  const debugParam = params.get('debug') === '1';
+  const allowedHost = GA_ALLOWED_HOSTS.includes(location.hostname);
+  return allowedHost || debugParam;
+}
+
 async function attachAnalytics() {
-  // safety check: if the ID is missing, bail (prevents broken calls)
+  if (!shouldAttachGA()) {
+    console.info('[analytics] Skipping GA (host not whitelisted and no ?debug=1).');
+    return;
+  }
   if (!GA_MEASUREMENT_ID || GA_MEASUREMENT_ID.startsWith('G-XXXX')) {
-    console.warn('[analytics] GA_MEASUREMENT_ID not set yet.');
+    console.warn('[analytics] GA_MEASUREMENT_ID not set.');
     return;
   }
 
   try {
-    // load GA's library
     await loadScript(`https://www.googletagmanager.com/gtag/js?id=${GA_MEASUREMENT_ID}`);
 
-    // set up GA's dataLayer and the gtag() helper
     window.dataLayer = window.dataLayer || [];
     function gtag(){ dataLayer.push(arguments); }
     window.gtag = gtag;
 
-    // boot GA and (optionally) anonymize IPs
+    const debugMode = new URLSearchParams(location.search).get('debug') === '1';
+
     gtag('js', new Date());
-    gtag('config', GA_MEASUREMENT_ID, { anonymize_ip: true });
+    gtag('config', GA_MEASUREMENT_ID, { anonymize_ip: true, debug_mode: debugMode });
 
-    console.info('[analytics] GA4 attached');
+    console.info('[analytics] GA4 attached (debug_mode:', debugMode, ')');
 
-    // track the download button click as a custom event
+    // Recommended GA4 event for file downloads
     const dl = document.getElementById('download-btn');
     if (dl) {
       dl.addEventListener('click', () => {
-        // shows up under GA -> Reports -> Engagement -> Events
-        gtag('event', 'download_click', {
+        gtag('event', 'file_download', {
+          file_name: 'CustosEye.zip',
+          link_url: dl.href,
           event_category: 'engagement',
           event_label: window.location.pathname,
           value: 1
@@ -65,61 +74,50 @@ async function attachAnalytics() {
   }
 }
 
-// listen for consent from consent.js and then attach GA
 window.addEventListener('analytics:consent-granted', attachAnalytics);
-
-// if user already accepted on a prior visit, attach immediately
 document.addEventListener('DOMContentLoaded', () => {
   try {
-    const ok = localStorage.getItem('analytics_consent') === 'granted';
-    if (ok) attachAnalytics();
-  } catch {
-    // if localStorage is blocked, skip silently
-  }
+    if (localStorage.getItem('analytics_consent') === 'granted') attachAnalytics();
+  } catch {}
 });
 
-// show total downloads from your GitHub release ---
-// reads the releases API, finds the asset matching GH_ASSET_FILENAME,
-// and prints its download_count into #download-stats.
+// ---- Private debug badge (only if ?debug=1) ----
 async function showReleaseDownloadCount() {
-  const el = document.getElementById('download-stats');
-  if (!el) return;
-
-  // only skip if placeholders were NEVER replaced
-  const placeholders =
-    GH_OWNER === 'OWNER' ||
-    GH_REPO === 'REPO' ||
-    GH_ASSET_FILENAME === 'ASSET_FILENAME';
-
-  if (placeholders) {
-    el.textContent = ''; // not configured
-    return;
-  }
+  const params = new URLSearchParams(location.search);
+  const debugMode = params.get('debug') === '1';
+  if (!debugMode) return; // invisible to the public
 
   try {
-    // build the correct endpoint based on tag vs latest
     const url = (GH_TAG_OR_LATEST === 'latest')
       ? `https://api.github.com/repos/${GH_OWNER}/${GH_REPO}/releases/latest`
       : `https://api.github.com/repos/${GH_OWNER}/${GH_REPO}/releases/tags/${encodeURIComponent(GH_TAG_OR_LATEST)}`;
 
-    // call GitHub Releases API
-    const res = await fetch(url, { headers: { 'Accept': 'application/vnd.github+json' }});
+    const res = await fetch(url, { headers: { 'Accept': 'application/vnd.github+json' } });
     if (!res.ok) throw new Error(`GitHub API ${res.status}`);
     const data = await res.json();
 
-    // find the matching asset by file name
+    // Find asset and figure out the tag label
     const asset = (data.assets || []).find(a => a.name === GH_ASSET_FILENAME);
+    const tag = data.tag_name || (data.name || GH_TAG_OR_LATEST);
 
-    // if found, show the count; otherwise, show nothing
     if (asset && typeof asset.download_count === 'number') {
-      el.textContent = `Total downloads: ${asset.download_count.toLocaleString()}`;
-    } else {
-      el.textContent = '';
+      // Build the “tag · count · checked time” string
+      const now = new Date();
+      const timeStr = now.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+      const info = document.createElement('div');
+      info.className = 'debug-download-count';
+      info.style.cssText = `
+        margin: 12px 24px 0;
+        color: #a1f1b0;
+        font-family: monospace;
+        font-size: 0.9rem;
+        opacity: 0.85;
+      `;
+      info.textContent = `${tag} · ${asset.download_count.toLocaleString()} downloads · checked ${timeStr}`;
+      (document.querySelector('footer') || document.body).appendChild(info);
     }
   } catch (err) {
     console.warn('[downloads] Could not load release stats:', err);
   }
 }
-
-// on page load, try to show the badge
 document.addEventListener('DOMContentLoaded', showReleaseDownloadCount);
