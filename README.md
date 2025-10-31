@@ -1,7 +1,7 @@
 # CustosEye
 
 CustosEye is a local-first visibility and integrity monitor with a lightweight rules engine, contextual trust scoring (CSC v2), and a clean web dashboard.  
-No cloud, no telemetry—everything runs locally.
+No cloud, no telemetry everything runs locally :)
 
 ---
 
@@ -198,4 +198,5 @@ GitHub Actions automatically runs this build, embeds version and commit hash, an
 ## License
 
 MIT — do cool things, don’t sue me man.
+
 Use, modify, and share freely. Attribution appreciated.
