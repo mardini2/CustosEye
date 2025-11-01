@@ -32,8 +32,7 @@ Users are advised to download copies only from the official GitHub repository or
 ---
 ## Governing Law
 This license shall be governed and construed in accordance with the laws of Canada.  
-All disputes arising under or in connection with this license shall be subject to the exclusive jurisdiction of the courts
-of Canada.
+All disputes arising under or in connection with this license shall be subject to the exclusive jurisdiction of the courts of Canada.
 
 ---
 For permission requests or inquiries, contact:  
