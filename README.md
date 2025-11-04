@@ -34,6 +34,11 @@ python -m pip install -r requirements.txt
 python -m app.console
 # Console output:
 # CustosEye running at http://127.0.0.1:8765/
+
+# 4. Website launch
+python -m http.server 8765
+# Console output (or visit this on your machine to test the website)
+# Serving HTTP on :: port 8765 (http://localhost:8765/)
 ```
 
 **Command-line options**
