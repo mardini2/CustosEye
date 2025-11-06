@@ -239,6 +239,151 @@
       max-width: 160px;
       white-space: normal;
     }
+
+    /* --- Diff visualization styles --- */
+    .diff-container {
+      display: flex;
+      gap: 12px;
+      margin: 12px 0;
+      max-height: 80vh;
+      overflow: visible;
+    }
+    .diff-side {
+      flex: 1;
+      min-width: 0;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      overflow: visible;
+      background: var(--rowAlt);
+      display: flex;
+      flex-direction: column;
+      max-height: 80vh;
+    }
+    .diff-header {
+      padding: 8px 12px;
+      background: var(--panel);
+      border-bottom: 1px solid var(--border);
+      font-weight: 600;
+      font-size: 13px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .diff-lines {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+      font-size: 12px;
+      line-height: 1.5;
+      overflow-x: auto;
+      overflow-y: auto;
+      flex: 1;
+      min-height: 0;
+    }
+    .diff-line {
+      display: flex;
+      padding: 2px 8px;
+    }
+    .diff-line-number {
+      min-width: 50px;
+      padding-right: 12px;
+      text-align: right;
+      color: var(--muted);
+      user-select: none;
+      border-right: 1px solid var(--border);
+      margin-right: 8px;
+    }
+    .diff-line-content {
+      flex: 1;
+      overflow-x: auto;
+      white-space: pre-wrap;
+      word-wrap: break-word;
+    }
+    .diff-line.equal {
+      background: var(--row);
+    }
+    .diff-line.added {
+      background: var(--row);
+      border-left: 3px solid var(--good);
+    }
+    .diff-line.removed {
+      background: var(--row);
+      border-left: 3px solid var(--bad);
+    }
+    .diff-line.modified {
+      background: var(--row);
+      border-left: 3px solid var(--warn);
+    }
+    .diff-char-removed {
+      background: color-mix(in oklab, var(--bad) 25%, transparent);
+      text-decoration: line-through;
+      color: var(--bad);
+    }
+    .diff-char-added {
+      background: color-mix(in oklab, var(--good) 25%, transparent);
+      color: var(--good);
+      font-weight: 500;
+    }
+    .diff-char-equal {
+      background: transparent;
+    }
+    .diff-line.hidden {
+      display: none;
+    }
+    .diff-summary {
+      padding: 12px;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      margin-bottom: 12px;
+    }
+    .diff-summary-stats {
+      display: flex;
+      gap: 16px;
+      flex-wrap: wrap;
+      margin-top: 8px;
+    }
+    .diff-stat {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+    }
+    .diff-stat-badge {
+      padding: 2px 8px;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      font-size: 11px;
+      font-weight: 600;
+    }
+    .diff-stat-badge.added { color: var(--good); border-color: color-mix(in oklab, var(--good) 40%, var(--border)); }
+    .diff-stat-badge.removed { color: var(--bad); border-color: color-mix(in oklab, var(--bad) 40%, var(--border)); }
+    .diff-stat-badge.modified { color: var(--warn); border-color: color-mix(in oklab, var(--warn) 40%, var(--border)); }
+    .diff-binary-info {
+      padding: 16px;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      margin: 12px 0;
+    }
+    .diff-binary-info h4 {
+      margin: 0 0 8px 0;
+      font-size: 14px;
+      color: var(--text);
+    }
+    .diff-binary-info p {
+      margin: 8px 0;
+      font-size: 12px;
+      color: var(--muted);
+      line-height: 1.6;
+    }
+    @media (max-width: 768px) {
+      .diff-container {
+        flex-direction: column;
+        max-height: 70vh;
+      }
+      .diff-side {
+        max-height: 70vh;
+      }
+    }
   </style>
 </head>
 <body>
@@ -527,11 +672,36 @@
         ? `path=${nameOrPath}`
         : `pid=${pid} name=${nameOrPath}`;
 
+      // Check if this event was accepted (marked safe) or hash verified
+      // Accepted events have the acceptance text appended to the reason with a checkmark
+      const isAccepted = ev.accepted === true || (reason.includes('✔ Marked Safe')) || (reason.includes('✔ Hash verified'));
+      
+      // Parse the reason to separate the original reason from the acceptance text
+      let displayReason = reason;
+      let acceptanceText = '';
+      if (isAccepted) {
+        // Check for "Hash verified" first (replaces the reason)
+        if (reason.includes('✔ Hash verified')) {
+          displayReason = '✔ Hash verified';
+          acceptanceText = '';
+        } else {
+          // Split reason at the acceptance text marker (using em dash separator)
+          const parts = reason.split(' — ✔ Marked Safe');
+          if (parts.length > 1) {
+            displayReason = parts[0]; // Original reason
+            acceptanceText = '✔ Marked Safe'; // Acceptance text
+          } else {
+            // Fallback: just show the reason as-is
+            displayReason = reason;
+          }
+        }
+      }
+
       return `
         <div class="row">
           <div class="nowrap"><span class="lvl ${lvl}" title="${lvl === 'critical' ? 'Critical' : lvl === 'warning' ? 'Warning' : 'Info'}">${lvl.toUpperCase()}</span>${seenBadge}</div>
           <div class="mono muted nowrap">${ts}</div>
-          <div class="mono nowrap">${reason} | source=${src} ${ident}${trust}</div>
+          <div class="mono nowrap">${displayReason.includes('✔ Hash verified') ? '<span style="color:var(--good);" title="Hash verified">' + displayReason + '</span>' : displayReason}${acceptanceText ? ' — <span style="color:var(--good);" title="Change marked as safe">' + acceptanceText + '</span>' : ''} | source=${src} ${ident}${trust}</div>
         </div>`;
     }
 
@@ -690,6 +860,13 @@
       modalBody.textContent = '';
       modalCard.removeAttribute('tabindex');
       lastFocused?.focus();
+      
+      // Clear auto-refresh when modal closes
+      if (window.diffAutoRefreshInterval) {
+        clearInterval(window.diffAutoRefreshInterval);
+        window.diffAutoRefreshInterval = null;
+      }
+      window.currentDiffPath = null;
     }
 
     document.addEventListener('keydown', (e) => {
@@ -723,82 +900,467 @@
         return `<div class="small">Error: ${err}</div>`;
       }
       const s = payload.summary || {};
+      const fileType = payload.file_type || 'binary';
+      const textDiff = payload.text_diff;
       const regions = payload.regions || [];
 
-      const zipChanges = payload.zip_changes || [];
-      let zipHTML = '';
-      if (zipChanges.length) {
-        const rows = zipChanges.map(z => {
-          const ch = (z.change || '').toString();
-          const member = esc(z.member || '');
-          if (ch === 'modified') {
-            return `<tr>
-              <td class="mono mono-wrap">${member}</td>
-              <td>${esc(ch)}</td>
-              <td class="mono">${esc(String(z.size_before ?? ''))}</td>
-              <td class="mono">${esc(String(z.size_after ?? ''))}</td>
-            </tr>`;
-          }
-          return `<tr>
-            <td class="mono mono-wrap">${member}</td>
-            <td>${esc(ch)}</td>
-            <td class="mono">${esc(String(z.size ?? ''))}</td>
-            <td class="mono">—</td>
-          </tr>`;
-        }).join('');
-        zipHTML = `
-          <div class="card" style="margin:8px 0">
-            <div class="mono"><b>ZIP members changed</b> <span class="small muted">(e.g., DOCX internals)</span></div>
-            <table class="tbl" style="margin-top:6px">
-              <thead><tr><th>Member</th><th>Change</th><th>Size (before)</th><th>Size (after)</th></tr></thead>
-              <tbody>${rows}</tbody>
-            </table>
-          </div>`;
-      }
-
-      const head = `
-        <div class="mono" style="margin-bottom:8px">
-          <div><b>${esc(s.file || '')}</b></div>
-          <div>Changed chunks: ${s.changed_chunks} · Regions shown: ${s.regions_returned}</div>
-          <div>Approx changed: ${bytesHuman(s.approx_changed_bytes)} (${(s.approx_percent_of_file||0)}% of file)</div>
-          <div>Chunk size: ${bytesHuman(s.chunk_size)} · Baseline size: ${bytesHuman(s.baseline_size)} → Current size: ${bytesHuman(s.current_size)}</div>
+      // Summary header
+      const st = payload.summary_text || {};
+      const summaryHTML = `
+        <div class="diff-summary">
+          <div class="mono"><b>${esc(s.file || '')}</b></div>
+          ${st.headline ? `<div style="margin-top:6px; font-weight:600">${esc(st.headline)}</div>` : ''}
+          ${st.details ? `<div class="small" style="margin-top:4px">${esc(st.details)}</div>` : ''}
+          <div class="diff-summary-stats">
+            <div class="diff-stat">
+              <span class="small muted">Changed:</span>
+              <span class="mono">${bytesHuman(s.approx_changed_bytes)} (${(s.approx_percent_of_file||0).toFixed(1)}%)</span>
+            </div>
+            <div class="diff-stat">
+              <span class="small muted">File size:</span>
+              <span class="mono">${bytesHuman(s.baseline_size)} → ${bytesHuman(s.current_size)}</span>
+            </div>
+          </div>
         </div>
       `;
 
-      if (!regions.length) {
-        return head + `<div class="small">No differing regions found.</div>`;
-      }
+      // Text-based diff (preferred for readable files)
+      if (textDiff && textDiff.type === 'text' && textDiff.diff_segments && textDiff.diff_segments.length > 0) {
+        const segments = textDiff.diff_segments;
+        let addedCount = 0, removedCount = 0, modifiedCount = 0;
+        
+        segments.forEach(seg => {
+          if (seg.type === 'added') addedCount += seg.new_lines.length;
+          else if (seg.type === 'removed') removedCount += seg.old_lines.length;
+          else if (seg.type === 'modified') modifiedCount += Math.max(seg.old_lines.length, seg.new_lines.length);
+        });
 
-      const st = payload.summary_text || {};
-      const summaryHTML = (st.headline || st.details) ? `
-        <div class="card" style="margin:8px 0">
-          <div class="mono"><b>${esc(st.headline || '')}</b></div>
-          ${st.details ? `<div class="small" style="margin-top:4px">${esc(st.details)}</div>` : ``}
-        </div>
-      ` : '';
+        // Build side-by-side diff with proper alignment
+        let oldLinesHTML = '';
+        let newLinesHTML = '';
+        
+        segments.forEach(seg => {
+          const type = seg.type;
+          const oldLines = seg.old_lines || [];
+          const newLines = seg.new_lines || [];
+          
+          if (type === 'equal') {
+            // Equal lines - show side by side
+            for (let i = 0; i < oldLines.length; i++) {
+              const oldLine = oldLines[i];
+              const newLine = newLines[i];
+              const oldNum = seg.old_start + i;
+              const newNum = seg.new_start + i;
+              
+              oldLinesHTML += `
+                <div class="diff-line equal">
+                  <span class="diff-line-number">${oldNum}</span>
+                  <span class="diff-line-content">${esc(oldLine)}</span>
+                </div>
+              `;
+              
+              newLinesHTML += `
+                <div class="diff-line equal">
+                  <span class="diff-line-number">${newNum}</span>
+                  <span class="diff-line-content">${esc(newLine)}</span>
+                </div>
+              `;
+            }
+          } else if (type === 'removed') {
+            // Removed lines - show on left, blank on right
+            for (let i = 0; i < oldLines.length; i++) {
+              const oldLine = oldLines[i];
+              const oldNum = seg.old_start + i;
+              
+              oldLinesHTML += `
+                <div class="diff-line removed">
+                  <span class="diff-line-number">${oldNum}</span>
+                  <span class="diff-line-content">${esc(oldLine)}</span>
+                </div>
+              `;
+              
+              newLinesHTML += `
+                <div class="diff-line equal">
+                  <span class="diff-line-number"></span>
+                  <span class="diff-line-content"></span>
+                </div>
+              `;
+            }
+          } else if (type === 'added') {
+            // Added lines - blank on left, show on right
+            for (let i = 0; i < newLines.length; i++) {
+              const newLine = newLines[i];
+              const newNum = seg.new_start + i;
+              
+              oldLinesHTML += `
+                <div class="diff-line equal">
+                  <span class="diff-line-number"></span>
+                  <span class="diff-line-content"></span>
+                </div>
+              `;
+              
+              newLinesHTML += `
+                <div class="diff-line added">
+                  <span class="diff-line-number">${newNum}</span>
+                  <span class="diff-line-content">${esc(newLine)}</span>
+                </div>
+              `;
+            }
+          } else if (type === 'modified') {
+            // Modified lines - show character-level differences
+            const maxLines = Math.max(oldLines.length, newLines.length);
+            const oldCharDiffs = seg.old_char_diffs || [];
+            const newCharDiffs = seg.new_char_diffs || [];
+            
+            for (let i = 0; i < maxLines; i++) {
+              const oldLine = oldLines[i] || '';
+              const newLine = newLines[i] || '';
+              const oldNum = i < oldLines.length ? seg.old_start + i : '';
+              const newNum = i < newLines.length ? seg.new_start + i : '';
+              
+              // Check if we have character-level diffs for this line
+              if (oldCharDiffs[i] && newCharDiffs[i]) {
+                // Render character-level diff
+                let oldContent = '';
+                let newContent = '';
+                
+                oldCharDiffs[i].forEach(part => {
+                  const cls = part.type === 'removed' ? 'diff-char-removed' : 'diff-char-equal';
+                  oldContent += `<span class="${cls}">${esc(part.text)}</span>`;
+                });
+                
+                newCharDiffs[i].forEach(part => {
+                  const cls = part.type === 'added' ? 'diff-char-added' : 'diff-char-equal';
+                  newContent += `<span class="${cls}">${esc(part.text)}</span>`;
+                });
+                
+                oldLinesHTML += `
+                  <div class="diff-line modified">
+                    <span class="diff-line-number">${oldNum}</span>
+                    <span class="diff-line-content">${oldContent}</span>
+                  </div>
+                `;
+                
+                newLinesHTML += `
+                  <div class="diff-line modified">
+                    <span class="diff-line-number">${newNum}</span>
+                    <span class="diff-line-content">${newContent}</span>
+                  </div>
+                `;
+              } else {
+                // Fallback: show full line as modified
+                oldLinesHTML += `
+                  <div class="diff-line removed">
+                    <span class="diff-line-number">${oldNum}</span>
+                    <span class="diff-line-content">${esc(oldLine)}</span>
+                  </div>
+                `;
+                
+                newLinesHTML += `
+                  <div class="diff-line added">
+                    <span class="diff-line-number">${newNum}</span>
+                    <span class="diff-line-content">${esc(newLine)}</span>
+                  </div>
+                `;
+              }
+            }
+          }
+        });
 
-      const rows = regions.map((r, i) => {
-        const oldList = (r.old_chunk_hashes || []).map(h => `<code>${esc(h)}</code>`).join(', ');
-        const newList = (r.new_chunk_hashes || []).map(h => `<code>${esc(h)}</code>`).join(', ');
-        const pv = r.preview || {};
-        // split hex preview into spaced bytes for readability
-        const spacedHex = (pv.hex || '').replace(/(..)/g, '$1 ').trim();
-        const ascii = pv.ascii || '';
-
-        return `
-          <div class="card" style="margin-bottom:8px">
-            <div class="mono"><b>Region ${i+1}</b> — offset ${r.start_offset} .. ${r.end_offset} (${bytesHuman(r.length)})</div>
-            <div class="small">Chunks ${r.chunk_idx_start}..${r.chunk_idx_end}</div>
-            <div class="small" style="margin-top:6px"><b>Old chunk hashes</b>: ${oldList || '(none)'}</div>
-            <div class="small"><b>New chunk hashes</b>: ${newList || '(none)'}</div>
-            <div class="small" style="margin-top:6px"><b>Preview (after)</b> · ${pv.bytes||0} bytes shown</div>
-            <pre class="mono" style="white-space:pre-wrap; overflow-wrap:anywhere; border:1px solid var(--border); border-radius:8px; padding:8px; background:var(--rowAlt);">${spacedHex}</pre>
-            <div class="small muted">ASCII: <span class="mono" style="word-break:break-all">${ascii}</span></div>
+        const statsHTML = `
+          <div class="diff-summary-stats" style="margin-top:8px">
+            ${addedCount > 0 ? `<div class="diff-stat"><span class="diff-stat-badge added">+${addedCount}</span> <span class="small muted">added</span></div>` : ''}
+            ${removedCount > 0 ? `<div class="diff-stat"><span class="diff-stat-badge removed">-${removedCount}</span> <span class="small muted">removed</span></div>` : ''}
+            ${modifiedCount > 0 ? `<div class="diff-stat"><span class="diff-stat-badge modified">~${modifiedCount}</span> <span class="small muted">modified</span></div>` : ''}
           </div>
         `;
-      }).join('');
+        
+        // Image changes display
+        let imageChangesHTML = '';
+        if (textDiff.image_changes && textDiff.image_changes.length > 0) {
+          const imageChanges = textDiff.image_changes;
+          imageChangesHTML = `
+            <div style="margin:12px 0; padding:12px; background:var(--panel); border:1px solid var(--border); border-radius:8px;">
+              <div style="font-weight:600; margin-bottom:8px;">📷 Image Changes</div>
+              ${imageChanges.map(change => {
+                const img = change.image || {};
+                const changeType = change.change || '';
+                const badgeCls = changeType === 'added' ? 'added' : (changeType === 'removed' ? 'removed' : (changeType === 'resized' ? 'modified' : 'modified'));
+                
+                let changeLabel = changeType;
+                let changeDetails = '';
+                
+                if (changeType === 'resized') {
+                  const oldW = change.old_width || '?';
+                  const oldH = change.old_height || '?';
+                  const newW = change.new_width || '?';
+                  const newH = change.new_height || '?';
+                  changeLabel = 'resized';
+                  changeDetails = `<span class="small" style="color:var(--warning); margin-left:8px;">${oldW}×${oldH} → ${newW}×${newH}</span>`;
+                }
+                
+                return `
+                  <div style="margin:8px 0; padding:8px; background:var(--rowAlt); border-radius:4px;">
+                    <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+                      <span class="diff-stat-badge ${badgeCls}">${changeType === 'added' ? '+' : (changeType === 'removed' ? '-' : '~')}</span>
+                      <span style="font-weight:500;">${esc(img.name || 'Unknown')}</span>
+                      <span class="small muted">(${bytesHuman(img.size || 0)})</span>
+                      ${changeDetails}
+                      ${img.hash ? `<span class="small mono muted">hash: ${esc(img.hash)}</span>` : ''}
+                      ${img.width && img.height ? `<span class="small muted">${img.width}×${img.height}px</span>` : ''}
+                    </div>
+                  </div>
+                `;
+              }).join('')}
+            </div>
+          `;
+        }
+        
+        // Formatting changes display - only show actual changes
+        let formattingChangesHTML = '';
+        if (textDiff.formatting_changes && textDiff.formatting_changes.length > 0) {
+          const formattingChanges = textDiff.formatting_changes;
+          formattingChangesHTML = `
+            <div style="margin:12px 0; padding:12px; background:var(--panel); border:1px solid var(--border); border-radius:8px;">
+              <div style="font-weight:600; margin-bottom:8px;">🎨 Formatting Changes</div>
+              ${formattingChanges.map(change => {
+                const changedAttrs = change.changed_attrs || [];
+                const removedAttrs = change.removed_attrs || [];
+                const addedAttrs = change.added_attrs || [];
+                
+                // Only show attributes that actually changed
+                const changes = [];
+                if (changedAttrs.length > 0) {
+                  changes.push(...changedAttrs.map(attr => `<span style="color:var(--warning);">${esc(attr)}</span>`));
+                }
+                if (removedAttrs.length > 0) {
+                  changes.push(...removedAttrs.map(attr => `<span style="color:var(--bad);">Removed: ${esc(attr)}</span>`));
+                }
+                if (addedAttrs.length > 0) {
+                  changes.push(...addedAttrs.map(attr => `<span style="color:var(--good);">Added: ${esc(attr)}</span>`));
+                }
+                
+                if (changes.length === 0) return ''; // Skip if no actual changes
+                
+                return `
+                  <div style="margin:8px 0; padding:8px; background:var(--rowAlt); border-radius:4px;">
+                    <div style="font-weight:500; margin-bottom:4px;">Text: "${esc(change.text || '').substring(0, 50)}${(change.text || '').length > 50 ? '...' : ''}"</div>
+                    <div class="small" style="margin-top:4px;">
+                      ${changes.join(' | ')}
+                    </div>
+                  </div>
+                `;
+              }).filter(html => html && html !== '').join('')}
+            </div>
+          `;
+        }
+        
+        // Images display (baseline and current)
+        let imagesDisplayHTML = '';
+        if (textDiff.is_office && (textDiff.images_baseline?.length > 0 || textDiff.images_current?.length > 0)) {
+          const baselineImages = textDiff.images_baseline || [];
+          const currentImages = textDiff.images_current || [];
+          imagesDisplayHTML = `
+            <div style="margin:12px 0; padding:12px; background:var(--panel); border:1px solid var(--border); border-radius:8px;">
+              <div style="font-weight:600; margin-bottom:8px;">📷 Images in Document</div>
+              <div style="display:grid; grid-template-columns: 1fr 1fr; gap:12px;">
+                <div>
+                  <div class="small muted" style="margin-bottom:8px;"><b>Original (Baseline):</b> ${baselineImages.length} image(s)</div>
+                  ${baselineImages.map(img => `
+                    <div style="margin:8px 0; padding:8px; background:var(--rowAlt); border-radius:4px; border:1px solid var(--border);">
+                      <div class="small mono" style="font-weight:500;">${esc(img.name || 'Unknown')}</div>
+                      <div class="small muted">Size: ${bytesHuman(img.size || 0)}</div>
+                      ${img.hash ? `<div class="small mono muted">Hash: ${esc(img.hash)}</div>` : ''}
+                    </div>
+                  `).join('')}
+                </div>
+                <div>
+                  <div class="small muted" style="margin-bottom:8px;"><b>Current (Changed):</b> ${currentImages.length} image(s)</div>
+                  ${currentImages.map(img => `
+                    <div style="margin:8px 0; padding:8px; background:var(--rowAlt); border-radius:4px; border:1px solid var(--border);">
+                      <div class="small mono" style="font-weight:500;">${esc(img.name || 'Unknown')}</div>
+                      <div class="small muted">Size: ${bytesHuman(img.size || 0)}</div>
+                      ${img.hash ? `<div class="small mono muted">Hash: ${esc(img.hash)}</div>` : ''}
+                    </div>
+                  `).join('')}
+                </div>
+              </div>
+            </div>
+          `;
+        }
 
-      return head + summaryHTML + zipHTML + rows;
+        // Add "Change is OK" button
+        const changeIsOKButton = `
+          <div style="margin:12px 0; padding:12px; background:var(--panel); border:1px solid var(--border); border-radius:8px;">
+            <div style="display:flex; align-items:center; justify-content:space-between; gap:12px;">
+              <div>
+                <div style="font-weight:600; margin-bottom:4px;">This change is intentional</div>
+                <div class="small muted">If you made this change, click here to update the baseline and stop alerts.</div>
+              </div>
+              <button class="btn" id="acceptBaselineBtn" data-path="${encodeURIComponent(s.file || '')}" style="white-space:nowrap;">
+                Mark Change as Intentional
+              </button>
+            </div>
+          </div>
+        `;
+
+        return summaryHTML + `
+          <div style="margin:12px 0">
+            <div class="small muted" style="margin-bottom:8px">
+              File type: <b>${esc(textDiff.file_type || 'text file')}</b>
+              ${textDiff.is_office ? ' (Office document - extracted text)' : ''}
+              ${textDiff.is_pdf ? ' (PDF - extracted text)' : ''}
+              ${textDiff.is_config ? ' (Configuration file)' : ''}
+              ${textDiff.note ? ` · ${esc(textDiff.note)}` : ''}
+            </div>
+            ${statsHTML}
+            ${imageChangesHTML}
+            ${formattingChangesHTML}
+            ${imagesDisplayHTML}
+            ${changeIsOKButton}
+            <div class="diff-container">
+              <div class="diff-side">
+                <div class="diff-header">
+                  <span>Original (Baseline)</span>
+                  <span class="small muted">${textDiff.old_line_count || 0} lines</span>
+                </div>
+                <div class="diff-lines">${oldLinesHTML}</div>
+              </div>
+              <div class="diff-side">
+                <div class="diff-header">
+                  <span>Current (Changed)</span>
+                  <span class="small muted">${textDiff.new_line_count || 0} lines</span>
+                </div>
+                <div class="diff-lines">${newLinesHTML}</div>
+              </div>
+            </div>
+          </div>
+        `;
+      }
+
+      // Binary or Office file diff (fallback)
+      if (fileType === 'office') {
+        const zipChanges = payload.zip_changes || [];
+        if (zipChanges.length) {
+          const rows = zipChanges.map(z => {
+            const ch = (z.change || '').toString();
+            const member = esc(z.member || '');
+            if (ch === 'modified') {
+              return `<tr>
+                <td class="mono mono-wrap">${member}</td>
+                <td>${esc(ch)}</td>
+                <td class="mono">${bytesHuman(z.size_before ?? 0)}</td>
+                <td class="mono">${bytesHuman(z.size_after ?? 0)}</td>
+              </tr>`;
+            }
+            return `<tr>
+              <td class="mono mono-wrap">${member}</td>
+              <td>${esc(ch)}</td>
+              <td class="mono">${bytesHuman(z.size ?? 0)}</td>
+              <td class="mono">—</td>
+            </tr>`;
+          }).join('');
+          return summaryHTML + `
+            <div class="card" style="margin:8px 0">
+              <div class="mono"><b>Office document changes</b> <span class="small muted">(internal components)</span></div>
+              <table class="tbl" style="margin-top:6px">
+                <thead><tr><th>Component</th><th>Change</th><th>Size (before)</th><th>Size (after)</th></tr></thead>
+                <tbody>${rows}</tbody>
+              </table>
+            </div>
+          `;
+        }
+      }
+
+      // Binary file - show helpful explanation with structured comparison
+      if (fileType === 'binary' || (!textDiff && regions.length === 0)) {
+        // Add "Change is OK" button for binary files too
+        const changeIsOKButton = `
+          <div style="margin:12px 0; padding:12px; background:var(--panel); border:1px solid var(--border); border-radius:8px;">
+            <div style="display:flex; align-items:center; justify-content:space-between; gap:12px;">
+              <div>
+                <div style="font-weight:600; margin-bottom:4px;">This change is intentional</div>
+                <div class="small muted">If you made this change, click here to update the baseline and stop alerts.</div>
+              </div>
+              <button class="btn" id="acceptBaselineBtnBinary" data-path="${encodeURIComponent(s.file || '')}" style="white-space:nowrap;">
+                Mark Change as Intentional
+              </button>
+            </div>
+          </div>
+        `;
+        
+        let binaryInfo = `
+          <div class="diff-binary-info">
+            <h4>Binary file changes detected</h4>
+            <p>
+              This file contains binary data (not readable text). The file has been modified, but we cannot show the exact text changes.
+            </p>
+            <p>
+              <b>What changed:</b> Approximately ${(s.approx_percent_of_file||0).toFixed(1)}% of the file (${bytesHuman(s.approx_changed_bytes || 0)}) has been modified.
+            </p>
+        `;
+        
+        // Show structured comparison for binary files if we have region data
+        if (regions.length > 0) {
+          binaryInfo += `
+            <p style="margin-top:12px;"><b>Changed regions:</b> ${regions.length} region(s) detected.</p>
+            <div style="margin-top:8px; max-height:200px; overflow:auto;">
+          `;
+          
+          regions.slice(0, 5).forEach((r, i) => {
+            const pv = r.preview || {};
+            const spacedHex = (pv.hex || '').replace(/(..)/g, '$1 ').trim();
+            const ascii = pv.ascii || '';
+            binaryInfo += `
+              <div style="margin-bottom:8px; padding:8px; background:var(--rowAlt); border-radius:4px; border:1px solid var(--border);">
+                <div class="mono small" style="margin-bottom:4px;"><b>Region ${i+1}:</b> bytes ${r.start_offset} to ${r.end_offset} (${bytesHuman(r.length)})</div>
+                <pre class="mono" style="white-space:pre-wrap; overflow-wrap:anywhere; font-size:10px; margin:4px 0;">${spacedHex}</pre>
+                <div class="small muted">ASCII: <span class="mono" style="word-break:break-all">${esc(ascii)}</span></div>
+              </div>
+            `;
+          });
+          
+          if (regions.length > 5) {
+            binaryInfo += `<div class="small muted">... and ${regions.length - 5} more regions</div>`;
+          }
+          
+          binaryInfo += `</div>`;
+        }
+        
+        binaryInfo += `
+            <p style="margin-top:12px;">
+              <b>What you can do:</b> Download the original baseline file to compare it with the current version using external tools.
+            </p>
+          </div>
+        `;
+        
+        return summaryHTML + changeIsOKButton + binaryInfo;
+      }
+
+      // Fallback: show chunk-based regions (for binary or when text diff unavailable)
+      if (regions.length > 0) {
+        const rows = regions.slice(0, 10).map((r, i) => {
+          const pv = r.preview || {};
+          const spacedHex = (pv.hex || '').replace(/(..)/g, '$1 ').trim();
+          const ascii = pv.ascii || '';
+          return `
+            <div class="card" style="margin-bottom:8px">
+              <div class="mono"><b>Changed region ${i+1}</b> — bytes ${r.start_offset} to ${r.end_offset} (${bytesHuman(r.length)})</div>
+              <div class="small muted" style="margin-top:6px">Preview of changed content:</div>
+              <pre class="mono" style="white-space:pre-wrap; overflow-wrap:anywhere; border:1px solid var(--border); border-radius:8px; padding:8px; background:var(--rowAlt); margin-top:4px; font-size:11px;">${spacedHex}</pre>
+              <div class="small muted">ASCII: <span class="mono" style="word-break:break-all">${esc(ascii)}</span></div>
+            </div>
+          `;
+        }).join('');
+        return summaryHTML + `
+          <div class="card" style="margin:8px 0">
+            <div class="mono"><b>Changed regions</b> <span class="small muted">(showing first 10 of ${regions.length})</span></div>
+            ${rows}
+          </div>
+        `;
+      }
+
+      return summaryHTML + `<div class="small">No differences found.</div>`;
     }
 
   // ---------- Background caches ----------
@@ -999,16 +1561,20 @@
 
         const status = row.last_result || '';
         const { main: statusMain, note: statusNote } = splitStatus(status);
+        
+        // Check if file is deleted
+        const isDeleted = statusMain.toUpperCase().includes('DELETED') || statusMain.toUpperCase().includes('MISSING');
         const badgeCls = statusMain.toUpperCase().startsWith('OK') ? 'ok' : (status ? 'bad' : '');
         const statusHTML = status
           ? `<div class="status">
               <span class="badge ${badgeCls}">${statusMain}</span>
               ${statusNote ? `<span class="small muted">${statusNote}</span>` : ''}
+              ${isDeleted ? `<span class="badge" style="background:var(--bad); margin-left:8px;">DELETED</span>` : ''}
             </div>`
           : '';
         const statusCell = `<td>${statusHTML}</td>`;
 
-        const showView = (statusMain || '').toUpperCase().startsWith('CHANGED');
+        const showView = (statusMain || '').toUpperCase().startsWith('CHANGED') || isDeleted;
         const hasBaselineBlob = !!(row.baseline_blob && !row.baseline_blob.error);
 
         const actionsCell = `
@@ -1016,7 +1582,7 @@
             <div class="row-actions">
               ${showView ? `<button class="btn" data-act="viewdiff" data-path="${encodeURIComponent(row.path || '')}">View changes</button>` : ''}
               ${hasBaselineBlob ? `<button class="btn" data-act="downloadBaseline" data-path="${encodeURIComponent(row.path || '')}">Download baseline</button>` : ''}
-              <button class="btn" data-act="rehash" data-path="${encodeURIComponent(row.path || '')}">Re-hash</button>
+              <button class="btn" data-act="rehash" data-path="${encodeURIComponent(row.path || '')}" title="Retest this file if you think something has changed, or to confirm and update the baseline after reviewing changes you made intentionally.">Retest</button>
               <button class="btn" data-act="remove" data-path="${encodeURIComponent(row.path || '')}">Remove</button>
             </div>
           </td>`;
@@ -1032,34 +1598,229 @@
       });
 
       // Wire actions (after rendering)
+      window.currentDiffPath = null;
+      window.diffAutoRefreshInterval = null;
+      
       iTbody.querySelectorAll('button[data-act="viewdiff"]').forEach(btn => {
         btn.addEventListener('click', async () => {
           const path = decodeURIComponent(btn.getAttribute('data-path'));
-          try {
-            const r = await fetch('/api/integrity/diff', {
-              method: 'POST',
-              headers: {'Content-Type': 'application/json'},
-              body: JSON.stringify({ path, max_regions: 50 })
-            });
-            const j = await r.json();
-            showModal('File changes', renderDiff(j));
-          } catch {
-            showModal('File changes', `<div class="small">Failed to compute diff</div>`);
+          window.currentDiffPath = path;
+          
+          // Clear any existing auto-refresh
+          if (window.diffAutoRefreshInterval) {
+            clearInterval(window.diffAutoRefreshInterval);
+            window.diffAutoRefreshInterval = null;
           }
+          
+          // Show modal immediately with loading state
+          showModal('File changes', '<div class="small">Loading diff...</div>');
+          
+          async function loadDiff() {
+            try {
+              const r = await fetch('/api/integrity/diff', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ path, max_regions: 50 })
+              });
+              const j = await r.json();
+              
+              // Handle deleted files
+              if (j.file_deleted || j.error?.includes('deleted') || j.error?.includes('missing')) {
+                if (modal.style.display !== 'none') {
+                  const pathForDisplay = decodeURIComponent(path);
+                  modalBody.innerHTML = `
+                    <div style="padding:20px;">
+                      <div style="background:var(--bad); color:white; padding:12px; border-radius:8px; margin-bottom:16px;">
+                        <div style="font-weight:600; font-size:16px; margin-bottom:8px;">⚠️ File Deleted</div>
+                        <div style="font-size:14px;">The file <span class="mono">${esc(pathForDisplay)}</span> has been deleted or is missing.</div>
+                      </div>
+                      <div style="padding:12px; background:var(--panel); border:1px solid var(--border); border-radius:8px; margin-bottom:16px;">
+                        <div style="font-weight:600; margin-bottom:8px;">This deletion was intentional</div>
+                        <div class="small muted" style="margin-bottom:12px;">If you intentionally deleted this file, click here to mark it as safe and remove it from the watch list.</div>
+                        <button class="btn" id="acceptDeletionBtn" data-path="${encodeURIComponent(pathForDisplay)}" style="background:var(--bad); color:white;">
+                          Mark Deletion as Safe
+                        </button>
+                      </div>
+                      <div class="small muted">
+                        <p><b>What happened:</b> The file that was being monitored for integrity has been deleted from the filesystem.</p>
+                        <p><b>What you can do:</b> If this deletion was intentional, mark it as safe. If it was unexpected, investigate the deletion.</p>
+                      </div>
+                    </div>
+                  `;
+                  
+                  // Wire deletion acceptance button
+                  const acceptDeletionBtn = modalBody.querySelector('#acceptDeletionBtn');
+                  if (acceptDeletionBtn) {
+                    acceptDeletionBtn.addEventListener('click', async () => {
+                      const btnPath = decodeURIComponent(acceptDeletionBtn.getAttribute('data-path') || path);
+                      acceptDeletionBtn.disabled = true;
+                      acceptDeletionBtn.textContent = 'Removing...';
+                      
+                      try {
+                        const resp = await fetch('/api/integrity/baseline/accept', {
+                          method: 'POST',
+                          headers: {'Content-Type': 'application/json'},
+                          body: JSON.stringify({ path: btnPath })
+                        });
+                        const result = await resp.json();
+                        
+                        if (result.ok) {
+                          acceptDeletionBtn.textContent = 'Removed ✓';
+                          acceptDeletionBtn.style.background = 'var(--good)';
+                          
+                          // Reload targets to update status
+                          loadTargets();
+                          
+                          // Refresh Live Events to show updated status
+                          fetchData();
+                          
+                          // Close modal after a short delay
+                          setTimeout(() => {
+                            hideModal();
+                          }, 1500);
+                        } else {
+                          acceptDeletionBtn.textContent = 'Error: ' + (result.error || 'Failed');
+                          acceptDeletionBtn.disabled = false;
+                        }
+                      } catch (e) {
+                        acceptDeletionBtn.textContent = 'Error: ' + e.message;
+                        acceptDeletionBtn.disabled = false;
+                      }
+                    });
+                  }
+                }
+                return;
+              }
+              
+              if (modal.style.display !== 'none') {
+                const diffHTML = renderDiff(j);
+                modalBody.innerHTML = diffHTML;
+                
+                // Wire "Change is OK" buttons after rendering
+                const acceptBtn = modalBody.querySelector('#acceptBaselineBtn');
+                const acceptBtnBinary = modalBody.querySelector('#acceptBaselineBtnBinary');
+                
+                function wireAcceptButton(btn, btnPath) {
+                  if (!btn) return;
+                  btn.addEventListener('click', async () => {
+                    const buttonPath = btnPath || decodeURIComponent(btn.getAttribute('data-path') || path);
+                    btn.disabled = true;
+                    btn.textContent = 'Updating...';
+                    
+                    try {
+                      const resp = await fetch('/api/integrity/baseline/accept', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({ path: buttonPath })
+                      });
+                      const result = await resp.json();
+                      
+                      if (result.ok) {
+                        btn.textContent = 'Baseline Updated ✓';
+                        btn.style.background = 'var(--good)';
+                        
+                        // Reload targets to update status
+                        loadTargets();
+                        
+                        // Refresh Live Events to show updated status
+                        fetchData();
+                        
+                        // Close modal after a short delay
+                        setTimeout(() => {
+                          hideModal();
+                        }, 1500);
+                      } else {
+                        btn.textContent = 'Error: ' + (result.error || 'Failed');
+                        btn.disabled = false;
+                      }
+                    } catch (e) {
+                      btn.textContent = 'Error: ' + e.message;
+                      btn.disabled = false;
+                    }
+                  });
+                }
+                
+                if (acceptBtn) wireAcceptButton(acceptBtn, path);
+                if (acceptBtnBinary) wireAcceptButton(acceptBtnBinary, path);
+              }
+            } catch (e) {
+              if (modal.style.display !== 'none') {
+                modalBody.innerHTML = `
+                  <div style="padding:20px;">
+                    <div style="background:var(--bad); color:white; padding:12px; border-radius:8px; margin-bottom:16px;">
+                      <div style="font-weight:600; font-size:16px; margin-bottom:8px;">⚠️ Error Loading Diff</div>
+                      <div style="font-size:14px;">Failed to compute diff for this file.</div>
+                    </div>
+                    <div class="small muted">
+                      <p><b>Error:</b> ${esc(e.message || 'Unknown error')}</p>
+                      <p>This could happen if:</p>
+                      <ul style="margin:8px 0; padding-left:20px;">
+                        <li>The file was deleted or moved</li>
+                        <li>The baseline data is missing or corrupted</li>
+                        <li>There was a network error</li>
+                      </ul>
+                      <p style="margin-top:12px;">Try clicking "Retest" to regenerate the baseline, or check if the file still exists.</p>
+                    </div>
+                  </div>
+                `;
+              }
+            }
+          }
+          
+          // Load diff immediately
+          await loadDiff();
+          
+          // Set up automatic refresh every 5 seconds while modal is open
+          window.diffAutoRefreshInterval = setInterval(() => {
+            if (modal.style.display !== 'none' && window.currentDiffPath) {
+              loadDiff();
+            }
+          }, 5000);
         });
       });
 
       iTbody.querySelectorAll('button[data-act="rehash"]').forEach(btn => {
         btn.addEventListener('click', async () => {
           const path = decodeURIComponent(btn.getAttribute('data-path'));
-          const r = await fetch('/api/integrity/hash', {
-            method:'POST',
-            headers:{'Content-Type':'application/json'},
-            body: JSON.stringify({ path })
-          });
-          const j = await r.json();
-          alert((j.sha256 ? `SHA-256:\n${j.sha256}` : 'No hash') + (j.error ? `\n\nError: ${j.error}` : ''));
-          loadTargets();
+          btn.disabled = true;
+          const originalText = btn.textContent;
+          btn.textContent = 'Retesting...';
+          
+          try {
+            const r = await fetch('/api/integrity/hash', {
+              method:'POST',
+              headers:{'Content-Type':'application/json'},
+              body: JSON.stringify({ path })
+            });
+            const j = await r.json();
+            
+            // Show status result instead of just hash
+            if (j.last_result) {
+              const status = j.last_result;
+              if (status.toUpperCase().startsWith('OK')) {
+                alert(`File status: ${status}\n\nBaseline confirmed, no changes detected.`);
+              } else if (status.toUpperCase().startsWith('CHANGED')) {
+                alert(`File status: ${status}\n\nChanges detected. Click "View changes" to review.`);
+              } else if (j.error) {
+                alert(`Error: ${j.error}`);
+              } else {
+                alert(`Status: ${status}`);
+              }
+            } else if (j.error) {
+              alert(`Error: ${j.error}`);
+            } else {
+              // Fallback to hash display
+              alert((j.sha256 ? `SHA-256:\n${j.sha256}` : 'No hash'));
+            }
+            
+            // Reload targets to refresh status
+            loadTargets();
+          } catch (e) {
+            alert(`Error: ${e.message}`);
+          } finally {
+            btn.disabled = false;
+            btn.textContent = originalText;
+          }
         });
       });
 
@@ -1222,8 +1983,8 @@
     // avoid duplicate timers if this script runs twice
     if (state.timer) clearInterval(state.timer);
 
-    // start the poller
-    state.timer = setInterval(tick, 2500);
+    // start the poller - faster polling for better status sync
+    state.timer = setInterval(tick, 1500);
 
     // clean up the timer when leaving the page
     window.addEventListener('beforeunload', () => { if (state.timer) clearInterval(state.timer); });

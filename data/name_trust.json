@@ -48,8 +48,8 @@
   "powerpnt.exe": ["trusted", "popular", 0.95],
   "notepad.exe": ["trusted", "utility", 0.90],
   "calc.exe": ["trusted", "utility", 0.90],
-  "cmd.exe": ["trusted", "utility", 0.85],
-  "powershell.exe": ["trusted", "utility", 0.85],
+  "cmd.exe": ["trusted", "utility", 0.70],
+  "powershell.exe": ["trusted", "utility", 0.65],
   "regedit.exe": ["trusted", "utility", 0.85],
 
 
@@ -78,14 +78,14 @@
   "androidstudio.exe": ["trusted", "utility", 0.90],
   "git.exe": ["trusted", "utility", 0.90],
   "githubdesktop.exe": ["trusted", "utility", 0.90],
-  "putty.exe": ["trusted", "utility", 0.90],
+  "putty.exe": ["trusted", "utility", 0.80],
   "docker desktop.exe": ["trusted", "utility", 0.90],
 
 
   "vlc.exe": ["trusted", "popular", 0.90],
   "spotify.exe": ["trusted", "popular", 0.90],
-  "obs64.exe": ["trusted", "popular", 0.90],
-  "audacity.exe": ["trusted", "popular", 0.90],
+  "obs64.exe": ["trusted", "popular", 0.82],
+  "audacity.exe": ["trusted", "popular", 0.85],
   "photoshop.exe": ["trusted", "popular", 0.90],
   "adobe premiere pro.exe": ["trusted", "popular", 0.90],
   "acrobat.exe": ["trusted", "popular", 0.90],
@@ -111,10 +111,93 @@
   "settings.exe": ["trusted", "utility", 0.90],
 
  
-  "wscript.exe": ["trusted", "utility", 0.85],
-  "cscript.exe": ["trusted", "utility", 0.85],
-  "rundll32.exe": ["trusted", "utility", 0.85],
+  "wscript.exe": ["trusted", "utility", 0.55],
+  "cscript.exe": ["trusted", "utility", 0.55],
+  "rundll32.exe": ["trusted", "utility", 0.65],
   "taskeng.exe": ["trusted", "utility", 0.85],
   "cleanmgr.exe": ["trusted", "utility", 0.85],
-  "defrag.exe": ["trusted", "utility", 0.85]
+  "defrag.exe": ["trusted", "utility", 0.85],
+
+  "cursor.exe": ["trusted", "dev_tool", 0.93],
+
+  "wallpaper32.exe": ["trusted", "popular_app", 0.87],
+  "wallpaper64.exe": ["trusted", "popular_app", 0.87],
+  "wallpaperservice32.exe": ["trusted", "utility", 0.86],
+  "wallpaperservice64.exe": ["trusted", "utility", 0.86],
+
+  "windhawk.exe": ["trusted", "utility", 0.88],
+
+  "acrobatnotificationclient.exe": ["trusted", "popular_app", 0.90],
+  "adobecollabsync.exe": ["trusted", "popular_app", 0.82],
+  "adobeupdateservice.exe": ["trusted", "popular_app", 0.90],
+
+  "applemobiledeviceservice.exe": ["trusted", "utility", 0.90],
+  "mdnsresponder.exe": ["trusted", "utility", 0.75],
+
+  "omencap.exe": ["trusted", "utility", 0.82],
+  "omengaminghub.exe": ["trusted", "utility", 0.85],
+  "omenkeyboardremaplauncher.exe": ["trusted", "utility", 0.82],
+  "omenkeyboardremapper.exe": ["trusted", "utility", 0.82],
+
+  "lenovovantageservice.exe": ["trusted", "utility", 0.82],
+  "lenovoutilityservice.exe": ["trusted", "utility", 0.82],
+  "lenovoservicebridgeaddin.exe": ["trusted", "utility", 0.82],
+  "fnHotkeyUtility.exe": ["trusted", "system", 0.90],
+
+  "chromium.exe": ["trusted", "popular", 0.90],
+  "safari.exe": ["trusted", "popular", 0.95],
+
+  "goggalaxy.exe": ["trusted", "popular", 0.82],
+  "eaapp.exe": ["trusted", "popular", 0.85],
+  "rockstarservice.exe": ["trusted", "popular", 0.90],
+  "bethesdanetlauncher.exe": ["trusted", "popular", 0.87],
+
+  "teamspeak.exe": ["trusted", "popular", 0.88],
+  "mumble.exe": ["trusted", "popular", 0.83],
+  "element.exe": ["trusted", "popular", 0.85],
+  "telegram.exe": ["trusted", "popular", 0.90],
+  "whatsapp.exe": ["trusted", "popular", 0.90],
+
+  "zoomus.exe": ["trusted", "popular", 0.89],
+  "anydesk.exe": ["trusted", "utility", 0.60],
+  "teamviewer.exe": ["trusted", "utility", 0.60],
+  "rustdesk.exe": ["trusted", "utility", 0.60],
+  "jamovi.exe": ["trusted", "utility", 0.82],
+
+
+  "avp.exe": ["trusted", "security", 0.95],
+  "avgui.exe": ["trusted", "security", 0.88],
+  "avastui.exe": ["trusted", "security", 0.88],
+  "msseces.exe": ["trusted", "security", 0.95],
+  "esetservice.exe": ["trusted", "security", 0.92],
+  "bdservicehost.exe": ["trusted", "security", 0.92],
+
+  "vmware.exe": ["trusted", "dev_tool", 0.90],
+  "vmware-vmx.exe": ["trusted", "dev_tool", 0.90],
+  "vboxsvc.exe": ["trusted", "dev_tool", 0.90],
+  "vboxheadless.exe": ["trusted", "dev_tool", 0.90],
+  "qemu-system-x86_64.exe": ["trusted", "dev_tool", 0.90],
+
+
+  "icue.exe": ["trusted", "utility", 0.88],
+  "signalrgb.exe": ["trusted", "utility", 0.88],
+  "razer synapse.exe": ["trusted", "utility", 0.88],
+  "armourycrate.exe": ["trusted", "utility", 0.88],
+  "dragoncenter.exe": ["trusted", "utility", 0.86],
+  "lghub.exe": ["trusted", "utility", 0.86],
+
+  "hpscan.exe": ["trusted", "utility", 0.88],
+  "hpprint.exe": ["trusted", "utility", 0.88],
+  "epsonstatusmonitor.exe": ["trusted", "utility", 0.87],
+  "canonij.exe": ["trusted", "utility", 0.87],
+
+  "blender.exe": ["trusted", "popular", 0.90],
+  "krita.exe": ["trusted", "popular", 0.88],
+  "davinciresolve.exe": ["trusted", "popular", 0.90],
+  "lightroom.exe": ["trusted", "popular", 0.90],
+
+  "riotclientanticheat.exe": ["trusted", "driver", 0.75],
+  "vanguard.exe": ["trusted", "driver", 0.70],
+  "battlEye.exe": ["trusted", "driver", 0.72],
+  "eaclauncher.exe": ["trusted", "driver", 0.72]
 }

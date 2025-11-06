@@ -10,6 +10,7 @@ psutil==5.9.8
 pyinstaller==6.6.0
 pystray==0.19.5
 pillow==10.3.0
+openpyxl==3.1.5
 
 # --- Optional utilities ---
 # (used by algorithm module and for integrity scanning)
