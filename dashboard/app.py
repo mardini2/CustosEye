@@ -2888,11 +2888,11 @@ def build_app(event_bus) -> Flask:
         try:
             if sys.platform != "win32":
                 return jsonify({"error": "browse supported on Windows only"}), 400
-            
+
             # Enable DPI awareness for crisp rendering (must be done before creating any windows)
             try:
                 import ctypes
-                
+
                 # Try to set Per-Monitor DPI awareness (Windows 10+)
                 try:
                     # PROCESS_PER_MONITOR_DPI_AWARE = 2
@@ -2906,14 +2906,14 @@ def build_app(event_bus) -> Flask:
                         pass  # Older Windows or already set
             except Exception:
                 pass  # Non-critical, continue without DPI awareness
-            
+
             # late imports to avoid importing Tk on non-Windows
             import tkinter as _tk  # type: ignore
             from tkinter import filedialog as _fd  # type: ignore
 
             root = _tk.Tk()
             root.withdraw()
-            
+
             # Set app icon for dialog title bar and taskbar
             icon_path = BASE_DIR / "assets" / "favicon.ico"
             if icon_path.exists():
@@ -2921,10 +2921,10 @@ def build_app(event_bus) -> Flask:
                     root.iconbitmap(str(icon_path))
                 except Exception:
                     pass  # Non-critical if icon fails to load
-            
+
             root.attributes("-topmost", True)  # bring dialog front
             root.title("CustosEye - Select File")  # Set window title
-            
+
             sel = _fd.askopenfilename(title="Select a file to watch")
             try:
                 root.destroy()
