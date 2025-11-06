@@ -160,7 +160,7 @@ def main() -> None:
     integ = IntegrityChecker(
         targets_path=data_path("data/integrity_targets.json"),
         publish=bus.publish,
-        interval_sec=5.0,
+        interval_sec=2.0,  # Check every 2 seconds for faster detection
     )
     mon = ProcessMonitor(publish=bus.publish)
     net = NetworkSnapshot(publish=bus.publish)
