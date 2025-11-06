@@ -53,9 +53,21 @@ class IntegrityChecker:
         if not os.path.exists(self.targets_path):
             self.targets = []
             return
-        with open(self.targets_path, encoding="utf-8") as f:
-            data = json.load(f)
-        self.targets = data if isinstance(data, list) else []
+        try:
+            with open(self.targets_path, encoding="utf-8") as f:
+                content = f.read().strip()
+                if not content:
+                    # Empty file - treat as empty list
+                    self.targets = []
+                    return
+                data = json.loads(content)
+            self.targets = data if isinstance(data, list) else []
+        except (json.JSONDecodeError, ValueError):
+            # Invalid JSON - treat as empty list
+            self.targets = []
+        except Exception:
+            # Any other error - treat as empty list
+            self.targets = []
 
     @staticmethod
     def _sha256(path: str) -> str:
@@ -87,6 +99,8 @@ class IntegrityChecker:
     def run(self) -> None:
         """Main loop: check each file's integrity at regular intervals and emit only on change."""
         while True:
+            # Reload targets on each iteration to pick up changes
+            self._load_targets()
             for entry in self.targets:
                 raw_path = entry.get("path", "")
                 expected = entry.get("sha256", "").lower()
@@ -103,8 +117,8 @@ class IntegrityChecker:
                         "missing",
                         {
                             "source": "integrity",
-                            "level": "warning",
-                            "reason": f"File missing: {path}",
+                            "level": "critical",  # Changed to critical for deletion
+                            "reason": f"File deleted or missing: {path}",
                             "path": path,
                         },
                     )
@@ -113,29 +127,49 @@ class IntegrityChecker:
                 try:
                     actual = self._sha256(path).lower()
                     if actual != expected:
+                        # Emit single combined event message
                         self._emit_if_changed(
                             path,
                             "mismatch",
                             {
                                 "source": "integrity",
                                 "level": "critical",
-                                "reason": "Hash mismatch",
+                                "reason": "File content changed (Hash changed)",
                                 "path": path,
                                 "expected": expected,
                                 "actual": actual,
                             },
                         )
                     else:
-                        self._emit_if_changed(
-                            path,
-                            "ok",
-                            {
-                                "source": "integrity",
-                                "level": "info",
-                                "reason": "Hash verified",
-                                "path": path,
-                            },
-                        )
+                        # When hash matches, update existing CRITICAL entry instead of creating new INFO event
+                        # This happens after user marks change as safe (baseline updated, causing mismatch->ok transition)
+                        prev_status = self._last_status.get(path)
+                        if prev_status == "mismatch":
+                            # Transitioning from mismatch to ok - update existing CRITICAL entry
+                            # Emit CRITICAL event with "Hash verified" reason (will be updated in-place by backend)
+                            self._emit_if_changed(
+                                path,
+                                "ok",
+                                {
+                                    "source": "integrity",
+                                    "level": "critical",  # Keep as CRITICAL, not INFO
+                                    "reason": "Hash verified",  # Will be updated to "✔ Hash verified" in green
+                                    "path": path,
+                                    "update_existing": True,  # Flag to update existing CRITICAL entry
+                                },
+                            )
+                        else:
+                            # Transitioning from missing/noaccess/error to ok - emit normal event
+                            self._emit_if_changed(
+                                path,
+                                "ok",
+                                {
+                                    "source": "integrity",
+                                    "level": "info",
+                                    "reason": "Hash verified",
+                                    "path": path,
+                                },
+                            )
                 except PermissionError:
                     self._emit_if_changed(
                         path,

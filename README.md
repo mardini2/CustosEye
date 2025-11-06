@@ -22,8 +22,10 @@ The dashboard presents this data in real time with filters, search, and export o
 ## Quick start
 
 ```bash
-# (Optional) Create and activate a venv
+# Create and activate a venv
 python -m venv .venv
+# If the above gives you issues due to python, try:
+py -3.11 -m venv .venv  
 . .venv/Scripts/activate
 
 # Install all dependencies
