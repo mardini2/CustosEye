@@ -35,7 +35,9 @@ def print_banner() -> None:
     # print a colorful ASCII art banner with the CustosEye logo
     # use ANSI color codes if available (Windows via colorama), otherwise plain text
     try:
-        from colorama import init as _colorama_init  # try to import colorama for Windows ANSI support
+        from colorama import (
+            init as _colorama_init,
+        )  # try to import colorama for Windows ANSI support
 
         _colorama_init()  # enable ANSI color codes on Windows terminals
         cyan = "\x1b[36m"  # ANSI code for cyan color
@@ -46,7 +48,9 @@ def print_banner() -> None:
         reset = "\x1b[0m"  # ANSI code to reset all formatting
         red = "\x1b[31m"  # ANSI code for red color
     except Exception:  # if colorama is not available or import fails
-        cyan = blue = mag = red = dim = bold = reset = ""  # use empty strings so banner still works without colors
+        cyan = blue = mag = red = dim = bold = reset = (
+            ""  # use empty strings so banner still works without colors
+        )
 
     eye = rf"""
 {dim}┌────────────────────────────────────────────────────────────┐{reset}
@@ -100,9 +104,13 @@ except Exception:  # if pystray or PIL cannot be imported
 
 def _resolve_base_dir() -> Path:
     # figure out the base directory of the application
-    if getattr(sys, "frozen", False):  # if we are running as a packaged executable (like PyInstaller)
+    if getattr(
+        sys, "frozen", False
+    ):  # if we are running as a packaged executable (like PyInstaller)
         return Path(sys.executable).parent  # return the directory where the executable is located
-    return Path(__file__).resolve().parents[1]  # otherwise return the parent of the parent directory (project root)
+    return (
+        Path(__file__).resolve().parents[1]
+    )  # otherwise return the parent of the parent directory (project root)
 
 
 # fan-out EventBus
@@ -116,7 +124,9 @@ class EventBus:
     def publish(self, event: dict[str, Any]) -> None:
         # send an event to all subscribers (fan-out pattern)
         with self._lock:  # acquire lock to safely read the subscribers list
-            subs = list(self._subs)  # create a copy of the list so we can iterate without holding the lock
+            subs = list(
+                self._subs
+            )  # create a copy of the list so we can iterate without holding the lock
         for q in subs:  # loop through each subscriber queue
             try:
                 q.put_nowait(event)  # try to put the event in the queue without blocking
@@ -133,7 +143,9 @@ class EventBus:
             # generator function that yields events from the queue
             while True:  # loop forever
                 try:
-                    yield q.get(timeout=0.5)  # wait up to 0.5 seconds for an event, yield it if found
+                    yield q.get(
+                        timeout=0.5
+                    )  # wait up to 0.5 seconds for an event, yield it if found
                 except queue.Empty:  # if no event arrived within the timeout
                     yield None  # yield None to keep the iterator alive
 
@@ -144,10 +156,14 @@ def main() -> None:
     # main entry point that sets up and starts all components
     parser = argparse.ArgumentParser(description="CustosEye")  # create argument parser
     parser.add_argument(
-        "--no-open", action="store_true", help="do not open the dashboard in a browser"  # flag to skip opening browser
+        "--no-open",
+        action="store_true",
+        help="do not open the dashboard in a browser",  # flag to skip opening browser
     )
     parser.add_argument(
-        "--tray", action="store_true", help="show a system tray icon (if available)"  # flag to enable system tray
+        "--tray",
+        action="store_true",
+        help="show a system tray icon (if available)",  # flag to enable system tray
     )
     args = parser.parse_args()  # parse command line arguments
 
@@ -155,7 +171,9 @@ def main() -> None:
 
     def data_path(rel: str) -> str:
         # helper function to resolve relative paths to absolute paths
-        return str((BASE_DIR / rel).resolve())  # combine base dir with relative path and resolve to absolute
+        return str(
+            (BASE_DIR / rel).resolve()
+        )  # combine base dir with relative path and resolve to absolute
 
     # build the fan-out bus
     bus = EventBus()  # create the event bus that will distribute events to all subscribers
@@ -170,11 +188,15 @@ def main() -> None:
     net = NetworkSnapshot(publish=bus.publish)  # create network scanner that publishes to the bus
 
     for target in (mon.run, net.run, integ.run):  # loop through each agent's run method
-        threading.Thread(target=target, daemon=True).start()  # start each agent in a separate daemon thread
+        threading.Thread(
+            target=target, daemon=True
+        ).start()  # start each agent in a separate daemon thread
 
     # dashboard
     if HAVE_DASHBOARD:  # if dashboard module is available
-        threading.Thread(target=run_dashboard, kwargs={"event_bus": bus}, daemon=True).start()  # start dashboard in a daemon thread
+        threading.Thread(
+            target=run_dashboard, kwargs={"event_bus": bus}, daemon=True
+        ).start()  # start dashboard in a daemon thread
 
         if not args.no_open:  # if user did not specify --no-open flag
 
@@ -183,11 +205,15 @@ def main() -> None:
                 # short delay so the server is listening before we try to open it
                 time.sleep(0.8)  # wait 0.8 seconds for server to start
                 try:
-                    webbrowser.open("http://127.0.0.1:8765")  # open the dashboard URL in the default browser
+                    webbrowser.open(
+                        "http://127.0.0.1:8765"
+                    )  # open the dashboard URL in the default browser
                 except Exception:  # if opening browser fails
                     pass  # silently fail, user can open manually
 
-            threading.Thread(target=_open_browser, name="open-browser", daemon=True).start()  # start browser opener in a thread
+            threading.Thread(
+                target=_open_browser, name="open-browser", daemon=True
+            ).start()  # start browser opener in a thread
 
     # tray (optional)
     if args.tray and HAVE_TRAY:  # if user requested tray and tray support is available
@@ -217,7 +243,9 @@ def main() -> None:
         )
         icon = pystray.Icon("CustosEye", img, "CustosEye")  # create the tray icon
         icon.menu = menu  # attach the menu to the icon
-        threading.Thread(target=icon.run, name="tray", daemon=True).start()  # start the tray icon in a thread
+        threading.Thread(
+            target=icon.run, name="tray", daemon=True
+        ).start()  # start the tray icon in a thread
 
     # minimal terminal output (no live stream)
     print_banner()  # print the welcome banner

@@ -33,9 +33,13 @@ def get_signature_info(path: str) -> dict[str, Any]:
             "-Command",  # run a command instead of a script
             "$s=Get-AuthenticodeSignature -FilePath '{}' ; "
             "$o=@{{ valid=($s.Status -eq 'Valid'); subject=($s.SignerCertificate.Subject) }} ; "
-            "ConvertTo-Json -Compress -InputObject $o".format(p.replace("'", "''")),  # PowerShell command that gets signature, checks if valid, extracts subject, and converts to JSON (escape single quotes in path)
+            "ConvertTo-Json -Compress -InputObject $o".format(
+                p.replace("'", "''")
+            ),  # PowerShell command that gets signature, checks if valid, extracts subject, and converts to JSON (escape single quotes in path)
         ]
-        proc = subprocess.run(ps, capture_output=True, text=True, timeout=5)  # run PowerShell command, capture output, wait max 5 seconds
+        proc = subprocess.run(
+            ps, capture_output=True, text=True, timeout=5
+        )  # run PowerShell command, capture output, wait max 5 seconds
         if proc.returncode != 0:  # if the command failed
             return {}  # return empty dict
         out = proc.stdout.strip()  # get the output and remove whitespace
@@ -46,7 +50,9 @@ def get_signature_info(path: str) -> dict[str, Any]:
             return {}  # if not, return empty dict
         return {
             "valid": bool(data.get("valid", False)),  # convert to boolean, default to False
-            "subject": str(data.get("subject") or "")[:512],  # get subject string, limit to 512 characters to avoid huge values
+            "subject": str(data.get("subject") or "")[
+                :512
+            ],  # get subject string, limit to 512 characters to avoid huge values
         }
     except Exception:  # if anything goes wrong (timeout, JSON parse error, etc)
         return {}  # return empty dict instead of crashing

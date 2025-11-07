@@ -26,9 +26,15 @@ body.page {
 
 /* add a slim royal-purple stripe at the very top for polish */
 .top-stripe {
+  display: block;
+  width: 100%;
   height: 3px;
+  min-height: 3px;
+  flex-shrink: 0;
   background: linear-gradient(90deg, #6d28d9, #8b5cf6, #6d28d9);
   opacity: 0.9;
+  margin: 0;
+  padding: 0;
 }
 
 /* content wrapper: main gets flex:1 so footer is pushed down */
@@ -60,6 +66,176 @@ body.page {
 /* brand typography (title and tagline) */
 .brand h1 { font-size: 1.4rem; font-weight: 700; }
 .brand .tagline { color: #a8b1c0; font-size: 0.95rem; }
+
+/* ===== navigation ===== */
+/* main navigation links in header (appears next to logo/brand) */
+.topbar-nav {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+  flex-wrap: wrap;
+}
+
+.topbar-nav a {
+  color: #c8d0dd;
+  text-decoration: none;
+  font-size: 1.05rem;
+  padding: 8px 16px;
+  border-radius: 8px;
+  transition: background 120ms ease, color 120ms ease;
+}
+
+.topbar-nav a:hover {
+  background: rgba(255,255,255,0.05);
+  color: #e5e7eb;
+}
+
+/* current page indicator (active nav link) */
+.topbar-nav a[aria-current="page"] {
+  color: #8b5cf6;
+  background: rgba(139, 92, 246, 0.1);
+  font-weight: 600;
+}
+
+/* separator between nav links (visual divider) */
+.topbar-nav .nav-sep {
+  color: rgba(255,255,255,0.2);
+  padding: 0 4px;
+}
+
+/* ===== dropdown menu ===== */
+/* container for nav item with submenu (About dropdown) */
+.nav-has-submenu {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+/* align About button with other nav items (fix vertical alignment) */
+/* make About button non-clickable (hover only, no click navigation) */
+#about-menu-button {
+  display: inline-flex;
+  align-items: center;
+  line-height: 1.5;
+  padding-top: 8px;
+  padding-bottom: 8px;
+  cursor: default;
+}
+
+/* submenu container: hidden by default, centered under About with minimal gap */
+.nav-submenu {
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%) translateY(4px);
+  margin-top: 9px;
+  background: rgba(17, 24, 39, 0.98);
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 8px;
+  padding: 4px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+  z-index: 1000;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 220ms ease, transform 220ms ease;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 180px;
+}
+
+/* show submenu when open (via class or hover/focus) */
+/* class-based visibility takes priority to keep submenu open during grace period */
+.nav-has-submenu.nav-submenu-open .nav-submenu {
+  opacity: 1 !important;
+  pointer-events: auto !important;
+  transform: translateX(-50%) translateY(0) !important;
+}
+
+/* hover and focus also show submenu */
+.nav-has-submenu:hover .nav-submenu,
+.nav-has-submenu:focus-within .nav-submenu {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateX(-50%) translateY(0);
+}
+
+/* prevent hover from opening submenu immediately after click */
+.nav-has-submenu.click-just-happened:hover .nav-submenu,
+.nav-has-submenu.click-just-happened:focus-within .nav-submenu {
+  opacity: 0 !important;
+  pointer-events: none !important;
+  transform: translateX(-50%) translateY(4px) !important;
+}
+
+/* submenu links */
+.nav-submenu a {
+  display: block;
+  padding: 10px 16px;
+  color: #c8d0dd;
+  text-decoration: none;
+  font-size: 0.95rem;
+  white-space: nowrap;
+  transition: background 120ms ease, color 120ms ease;
+  border-radius: 6px;
+}
+
+.nav-submenu a:hover,
+.nav-submenu a:focus {
+  background: rgba(255,255,255,0.08);
+  color: #e5e7eb;
+}
+
+/* active submenu item (current page) */
+.nav-submenu a[aria-current="page"] {
+  color: #8b5cf6;
+  background: rgba(139, 92, 246, 0.15);
+  font-weight: 600;
+}
+
+/* parent link stays highlighted when on submenu pages */
+.nav-has-submenu > a[aria-current="page"],
+.nav-has-submenu:has(.nav-submenu a[aria-current="page"]) > a {
+  color: #8b5cf6;
+  background: rgba(139, 92, 246, 0.1);
+  font-weight: 600;
+}
+
+/* arrow indicator on About button (larger size for better visibility) */
+#about-menu-button::after {
+  content: "▾";
+  margin-left: 6px;
+  font-size: 1.50em;
+  vertical-align: middle;
+  display: inline-block;
+  transition: transform 200ms ease;
+  line-height: 1;
+  align-self: center;
+}
+
+/* flip arrow up when submenu is open */
+.nav-has-submenu.nav-submenu-open #about-menu-button::after,
+#about-menu-button[aria-expanded="true"]::after {
+  content: "▴";
+}
+
+/* responsive: stack nav on mobile */
+@media (max-width: 768px) {
+  .topbar {
+    flex-wrap: wrap;
+  }
+  .topbar-nav {
+    width: 100%;
+    margin-left: 0;
+    margin-top: 12px;
+    padding-top: 12px;
+    border-top: 1px solid rgba(255,255,255,0.05);
+  }
+  .topbar-nav .nav-sep {
+    display: none; /* hide separators on mobile for cleaner look */
+  }
+}
 
 /* ===== cards & visual style ===== */
 /* card component: dark background with subtle borders and purple glow edge */
@@ -138,8 +314,15 @@ body.page {
 }
 /* footer navigation links */
 .foot-nav { display: flex; gap: 16px; }
-.foot-nav a { color: #c8d0dd; text-decoration: none; }
+.foot-nav a { color: #c8d0dd; text-decoration: none; font-size: 0.95rem; }
 .foot-nav a:hover { text-decoration: underline; }
+
+/* active footer item (when on cookies/privacy/license pages) */
+.foot-nav span[aria-current="page"] {
+  color: #8b5cf6 !important;
+  font-weight: 600;
+  font-size: 0.95rem;
+}
 
 /* cookie banner text styling (legacy, kept for compatibility) */
 .cookie-text { color: #d1d7e4; line-height: 1.5; }
@@ -155,6 +338,16 @@ body.page {
   outline: 2px solid #93c5fd;  /* soft blue ring */
   outline-offset: 2px;
   box-shadow: 0 0 0 2px rgba(147,197,253,0.35);
+}
+
+/* nav links use white box focus style for keyboard only (not mouse clicks) */
+.topbar-nav a:focus-visible,
+.nav-submenu a:focus-visible,
+.user-is-tabbing .topbar-nav a:focus,
+.user-is-tabbing .nav-submenu a:focus {
+  outline: 2px solid #ffffff !important;
+  outline-offset: 2px;
+  box-shadow: 0 0 0 2px rgba(255,255,255,0.5) !important;
 }
 
 /* ===== reduced motion ===== */

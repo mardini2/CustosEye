@@ -1,0 +1,205 @@
+<!--
+  goal: code of ethics page for CustosEye website. outlines principles for how CustosEye
+        is intended to be used, focusing on transparency, privacy, security, and responsible
+        use. kept straightforward and honest, avoiding marketing tone.
+-->
+<!doctype html>
+<html lang="en">
+
+<head>
+  <!-- standard metadata -->
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+
+  <!-- title -->
+  <title>Code of Ethics - CustosEye</title>
+
+  <!-- SEO and structured metadata -->
+  <meta name="description" content="CustosEye code of ethics - principles for transparency, privacy, security, and responsible use of local-first security monitoring." />
+  <meta name="robots" content="index, follow" />
+  <link rel="canonical" href="https://www.custoseye.com/ethics.html" />
+
+  <!-- Open Graph (social preview) -->
+  <meta property="og:title" content="Code of Ethics - CustosEye" />
+  <meta property="og:description" content="CustosEye code of ethics - principles for transparency, privacy, and responsible use." />
+  <meta property="og:url" content="https://www.custoseye.com/ethics.html" />
+  <meta property="og:type" content="website" />
+  <meta property="og:image" content="https://www.custoseye.com/assets/favicon.png" />
+
+  <!-- Favicon -->
+  <link rel="icon" href="https://www.custoseye.com/assets/favicon.png" type="image/png" />
+  <link rel="icon" href="assets/favicon.ico?v=2" sizes="any" />
+
+  <!-- shared styles -->
+  <link rel="stylesheet" href="styles.css?v=2" />
+  <link rel="preload" href="styles.css?v=2" as="style" />
+</head>
+
+<body class="page">
+  <!-- a slim royal-purple stripe for subtle branding -->
+  <div class="top-stripe" aria-hidden="true"></div>
+
+  <!-- header: logo + brand + navigation -->
+  <header class="topbar">
+    <!-- logo links home -->
+    <a class="home-link" href="/" aria-label="Go to homepage">
+      <img class="logo" src="assets/favicon.png" alt="CustosEye logo" />
+    </a>
+
+    <!-- brand (title + tagline) links home -->
+    <a class="home-link brand" href="/" aria-label="Go to homepage">
+      <h1>CustosEye</h1>
+      <p class="tagline">Your Third Eye</p>
+    </a>
+
+    <!-- main navigation: primary site sections only -->
+    <nav class="topbar-nav" role="menubar" aria-label="Main navigation">
+      <a href="index.html" role="menuitem">Home</a>
+      <span class="nav-sep">|</span>
+      <div class="nav-has-submenu">
+        <a href="#" role="menuitem" aria-haspopup="true" aria-expanded="false" id="about-menu-button" tabindex="0">About</a>
+        <div class="nav-submenu" role="menu" aria-labelledby="about-menu-button">
+          <a href="about.html" role="menuitem">About</a>
+          <a href="methodology.html" role="menuitem">Methodology</a>
+          <a href="ethics.html" role="menuitem" aria-current="page">Code of Ethics</a>
+        </div>
+      </div>
+      <span class="nav-sep">|</span>
+      <a href="download.html" role="menuitem">Downloads</a>
+      <span class="nav-sep">|</span>
+      <a href="documentation.html" role="menuitem">Documentation</a>
+    </nav>
+  </header>
+
+  <!-- main content -->
+  <main class="wrap">
+    <!-- code of ethics section -->
+    <section class="card">
+      <h2 style="margin-bottom: 16px">Code of Ethics</h2>
+
+      <p style="margin-bottom: 16px; line-height: 1.6;">
+        This page outlines principles for how CustosEye is intended to be used. These principles
+        reflect our commitment to transparency, privacy, security, and responsible use.
+      </p>
+
+      <h3 style="margin-top: 24px; margin-bottom: 12px; font-size: 1.2rem;">Transparency About Data Usage</h3>
+      <p style="margin-bottom: 16px; line-height: 1.6;">
+        CustosEye is designed to be transparent about what data it collects and how it uses that data.
+        The software monitors processes, network activity, and file integrity on your system, and all
+        of this data stays on your machine. Nothing is sent to external servers or cloud services.
+      </p>
+      <p style="margin-bottom: 16px; line-height: 1.6;">
+        For details on what data is collected and how it's processed, see our
+        <a href="methodology.html" style="color: #8b5cf6;">Methodology</a> page.
+      </p>
+
+      <h3 style="margin-top: 24px; margin-bottom: 12px; font-size: 1.2rem;">Respect for User Privacy and Consent</h3>
+      <p style="margin-bottom: 16px; line-height: 1.6;">
+        CustosEye runs entirely locally on your machine. You control what gets monitored, and you can
+        stop monitoring at any time by closing the application. The software doesn't require internet
+        access for core features, and it doesn't collect or transmit personal information.
+      </p>
+      <p style="margin-bottom: 16px; line-height: 1.6;">
+        For information about how this website handles privacy and consent, see our
+        <a href="privacy.html" style="color: #8b5cf6;">Privacy Policy</a> and
+        <a href="cookies.html" style="color: #8b5cf6;">Cookie Settings</a> page.
+      </p>
+
+      <h3 style="margin-top: 24px; margin-bottom: 12px; font-size: 1.2rem;">Security and Safe Handling of Data</h3>
+      <p style="margin-bottom: 16px; line-height: 1.6;">
+        CustosEye is designed with security in mind. All data collected by the software stays on your
+        machine and is stored in local files. The web dashboard runs locally on your computer and
+        doesn't expose data to external networks unless you explicitly configure it to do so.
+      </p>
+      <p style="margin-bottom: 16px; line-height: 1.6;">
+        File integrity monitoring uses SHA-256 hashing by default, which provides strong cryptographic
+        guarantees. The software doesn't store sensitive data in plain text, and configuration files
+        are stored in a local data directory that you control.
+      </p>
+
+      <h3 style="margin-top: 24px; margin-bottom: 12px; font-size: 1.2rem;">Avoiding Manipulative or Misleading Behavior</h3>
+      <p style="margin-bottom: 16px; line-height: 1.6;">
+        CustosEye is designed to be honest about what it does and what it doesn't do. The trust scoring
+        engine provides categorical verdicts (trusted, caution, suspicious, malicious, unknown) with
+        confidence scores and reasons, so you can understand why a process was classified a certain way.
+      </p>
+      <p style="margin-bottom: 16px; line-height: 1.6;">
+        The software doesn't use fear-based messaging or false positives to encourage upgrades or
+        subscriptions. It's a monitoring tool that presents information clearly and lets you make
+        your own decisions.
+      </p>
+
+      <h3 style="margin-top: 24px; margin-bottom: 12px; font-size: 1.2rem;">Responsible Use and Clear Disclosure of Limitations</h3>
+      <p style="margin-bottom: 16px; line-height: 1.6;">
+        CustosEye is a monitoring tool, not an active security product. It reports what it sees but
+        doesn't block or quarantine processes. The trust scoring engine uses heuristics and local
+        prevalence, not behavioral analysis or machine learning, so it may miss sophisticated threats
+        that don't match known patterns.
+      </p>
+      <p style="margin-bottom: 16px; line-height: 1.6;">
+        Important limitations to be aware of:
+      </p>
+      <ul style="margin-bottom: 16px; line-height: 1.8; padding-left: 20px;">
+        <li>CustosEye doesn't use threat intelligence feeds or cloud-based reputation services</li>
+        <li>Trust scores are based entirely on local signals and your system's history</li>
+        <li>The software may be less accurate on a fresh system or when new software is first installed</li>
+        <li>File integrity monitoring in "mtime+size" mode is faster but less secure than SHA-256 hashing</li>
+        <li>The software is currently designed for Windows systems</li>
+      </ul>
+      <p style="margin-bottom: 16px; line-height: 1.6;">
+        For more details on limitations and assumptions, see our
+        <a href="methodology.html" style="color: #8b5cf6;">Methodology</a> page.
+      </p>
+
+      <h3 style="margin-top: 24px; margin-bottom: 12px; font-size: 1.2rem;">Open Source and Community</h3>
+      <p style="margin-bottom: 16px; line-height: 1.6;">
+        CustosEye is open source software. The source code is available for review, and you can verify
+        that the software does what it claims to do. This transparency is a core part of our commitment
+        to trust and security.
+      </p>
+      <p style="margin-bottom: 16px; line-height: 1.6;">
+        If you find issues or have concerns about how CustosEye works, you can review the code,
+        report problems, or contribute improvements. For licensing information, see our
+        <a href="license.html" style="color: #8b5cf6;">License</a> page.
+      </p>
+
+      <h3 style="margin-top: 24px; margin-bottom: 12px; font-size: 1.2rem;">User Responsibility</h3>
+      <p style="margin-bottom: 16px; line-height: 1.6;">
+        CustosEye is a tool that provides visibility into your system, but it's your responsibility
+        to interpret the information and take appropriate action. The software doesn't make decisions
+        for you; it presents data and trust scores to help you understand what's happening on your system.
+      </p>
+      <p style="margin-bottom: 16px; line-height: 1.6;">
+        Use CustosEye responsibly and in accordance with applicable laws and regulations. The software
+        is intended for monitoring your own systems or systems you have explicit permission to monitor.
+      </p>
+    </section>
+  </main>
+
+  <!-- footer: legal and consent links -->
+  <footer class="foot">
+    <nav class="foot-nav">
+      <!-- cookie settings link goes to cookies page -->
+      <a href="cookies.html">Cookie Settings</a>
+      <a href="privacy.html">Privacy Policy</a>
+      <a href="license.html">License</a>
+    </nav>
+    <small class="muted">© <span id="year"></span> CustosEye. All rights reserved.</small>
+  </footer>
+
+  <!-- set current year in footer -->
+  <script>
+    document.getElementById('year').textContent = new Date().getFullYear();
+  </script>
+
+  <!-- navigation accessibility and keyboard support -->
+  <script src="js/nav-accessibility.js?v=2"></script>
+
+  <!-- Cookie banner (shows once until a choice is stored) -->
+  <script src="js/consent.js?v=2"></script>
+
+  <!-- GA attaches only after consent -->
+  <script src="js/analytics-attach.js?v=2" defer></script>
+</body>
+</html>
+

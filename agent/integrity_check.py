@@ -5,7 +5,9 @@ reloads the target list from JSON on each check loop so changes take effect imme
 handles various file states: ok, missing, mismatch, noaccess, and error.
 """
 
-from __future__ import annotations  # lets us use string annotations like "IntegrityChecker" before the class is defined
+from __future__ import (
+    annotations,
+)  # lets us use string annotations like "IntegrityChecker" before the class is defined
 
 import hashlib  # for computing SHA256 hashes of files
 import json  # for reading the targets JSON file
@@ -28,7 +30,9 @@ class IntegrityChecker:
         :param publish: Callback for publishing alert events
         :param interval_sec: How often to recheck files (seconds)
         """
-        self.targets_path = targets_path  # where to find the JSON file with file paths and expected hashes
+        self.targets_path = (
+            targets_path  # where to find the JSON file with file paths and expected hashes
+        )
         self.publish = publish  # callback function to send events/alerts to
         self.interval = interval_sec  # how many seconds to wait between check cycles
         self.targets: list[dict[str, str]] = []  # list of target files to check, loaded from JSON
@@ -50,7 +54,9 @@ class IntegrityChecker:
                     self.targets = []  # no targets to monitor
                     return
                 data = json.loads(content)  # parse the JSON string into Python objects
-            self.targets = data if isinstance(data, list) else []  # make sure we got a list, otherwise use empty list
+            self.targets = (
+                data if isinstance(data, list) else []
+            )  # make sure we got a list, otherwise use empty list
         except (json.JSONDecodeError, ValueError):  # if the JSON is malformed
             # invalid JSON, so treat as empty list
             self.targets = []  # can't parse it, so no targets
@@ -63,7 +69,9 @@ class IntegrityChecker:
         """Compute SHA256 of a file (1 MB buffer for efficiency)."""
         h = hashlib.sha256()  # create a new SHA256 hash object
         with open(path, "rb") as f:  # open the file in binary read mode
-            for chunk in iter(lambda: f.read(1024 * 1024), b""):  # read 1MB chunks at a time until empty (more efficient for large files)
+            for chunk in iter(
+                lambda: f.read(1024 * 1024), b""
+            ):  # read 1MB chunks at a time until empty (more efficient for large files)
                 h.update(chunk)  # feed each chunk into the hash
         return h.hexdigest()  # return the final hash as a hex string
 
@@ -72,15 +80,21 @@ class IntegrityChecker:
         Normalize and expand paths so they work on any Windows system.
         Handles %ENVVARS%, ~, and mixed slashes.
         """
-        expanded = os.path.expandvars(os.path.expanduser(raw))  # expand ~ to home dir, then expand %ENVVARS% like %WINDIR%
-        normalized = str(pathlib.Path(expanded))  # convert to Path object then back to string to normalize slashes and resolve relative paths
+        expanded = os.path.expandvars(
+            os.path.expanduser(raw)
+        )  # expand ~ to home dir, then expand %ENVVARS% like %WINDIR%
+        normalized = str(
+            pathlib.Path(expanded)
+        )  # convert to Path object then back to string to normalize slashes and resolve relative paths
         return normalized  # return the final normalized absolute path
 
     def _emit_if_changed(self, path: str, status: str, payload: dict[str, Any]) -> None:
         """
         Publish the event only if the status for this path changed since the last check.
         """
-        prev = self._last_status.get(path)  # get the previous status for this file (None if first time checking)
+        prev = self._last_status.get(
+            path
+        )  # get the previous status for this file (None if first time checking)
         if prev != status:  # only do something if the status actually changed
             self._last_status[path] = status  # update our record of the status
             self.publish(payload)  # send the event/alert to the callback
@@ -92,7 +106,9 @@ class IntegrityChecker:
             self._load_targets()  # reload the JSON file so we can add/remove targets without restarting
             for entry in self.targets:  # loop through each file we're supposed to monitor
                 raw_path = entry.get("path", "")  # get the file path from the JSON entry
-                expected = entry.get("sha256", "").lower()  # get the expected hash (lowercase for comparison)
+                expected = entry.get(
+                    "sha256", ""
+                ).lower()  # get the expected hash (lowercase for comparison)
 
                 if not raw_path or not expected:  # skip this entry if path or hash is missing
                     continue
@@ -132,7 +148,9 @@ class IntegrityChecker:
                     else:  # hash matches - file is good
                         # when hash matches, update existing CRITICAL entry instead of creating new INFO event
                         # this happens after user marks change as safe (baseline updated, causing mismatch->ok transition)
-                        prev_status = self._last_status.get(path)  # check what the previous status was
+                        prev_status = self._last_status.get(
+                            path
+                        )  # check what the previous status was
                         if prev_status == "mismatch":  # if it was a mismatch before, now it's fixed
                             # transitioning from mismatch to ok - update existing CRITICAL entry
                             # emit CRITICAL event with "Hash verified" reason (will be updated in-place by backend)

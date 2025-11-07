@@ -39,7 +39,7 @@
   <!-- slim royal-purple stripe for polish -->
   <div class="top-stripe" aria-hidden="true"></div>
 
-  <!-- header: logo + brand both link home -->
+  <!-- header: logo + brand + navigation -->
   <header class="topbar">
     <!-- logo is a link back home -->
     <a class="home-link" href="/" aria-label="Go to homepage">
@@ -51,6 +51,24 @@
       <h1>CustosEye</h1>
       <p class="tagline">Your Third Eye</p>
     </a>
+
+    <!-- main navigation: primary site sections only -->
+    <nav class="topbar-nav" role="menubar" aria-label="Main navigation">
+      <a href="index.html" role="menuitem">Home</a>
+      <span class="nav-sep">|</span>
+      <div class="nav-has-submenu">
+        <a href="#" role="menuitem" aria-haspopup="true" aria-expanded="false" id="about-menu-button" tabindex="0">About</a>
+        <div class="nav-submenu" role="menu" aria-labelledby="about-menu-button">
+          <a href="about.html" role="menuitem">About</a>
+          <a href="methodology.html" role="menuitem">Methodology</a>
+          <a href="ethics.html" role="menuitem">Code of Ethics</a>
+        </div>
+      </div>
+      <span class="nav-sep">|</span>
+      <a href="download.html" role="menuitem">Downloads</a>
+      <span class="nav-sep">|</span>
+      <a href="documentation.html" role="menuitem">Documentation</a>
+    </nav>
   </header>
 
   <!-- main content -->
@@ -64,12 +82,10 @@
         Your choice helps us provide a better site experience. You can change this any time below.
       </p>
 
-      <!-- two choices + a direct Home link -->
+      <!-- accept/decline buttons for cookie consent -->
       <div class="btn-row" style="margin-top:8px">
         <button class="btn btn-primary" id="accept-cookies">Accept cookies</button>
         <button class="btn btn-ghost" id="decline-cookies">Decline</button>
-        <!-- "Home" replaces "Cookie settings" when you're on this page -->
-        <a class="btn btn-ghost" href="/" rel="noopener">Back Home</a>
       </div>
 
       <!-- where we reflect the current stored state (shows "accepted", "declined", or "no choice") -->
@@ -77,11 +93,13 @@
     </section>
   </main>
 
-  <!-- footer: show Home (not Cookie settings) on this page -->
+  <!-- footer: legal and consent links (cookie settings page shows cookie settings as selected, not a link) -->
   <footer class="foot">
     <nav class="foot-nav">
-      <a href="/" rel="noopener">Home</a>
-      <a href="license.html" rel="noopener">License</a>
+      <!-- cookie settings is shown as selected on this page (matches footer link style but not clickable) -->
+      <span style="color: #c8d0dd;" aria-current="page">Cookie Settings</span>
+      <a href="privacy.html">Privacy Policy</a>
+      <a href="license.html">License</a>
     </nav>
     <small class="muted">© <span id="year"></span> CustosEye. All rights reserved.</small>
   </footer>
@@ -102,23 +120,30 @@
         : 'Status: no choice stored yet';
     }
 
-    // Accept => store 'granted', notify any listeners, go home
+    // Accept => store 'granted', notify any listeners, update status
     document.getElementById('accept-cookies').addEventListener('click', () => {
       localStorage.setItem(KEY, 'granted');  // save acceptance to localStorage
       window.dispatchEvent(new Event('analytics:consent-granted'));  // fire event for analytics script
       setStatusText();  // update status display
-      window.location.href = '/'; // back to homepage
     });
 
-    // Decline => store 'denied', go home
+    // Decline => store 'denied', update status
     document.getElementById('decline-cookies').addEventListener('click', () => {
       localStorage.setItem(KEY, 'denied');  // save denial to localStorage
       setStatusText();  // update status display
-      window.location.href = '/'; // back to homepage
     });
 
     // show initial state when page loads
     setStatusText();
   </script>
+
+  <!-- navigation accessibility and keyboard support -->
+  <script src="js/nav-accessibility.js?v=2"></script>
+
+  <!-- Cookie banner (shows once until a choice is stored) -->
+  <script src="js/consent.js?v=2"></script>
+
+  <!-- GA attaches only after consent -->
+  <script src="js/analytics-attach.js?v=2" defer></script>
 </body>
 </html>

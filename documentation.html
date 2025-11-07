@@ -1,0 +1,256 @@
+<!--
+  goal: documentation page for CustosEye website. provides installation instructions, configuration
+        options, and example use cases. includes image placeholders for screenshots and diagrams.
+-->
+<!doctype html>
+<html lang="en">
+
+<head>
+  <!-- standard metadata -->
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+
+  <!-- title -->
+  <title>Documentation - CustosEye</title>
+
+  <!-- SEO and structured metadata -->
+  <meta name="description" content="CustosEye documentation - installation, configuration, and usage examples for local-first security monitoring." />
+  <meta name="robots" content="index, follow" />
+  <link rel="canonical" href="https://www.custoseye.com/documentation.html" />
+
+  <!-- Open Graph (social preview) -->
+  <meta property="og:title" content="Documentation - CustosEye" />
+  <meta property="og:description" content="CustosEye documentation - installation, configuration, and usage examples." />
+  <meta property="og:url" content="https://www.custoseye.com/documentation.html" />
+  <meta property="og:type" content="website" />
+  <meta property="og:image" content="https://www.custoseye.com/assets/favicon.png" />
+
+  <!-- Favicon -->
+  <link rel="icon" href="https://www.custoseye.com/assets/favicon.png" type="image/png" />
+  <link rel="icon" href="assets/favicon.ico?v=2" sizes="any" />
+
+  <!-- shared styles -->
+  <link rel="stylesheet" href="styles.css?v=2" />
+  <link rel="preload" href="styles.css?v=2" as="style" />
+</head>
+
+<body class="page">
+
+  <!-- a slim royal-purple stripe for subtle branding -->
+  <div class="top-stripe" aria-hidden="true"></div>
+
+  <!-- header: logo + brand + navigation -->
+  <header class="topbar">
+    <!-- logo links home -->
+    <a class="home-link" href="/" aria-label="Go to homepage">
+      <img class="logo" src="assets/favicon.png" alt="CustosEye logo" />
+    </a>
+
+    <!-- brand (title + tagline) links home -->
+    <a class="home-link brand" href="/" aria-label="Go to homepage">
+      <h1>CustosEye</h1>
+      <p class="tagline">Your Third Eye</p>
+    </a>
+
+    <!-- main navigation: primary site sections only -->
+    <nav class="topbar-nav" role="menubar" aria-label="Main navigation">
+      <a href="index.html" role="menuitem">Home</a>
+      <span class="nav-sep">|</span>
+      <div class="nav-has-submenu">
+        <a href="#" role="menuitem" aria-haspopup="true" aria-expanded="false" id="about-menu-button" tabindex="0">About</a>
+        <div class="nav-submenu" role="menu" aria-labelledby="about-menu-button">
+          <a href="about.html" role="menuitem">About</a>
+          <a href="methodology.html" role="menuitem">Methodology</a>
+          <a href="ethics.html" role="menuitem">Code of Ethics</a>
+        </div>
+      </div>
+      <span class="nav-sep">|</span>
+      <a href="download.html" role="menuitem">Downloads</a>
+      <span class="nav-sep">|</span>
+      <a href="documentation.html" role="menuitem" aria-current="page">Documentation</a>
+    </nav>
+  </header>
+
+  <!-- main content -->
+  <main class="wrap">
+    <!-- documentation outline -->
+    <section class="card" style="margin-bottom: 24px;">
+      <h2 class="hero-title" style="margin-bottom: 16px">Documentation</h2>
+      <p class="muted" style="margin-bottom: 12px;">
+        Quick reference for installing, configuring, and using CustosEye.
+      </p>
+      <nav aria-label="Documentation outline">
+        <ul style="list-style: none; padding-left: 0; line-height: 2;">
+          <li><a href="#install" style="color: #8b5cf6; text-decoration: none;">Install / Run</a></li>
+          <li><a href="#config" style="color: #8b5cf6; text-decoration: none;">Configuration Options</a></li>
+          <li><a href="#examples" style="color: #8b5cf6; text-decoration: none;">Examples / Use Cases</a></li>
+        </ul>
+      </nav>
+    </section>
+
+    <!-- install / run section -->
+    <section id="install" class="card" style="margin-bottom: 24px;">
+      <h2 style="margin-bottom: 16px">Install / Run</h2>
+
+      <h3 style="margin-top: 20px; margin-bottom: 12px; font-size: 1.1rem;">Prerequisites</h3>
+      <ul style="margin-bottom: 16px; line-height: 1.8; padding-left: 20px;">
+        <li>Windows 10 or later (64-bit)</li>
+        <li>No installation required—portable executable</li>
+        <li>Approx. 50MB disk space</li>
+      </ul>
+
+      <h3 style="margin-top: 20px; margin-bottom: 12px; font-size: 1.1rem;">Steps</h3>
+      <ol style="margin-bottom: 16px; line-height: 1.8; padding-left: 20px;">
+        <li>Download the latest release from the <a href="download.html" style="color: #8b5cf6;">Downloads page</a></li>
+        <li>Extract the ZIP file to a folder of your choice</li>
+        <li>Run <code style="background: rgba(0,0,0,0.3); padding: 2px 6px; border-radius: 4px;">CustosEye.exe</code></li>
+        <li>The web dashboard opens automatically in your browser (typically at <code style="background: rgba(0,0,0,0.3); padding: 2px 6px; border-radius: 4px;">http://localhost:5000</code>)</li>
+      </ol>
+
+      <!-- screenshot placeholder: dashboard on first run -->
+      <div style="margin-top: 24px; margin-bottom: 16px;">
+        <img src="assets/img/dashboard-first-run.png" 
+             alt="CustosEye dashboard on first run showing welcome screen" 
+             style="width: 100%; max-width: 800px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.1);" />
+        <p class="muted" style="margin-top: 8px; font-size: 0.85rem;">
+          Image: dashboard-first-run.png (1200x800px, 16:9 aspect ratio) - Dashboard on first run
+        </p>
+      </div>
+    </section>
+
+    <!-- configuration options section -->
+    <section id="config" class="card" style="margin-bottom: 24px;">
+      <h2 style="margin-bottom: 16px">Configuration Options</h2>
+      <p style="margin-bottom: 16px; line-height: 1.6;">
+        CustosEye uses a simple JSON configuration file. By default, settings are stored in <code style="background: rgba(0,0,0,0.3); padding: 2px 6px; border-radius: 4px;">data/config.json</code>.
+      </p>
+
+      <h3 style="margin-top: 20px; margin-bottom: 12px; font-size: 1.1rem;">Key Settings</h3>
+      <table style="width: 100%; border-collapse: collapse; margin-top: 12px;">
+        <thead>
+          <tr style="border-bottom: 1px solid rgba(255,255,255,0.1);">
+            <th style="text-align: left; padding: 8px 12px; font-weight: 600;">Key</th>
+            <th style="text-align: left; padding: 8px 12px; font-weight: 600;">Default</th>
+            <th style="text-align: left; padding: 8px 12px; font-weight: 600;">Description</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr style="border-bottom: 1px solid rgba(255,255,255,0.05);">
+            <td style="padding: 8px 12px;"><code style="background: rgba(0,0,0,0.3); padding: 2px 6px; border-radius: 4px;">port</code></td>
+            <td style="padding: 8px 12px;"><code style="background: rgba(0,0,0,0.3); padding: 2px 6px; border-radius: 4px;">5000</code></td>
+            <td style="padding: 8px 12px;">Web dashboard port</td>
+          </tr>
+          <tr style="border-bottom: 1px solid rgba(255,255,255,0.05);">
+            <td style="padding: 8px 12px;"><code style="background: rgba(0,0,0,0.3); padding: 2px 6px; border-radius: 4px;">auto_open_browser</code></td>
+            <td style="padding: 8px 12px;"><code style="background: rgba(0,0,0,0.3); padding: 2px 6px; border-radius: 4px;">true</code></td>
+            <td style="padding: 8px 12px;">Automatically open browser on startup</td>
+          </tr>
+          <tr style="border-bottom: 1px solid rgba(255,255,255,0.05);">
+            <td style="padding: 8px 12px;"><code style="background: rgba(0,0,0,0.3); padding: 2px 6px; border-radius: 4px;">scan_interval</code></td>
+            <td style="padding: 8px 12px;"><code style="background: rgba(0,0,0,0.3); padding: 2px 6px; border-radius: 4px;">5</code></td>
+            <td style="padding: 8px 12px;">Process scan interval in seconds</td>
+          </tr>
+          <tr style="border-bottom: 1px solid rgba(255,255,255,0.05);">
+            <td style="padding: 8px 12px;"><code style="background: rgba(0,0,0,0.3); padding: 2px 6px; border-radius: 4px;">enable_integrity</code></td>
+            <td style="padding: 8px 12px;"><code style="background: rgba(0,0,0,0.3); padding: 2px 6px; border-radius: 4px;">true</code></td>
+            <td style="padding: 8px 12px;">Enable file integrity monitoring</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <p style="margin-top: 16px; margin-bottom: 16px; line-height: 1.6; font-size: 0.9rem; color: #9aa3b2;">
+        Configuration file location: <code style="background: rgba(0,0,0,0.3); padding: 2px 6px; border-radius: 4px;">data/config.json</code>
+      </p>
+
+      <!-- screenshot placeholder: config file example -->
+      <div style="margin-top: 24px; margin-bottom: 16px;">
+        <img src="assets/img/config-example.png" 
+             alt="Example configuration file showing JSON structure" 
+             style="width: 100%; max-width: 700px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.1);" />
+        <p class="muted" style="margin-top: 8px; font-size: 0.85rem;">
+          Image: config-example.png (1000x600px, 5:3 aspect ratio) - Configuration file example
+        </p>
+      </div>
+    </section>
+
+    <!-- examples / use cases section -->
+    <section id="examples" class="card" style="margin-bottom: 24px;">
+      <h2 style="margin-bottom: 16px">Examples / Use Cases</h2>
+
+      <h3 style="margin-top: 20px; margin-bottom: 12px; font-size: 1.1rem;">File Integrity Monitoring</h3>
+      <p style="margin-bottom: 16px; line-height: 1.6;">
+        Monitor critical system files or configuration directories for unauthorized changes. CustosEye computes SHA256
+        hashes and alerts you when files are modified, deleted, or replaced.
+      </p>
+
+      <!-- screenshot placeholder: integrity monitoring -->
+      <div style="margin-top: 16px; margin-bottom: 24px;">
+        <img src="assets/img/integrity-monitoring.png" 
+             alt="File integrity monitoring dashboard showing file changes" 
+             style="width: 100%; max-width: 900px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.1);" />
+        <p class="muted" style="margin-top: 8px; font-size: 0.85rem;">
+          Image: integrity-monitoring.png (1400x900px, 14:9 aspect ratio) - Integrity monitoring dashboard
+        </p>
+      </div>
+
+      <h3 style="margin-top: 24px; margin-bottom: 12px; font-size: 1.1rem;">Process Trust Scoring</h3>
+      <p style="margin-bottom: 16px; line-height: 1.6;">
+        Get instant visibility into running processes with trust verdicts. The local trust engine evaluates each process
+        based on code signing, path context, network behavior, and local prevalence to flag suspicious activity.
+      </p>
+
+      <!-- screenshot placeholder: process tree with trust scores -->
+      <div style="margin-top: 16px; margin-bottom: 24px;">
+        <img src="assets/img/process-tree.png" 
+             alt="Process tree view showing trust scores and relationships" 
+             style="width: 100%; max-width: 900px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.1);" />
+        <p class="muted" style="margin-top: 8px; font-size: 0.85rem;">
+          Image: process-tree.png (1400x900px, 14:9 aspect ratio) - Process tree with trust scores
+        </p>
+      </div>
+
+      <h3 style="margin-top: 24px; margin-bottom: 12px; font-size: 1.1rem;">Network Activity Tracking</h3>
+      <p style="margin-bottom: 16px; line-height: 1.6;">
+        Monitor listening ports and active network connections system-wide. Identify processes making unexpected
+        outbound connections or listening on unusual ports.
+      </p>
+
+      <!-- screenshot placeholder: network activity -->
+      <div style="margin-top: 16px; margin-bottom: 24px;">
+        <img src="assets/img/network-activity.png" 
+             alt="Network activity dashboard showing listening ports and connections" 
+             style="width: 100%; max-width: 900px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.1);" />
+        <p class="muted" style="margin-top: 8px; font-size: 0.85rem;">
+          Image: network-activity.png (1400x900px, 14:9 aspect ratio) - Network activity dashboard
+        </p>
+      </div>
+    </section>
+  </main>
+
+  <!-- footer: legal and consent links -->
+  <footer class="foot">
+    <nav class="foot-nav">
+      <!-- cookie settings link goes to cookies page -->
+      <a href="cookies.html">Cookie Settings</a>
+      <a href="privacy.html">Privacy Policy</a>
+      <a href="license.html">License</a>
+    </nav>
+    <small class="muted">© <span id="year"></span> CustosEye. All rights reserved.</small>
+  </footer>
+
+  <!-- set current year in footer -->
+  <script>
+    document.getElementById('year').textContent = new Date().getFullYear();
+  </script>
+
+  <!-- navigation accessibility and keyboard support -->
+  <script src="js/nav-accessibility.js?v=2"></script>
+
+  <!-- Cookie banner (shows once until a choice is stored) -->
+  <script src="js/consent.js?v=2"></script>
+
+  <!-- GA attaches only after consent -->
+  <script src="js/analytics-attach.js?v=2" defer></script>
+</body>
+</html>
+

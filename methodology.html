@@ -1,0 +1,223 @@
+<!--
+  goal: methodology page for CustosEye website. explains how CustosEye works in plain language,
+        covering what data it uses, how it processes that data, and what assumptions or limitations
+        exist. kept straightforward and honest.
+-->
+<!doctype html>
+<html lang="en">
+
+<head>
+  <!-- standard metadata -->
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+
+  <!-- title -->
+  <title>Methodology - CustosEye</title>
+
+  <!-- SEO and structured metadata -->
+  <meta name="description" content="Learn how CustosEye works - what data it uses, how it processes information, and its approach to local-first security monitoring." />
+  <meta name="robots" content="index, follow" />
+  <link rel="canonical" href="https://www.custoseye.com/methodology.html" />
+
+  <!-- Open Graph (social preview) -->
+  <meta property="og:title" content="Methodology - CustosEye" />
+  <meta property="og:description" content="Learn how CustosEye works - local-first security monitoring methodology." />
+  <meta property="og:url" content="https://www.custoseye.com/methodology.html" />
+  <meta property="og:type" content="website" />
+  <meta property="og:image" content="https://www.custoseye.com/assets/favicon.png" />
+
+  <!-- Favicon -->
+  <link rel="icon" href="https://www.custoseye.com/assets/favicon.png" type="image/png" />
+  <link rel="icon" href="assets/favicon.ico?v=2" sizes="any" />
+
+  <!-- shared styles -->
+  <link rel="stylesheet" href="styles.css?v=2" />
+  <link rel="preload" href="styles.css?v=2" as="style" />
+</head>
+
+<body class="page">
+  <!-- a slim royal-purple stripe for subtle branding -->
+  <div class="top-stripe" aria-hidden="true"></div>
+
+  <!-- header: logo + brand + navigation -->
+  <header class="topbar">
+    <!-- logo links home -->
+    <a class="home-link" href="/" aria-label="Go to homepage">
+      <img class="logo" src="assets/favicon.png" alt="CustosEye logo" />
+    </a>
+
+    <!-- brand (title + tagline) links home -->
+    <a class="home-link brand" href="/" aria-label="Go to homepage">
+      <h1>CustosEye</h1>
+      <p class="tagline">Your Third Eye</p>
+    </a>
+
+    <!-- main navigation: primary site sections only -->
+    <nav class="topbar-nav" role="menubar" aria-label="Main navigation">
+      <a href="index.html" role="menuitem">Home</a>
+      <span class="nav-sep">|</span>
+      <div class="nav-has-submenu">
+        <a href="#" role="menuitem" aria-haspopup="true" aria-expanded="false" id="about-menu-button" tabindex="0">About</a>
+        <div class="nav-submenu" role="menu" aria-labelledby="about-menu-button">
+          <a href="about.html" role="menuitem">About</a>
+          <a href="methodology.html" role="menuitem" aria-current="page">Methodology</a>
+          <a href="ethics.html" role="menuitem">Code of Ethics</a>
+        </div>
+      </div>
+      <span class="nav-sep">|</span>
+      <a href="download.html" role="menuitem">Downloads</a>
+      <span class="nav-sep">|</span>
+      <a href="documentation.html" role="menuitem">Documentation</a>
+    </nav>
+  </header>
+
+  <!-- main content -->
+  <main class="wrap">
+    <!-- methodology section: how CustosEye works -->
+    <section class="card">
+      <h2 style="margin-bottom: 16px">Methodology</h2>
+
+      <p style="margin-bottom: 16px; line-height: 1.6;">
+        This page explains how CustosEye works: what data it collects, how it processes that data,
+        and what assumptions or limitations you should be aware of.
+      </p>
+
+      <h3 style="margin-top: 24px; margin-bottom: 12px; font-size: 1.2rem;">Purpose and Goals</h3>
+      <p style="margin-bottom: 16px; line-height: 1.6;">
+        CustosEye is designed to give you visibility into what's happening on your system without
+        requiring cloud services or sending data anywhere. It monitors processes, network activity,
+        and file integrity, then presents this information in a simple web dashboard so you can
+        understand what's running and what's changed.
+      </p>
+
+      <h3 style="margin-top: 24px; margin-bottom: 12px; font-size: 1.2rem;">What Data CustosEye Uses</h3>
+      <p style="margin-bottom: 16px; line-height: 1.6;">
+        CustosEye collects three types of data from your system:
+      </p>
+      <ul style="margin-bottom: 16px; line-height: 1.8; padding-left: 20px;">
+        <li><strong>Process information:</strong> running processes, their executable paths, file hashes,
+          code signatures, parent processes, and whether they're running as services or with elevated privileges</li>
+        <li><strong>Network activity:</strong> listening ports, active network connections, and which processes
+          are making connections</li>
+        <li><strong>File integrity data:</strong> for files you choose to monitor, CustosEye computes SHA-256
+          hashes or tracks modification time and size to detect changes</li>
+      </ul>
+      <p style="margin-bottom: 16px; line-height: 1.6;">
+        All of this data stays on your machine. Nothing is sent to external servers or cloud services.
+      </p>
+
+      <h3 style="margin-top: 24px; margin-bottom: 12px; font-size: 1.2rem;">How Data is Processed</h3>
+      <p style="margin-bottom: 16px; line-height: 1.6;">
+        CustosEye processes data in several stages:
+      </p>
+
+      <h4 style="margin-top: 20px; margin-bottom: 10px; font-size: 1.05rem;">1. Collection</h4>
+      <p style="margin-bottom: 16px; line-height: 1.6;">
+        Three monitoring agents run continuously in the background:
+      </p>
+      <ul style="margin-bottom: 16px; line-height: 1.8; padding-left: 20px;">
+        <li><strong>Process monitor:</strong> scans running processes periodically (default every few seconds)</li>
+        <li><strong>Network scanner:</strong> captures listening ports and active connections</li>
+        <li><strong>Integrity checker:</strong> compares watched files against their baseline hashes or metadata</li>
+      </ul>
+
+      <h4 style="margin-top: 20px; margin-bottom: 10px; font-size: 1.05rem;">2. Trust Scoring</h4>
+      <p style="margin-bottom: 16px; line-height: 1.6;">
+        Each process is evaluated using a trust scoring engine (CSC v2) that considers multiple signals:
+      </p>
+      <ul style="margin-bottom: 16px; line-height: 1.8; padding-left: 20px;">
+        <li>Where the executable is located (system directories are more trusted than temp folders)</li>
+        <li>Whether the file has a valid code signature and who signed it</li>
+        <li>Process name characteristics (suspicious-looking names reduce trust)</li>
+        <li>File age and size (very new or tiny binaries outside system paths are flagged)</li>
+        <li>Network behavior (listening on risky ports is suspicious)</li>
+        <li>Parent process context (processes launched by script interpreters get a small penalty)</li>
+        <li>Elevation and service status (elevated processes or services from user directories are suspicious)</li>
+        <li>Local prevalence (processes seen frequently on your machine earn trust over time)</li>
+      </ul>
+      <p style="margin-bottom: 16px; line-height: 1.6;">
+        These signals are combined into a score, which is then mapped to a categorical verdict:
+        <strong>trusted</strong>, <strong>caution</strong>, <strong>suspicious</strong>, <strong>malicious</strong>, or <strong>unknown</strong>.
+        The engine also assigns a class (like "system", "popular_app", "service", "dev_tool") to help categorize processes.
+      </p>
+
+      <h4 style="margin-top: 20px; margin-bottom: 10px; font-size: 1.05rem;">3. Rules Engine</h4>
+      <p style="margin-bottom: 16px; line-height: 1.6;">
+        Events are tagged with severity levels (Info, Warning, Critical) based on configurable rules.
+        Rules can match on process names, paths, network ports, or other event properties. You can
+        customize these rules to match your environment and priorities.
+      </p>
+
+      <h4 style="margin-top: 20px; margin-bottom: 10px; font-size: 1.05rem;">4. Presentation</h4>
+      <p style="margin-bottom: 16px; line-height: 1.6;">
+        Processed events are displayed in the web dashboard with filters, search, and export options.
+        The dashboard shows a live feed of events, a process tree view with trust scores, and an
+        integrity monitoring interface for managing watched files.
+      </p>
+
+      <!-- diagram placeholder -->
+      <div style="margin-top: 24px; margin-bottom: 16px;">
+        <!--
+          Image placeholder: if you want to add a diagram showing the data flow, place it here.
+          Suggested location: assets/img/methodology-flow.png
+          Suggested dimensions: 1200x600px, showing: Collection → Trust Scoring → Rules Engine → Dashboard
+        -->
+      </div>
+
+      <h3 style="margin-top: 24px; margin-bottom: 12px; font-size: 1.2rem;">Assumptions and Limitations</h3>
+      <p style="margin-bottom: 16px; line-height: 1.6;">
+        CustosEye makes several assumptions and has known limitations:
+      </p>
+      <ul style="margin-bottom: 16px; line-height: 1.8; padding-left: 20px;">
+        <li><strong>Local-only operation:</strong> CustosEye doesn't use threat intelligence feeds or
+          cloud-based reputation services. Trust scores are based entirely on local signals and your
+          system's history.</li>
+        <li><strong>Heuristic-based scoring:</strong> The trust scoring engine uses heuristics and local
+          prevalence, not behavioral analysis or machine learning. It's designed to be fast and explainable,
+          but may miss sophisticated threats that don't match known patterns.</li>
+        <li><strong>No real-time blocking:</strong> CustosEye is a monitoring tool, not an active security
+          product. It reports what it sees but doesn't block or quarantine processes.</li>
+        <li><strong>Windows focus:</strong> Currently designed for Windows systems. Process and network
+          monitoring may work differently on other platforms.</li>
+        <li><strong>File integrity modes:</strong> The "mtime+size" mode is faster but less secure than
+          SHA-256 hashing. It can miss changes that don't affect file size or modification time.</li>
+        <li><strong>Prevalence learning:</strong> The trust engine learns from what it sees on your machine,
+          but this means it may be less accurate on a fresh system or when new software is first installed.</li>
+      </ul>
+
+      <h3 style="margin-top: 24px; margin-bottom: 12px; font-size: 1.2rem;">Privacy and Data Handling</h3>
+      <p style="margin-bottom: 16px; line-height: 1.6;">
+        All data collected by CustosEye stays on your machine. No information is sent to external servers.
+        The dashboard runs locally on your computer, and all processing happens in memory or in local files.
+        For more details on privacy and data handling, see our <a href="privacy.html" style="color: #8b5cf6;">Privacy Policy</a>.
+      </p>
+    </section>
+  </main>
+
+  <!-- footer: legal and consent links -->
+  <footer class="foot">
+    <nav class="foot-nav">
+      <!-- cookie settings link goes to cookies page -->
+      <a href="cookies.html">Cookie Settings</a>
+      <a href="privacy.html">Privacy Policy</a>
+      <a href="license.html">License</a>
+    </nav>
+    <small class="muted">© <span id="year"></span> CustosEye. All rights reserved.</small>
+  </footer>
+
+  <!-- set current year in footer -->
+  <script>
+    document.getElementById('year').textContent = new Date().getFullYear();
+  </script>
+
+  <!-- navigation accessibility and keyboard support -->
+  <script src="js/nav-accessibility.js?v=2"></script>
+
+  <!-- Cookie banner (shows once until a choice is stored) -->
+  <script src="js/consent.js?v=2"></script>
+
+  <!-- GA attaches only after consent -->
+  <script src="js/analytics-attach.js?v=2" defer></script>
+</body>
+</html>
+

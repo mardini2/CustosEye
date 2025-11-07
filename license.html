@@ -36,10 +36,11 @@
 </head>
 
 <body class="page">
-  <!-- slim purple stripe for brand consistency -->
+
+  <!-- a slim royal-purple stripe for subtle branding -->
   <div class="top-stripe" aria-hidden="true"></div>
 
-  <!-- header: logo + brand both link home -->
+  <!-- header: logo + brand + navigation -->
   <header class="topbar">
     <!-- logo links home -->
     <a class="home-link" href="/" aria-label="Go to homepage">
@@ -50,13 +51,31 @@
       <h1>CustosEye</h1>
       <p class="tagline">Your Third Eye</p>
     </a>
+
+    <!-- main navigation: primary site sections only -->
+    <nav class="topbar-nav" role="menubar" aria-label="Main navigation">
+      <a href="index.html" role="menuitem">Home</a>
+      <span class="nav-sep">|</span>
+      <div class="nav-has-submenu">
+        <a href="#" role="menuitem" aria-haspopup="true" aria-expanded="false" id="about-menu-button" tabindex="0">About</a>
+        <div class="nav-submenu" role="menu" aria-labelledby="about-menu-button">
+          <a href="about.html" role="menuitem">About</a>
+          <a href="methodology.html" role="menuitem">Methodology</a>
+          <a href="ethics.html" role="menuitem">Code of Ethics</a>
+        </div>
+      </div>
+      <span class="nav-sep">|</span>
+      <a href="download.html" role="menuitem">Downloads</a>
+      <span class="nav-sep">|</span>
+      <a href="documentation.html" role="menuitem">Documentation</a>
+    </nav>
   </header>
 
   <!-- main content -->
   <main class="wrap">
     <!-- license display card: shows the LICENSE.md file content -->
     <section class="card">
-      <h2 style="margin-bottom:8px">License</h2>
+      <h2 class="hero-title" style="margin-bottom:8px">License</h2>
       <p class="muted" style="margin-bottom:16px">
         Current license for CustosEye
       </p>
@@ -77,14 +96,20 @@
     </section>
   </main>
 
-  <!-- footer: show Home + Cookie settings on this page -->
+  <!-- footer: legal and consent links (license page shows license as selected, not a link) -->
   <footer class="foot">
     <nav class="foot-nav">
-      <a href="/" rel="noopener">Home</a>
-      <a href="cookies.html">Cookie settings</a>
+      <!-- cookie settings link goes to cookies page -->
+      <a href="cookies.html">Cookie Settings</a>
+      <a href="privacy.html">Privacy Policy</a>
+      <!-- license is shown as selected on the license page (matches footer link style but not clickable) -->
+      <span style="color: #c8d0dd;" aria-current="page">License</span>
     </nav>
     <small class="muted">© <span id="year"></span> CustosEye. All rights reserved.</small>
   </footer>
+
+  <!-- navigation accessibility and keyboard support -->
+  <script src="js/nav-accessibility.js?v=2"></script>
 
   <!-- consent gate (only shows if no choice stored) -->
   <script src="js/consent.js?v=2"></script>

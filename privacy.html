@@ -1,0 +1,212 @@
+<!--
+  goal: privacy policy page for CustosEye website. explains in plain English how analytics
+        and cookies are used, matching the actual behavior in js/consent.js. links to
+        cookies.html for detailed cookie management.
+-->
+<!doctype html>
+<html lang="en">
+
+<head>
+  <!-- standard metadata -->
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+
+  <!-- title -->
+  <title>Privacy Policy - CustosEye</title>
+
+  <!-- SEO and structured metadata -->
+  <meta name="description" content="CustosEye privacy policy - how we handle analytics, cookies, and your data on this website." />
+  <meta name="robots" content="index, follow" />
+  <link rel="canonical" href="https://www.custoseye.com/privacy.html" />
+
+  <!-- Open Graph (social preview) -->
+  <meta property="og:title" content="Privacy Policy - CustosEye" />
+  <meta property="og:description" content="CustosEye privacy policy - how we handle analytics, cookies, and your data." />
+  <meta property="og:url" content="https://www.custoseye.com/privacy.html" />
+  <meta property="og:type" content="website" />
+  <meta property="og:image" content="https://www.custoseye.com/assets/favicon.png" />
+
+  <!-- Favicon -->
+  <link rel="icon" href="https://www.custoseye.com/assets/favicon.png" type="image/png" />
+  <link rel="icon" href="assets/favicon.ico?v=2" sizes="any" />
+
+  <!-- shared styles -->
+  <link rel="stylesheet" href="styles.css?v=2" />
+  <link rel="preload" href="styles.css?v=2" as="style" />
+</head>
+
+<body class="page">
+
+  <!-- a slim royal-purple stripe for subtle branding -->
+  <div class="top-stripe" aria-hidden="true"></div>
+
+  <!-- header: logo + brand + navigation -->
+  <header class="topbar">
+    <!-- logo links home -->
+    <a class="home-link" href="/" aria-label="Go to homepage">
+      <img class="logo" src="assets/favicon.png" alt="CustosEye logo" />
+    </a>
+
+    <!-- brand (title + tagline) links home -->
+    <a class="home-link brand" href="/" aria-label="Go to homepage">
+      <h1>CustosEye</h1>
+      <p class="tagline">Your Third Eye</p>
+    </a>
+
+    <!-- main navigation: primary site sections only -->
+    <nav class="topbar-nav" role="menubar" aria-label="Main navigation">
+      <a href="index.html" role="menuitem">Home</a>
+      <span class="nav-sep">|</span>
+      <div class="nav-has-submenu">
+        <a href="#" role="menuitem" aria-haspopup="true" aria-expanded="false" id="about-menu-button" tabindex="0">About</a>
+        <div class="nav-submenu" role="menu" aria-labelledby="about-menu-button">
+          <a href="about.html" role="menuitem">About</a>
+          <a href="methodology.html" role="menuitem">Methodology</a>
+          <a href="ethics.html" role="menuitem">Code of Ethics</a>
+        </div>
+      </div>
+      <span class="nav-sep">|</span>
+      <a href="download.html" role="menuitem">Downloads</a>
+      <span class="nav-sep">|</span>
+      <a href="documentation.html" role="menuitem">Documentation</a>
+    </nav>
+  </header>
+
+  <!-- main content -->
+  <main class="wrap">
+    <!-- privacy policy content -->
+    <section class="card">
+      <h2 class="hero-title" style="margin-bottom: 16px">Privacy Policy</h2>
+      <p class="muted" style="margin-bottom: 24px;">
+        Last updated: <span id="last-updated"></span>
+      </p>
+
+      <h3 style="margin-top: 24px; margin-bottom: 12px; font-size: 1.2rem;">Overview</h3>
+      <p style="margin-bottom: 16px; line-height: 1.6;">
+        CustosEye (the website) is committed to transparency about how we handle your data. This privacy policy explains
+        what information we collect, how we use it, and your choices regarding that information.
+      </p>
+
+      <h3 style="margin-top: 24px; margin-bottom: 12px; font-size: 1.2rem;">Analytics and Cookies</h3>
+      <p style="margin-bottom: 16px; line-height: 1.6;">
+        This website uses Google Analytics 4 (GA4) to understand how visitors use the site. Analytics is only loaded
+        after you explicitly consent to cookies. If you decline, no analytics code runs and no data is sent to Google.
+      </p>
+
+      <h3 style="margin-top: 24px; margin-bottom: 12px; font-size: 1.2rem;">Your Consent Choice</h3>
+      <p style="margin-bottom: 16px; line-height: 1.6;">
+        On your first visit, you'll see a consent modal asking whether you want to accept or decline analytics cookies.
+        Your choice is stored in your browser's local storage (not a cookie) and persists across visits. You can change
+        your choice at any time by visiting the <a href="cookies.html" style="color: #8b5cf6;">Cookie settings page</a>.
+      </p>
+
+      <h3 style="margin-top: 24px; margin-bottom: 12px; font-size: 1.2rem;">What We Collect (If You Consent)</h3>
+      <p style="margin-bottom: 16px; line-height: 1.6;">
+        If you accept analytics cookies, Google Analytics collects standard web analytics data:
+      </p>
+      <ul style="margin-bottom: 16px; line-height: 1.8; padding-left: 20px;">
+        <li>Page views and navigation paths</li>
+        <li>Time spent on pages</li>
+        <li>General location (country/city level, not precise coordinates)</li>
+        <li>Device type and browser information</li>
+        <li>File downloads (when you download CustosEye)</li>
+      </ul>
+      <p style="margin-bottom: 16px; line-height: 1.6;">
+        We do not collect personally identifiable information (PII) such as names, email addresses, or IP addresses
+        in a way that identifies you personally.
+      </p>
+
+      <h3 style="margin-top: 24px; margin-bottom: 12px; font-size: 1.2rem;">What We Don't Collect</h3>
+      <p style="margin-bottom: 16px; line-height: 1.6;">
+        We do not collect or store:
+      </p>
+      <ul style="margin-bottom: 16px; line-height: 1.8; padding-left: 20px;">
+        <li>Personal information without your explicit consent</li>
+        <li>Form submissions or contact information (this site has no contact forms)</li>
+        <li>Credit card or payment information</li>
+        <li>Data from the CustosEye application itself (the app runs entirely locally)</li>
+      </ul>
+
+      <h3 style="margin-top: 24px; margin-bottom: 12px; font-size: 1.2rem;">Third-Party Services</h3>
+      <p style="margin-bottom: 16px; line-height: 1.6;">
+        Google Analytics is a third-party service that processes analytics data. Their privacy policy governs how they
+        handle that data. You can opt out of Google Analytics tracking by declining cookies on this site, or by using
+        browser extensions that block analytics scripts.
+      </p>
+
+      <h3 style="margin-top: 24px; margin-bottom: 12px; font-size: 1.2rem;">Local Storage</h3>
+      <p style="margin-bottom: 16px; line-height: 1.6;">
+        Your consent choice is stored in your browser's local storage using the key <code style="background: rgba(0,0,0,0.3); padding: 2px 6px; border-radius: 4px;">analytics_consent</code>.
+        This is not a cookie and is only used to remember your preference. You can clear it at any time by clearing your
+        browser's local storage, which will cause the consent modal to appear again on your next visit.
+      </p>
+
+      <h3 style="margin-top: 24px; margin-bottom: 12px; font-size: 1.2rem;">Cookie Management</h3>
+      <p style="margin-bottom: 16px; line-height: 1.6;">
+        For detailed information about cookies and how to manage them, please visit our
+        <a href="cookies.html" style="color: #8b5cf6;">Cookie settings page</a>. You can change your consent preference
+        at any time from that page.
+      </p>
+
+      <h3 style="margin-top: 24px; margin-bottom: 12px; font-size: 1.2rem;">Data Retention</h3>
+      <p style="margin-bottom: 16px; line-height: 1.6;">
+        Analytics data is retained by Google Analytics according to their retention policies (typically 14 months by
+        default). Your consent choice in local storage persists until you clear it or change your preference.
+      </p>
+
+      <h3 style="margin-top: 24px; margin-bottom: 12px; font-size: 1.2rem;">Your Rights</h3>
+      <p style="margin-bottom: 16px; line-height: 1.6;">
+        You have the right to:
+      </p>
+      <ul style="margin-bottom: 16px; line-height: 1.8; padding-left: 20px;">
+        <li>Decline analytics cookies at any time</li>
+        <li>Change your consent preference via the <a href="cookies.html" style="color: #8b5cf6;">Cookie settings page</a></li>
+        <li>Clear your browser's local storage to reset your consent choice</li>
+        <li>Use browser extensions to block analytics scripts entirely</li>
+      </ul>
+
+      <h3 style="margin-top: 24px; margin-bottom: 12px; font-size: 1.2rem;">Changes to This Policy</h3>
+      <p style="margin-bottom: 16px; line-height: 1.6;">
+        We may update this privacy policy from time to time. The "Last updated" date at the top of this page will reflect
+        when changes were made. We encourage you to review this policy periodically.
+      </p>
+
+      <h3 style="margin-top: 24px; margin-bottom: 12px; font-size: 1.2rem;">Contact</h3>
+      <p style="margin-bottom: 16px; line-height: 1.6;">
+        If you have questions about this privacy policy, please visit our
+        <a href="https://github.com/mardini2/CustosEye" style="color: #8b5cf6;" rel="noopener" target="_blank">GitHub repository</a>
+        for contact information.
+      </p>
+    </section>
+  </main>
+
+  <!-- footer: legal and consent links (privacy page shows privacy as selected, not a link) -->
+  <footer class="foot">
+    <nav class="foot-nav">
+      <!-- cookie settings link goes to cookies page -->
+      <a href="cookies.html">Cookie Settings</a>
+      <!-- privacy is shown as selected on the privacy page (matches footer link style but not clickable) -->
+      <span style="color: #c8d0dd;" aria-current="page">Privacy Policy</span>
+      <a href="license.html">License</a>
+    </nav>
+    <small class="muted">© <span id="year"></span> CustosEye. All rights reserved.</small>
+  </footer>
+
+  <!-- set current year and last updated date -->
+  <script>
+    document.getElementById('year').textContent = new Date().getFullYear();
+    // set last updated date (you can manually update this when the policy changes)
+    document.getElementById('last-updated').textContent = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+  </script>
+
+  <!-- navigation accessibility and keyboard support -->
+  <script src="js/nav-accessibility.js?v=2"></script>
+
+  <!-- Cookie banner (shows once until a choice is stored) -->
+  <script src="js/consent.js?v=2"></script>
+
+  <!-- GA attaches only after consent -->
+  <script src="js/analytics-attach.js?v=2" defer></script>
+</body>
+</html>
+

@@ -1,0 +1,132 @@
+<!--
+  goal: about page for CustosEye website. provides a short, clear overview of what CustosEye is,
+        what problem it solves, and the quick story behind it. kept tight and readable.
+-->
+<!doctype html>
+<html lang="en">
+
+<head>
+  <!-- standard metadata -->
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+
+  <!-- title -->
+  <title>About - CustosEye</title>
+
+  <!-- SEO and structured metadata -->
+  <meta name="description" content="Learn about CustosEye - local-first system visibility and integrity monitoring. Understand what it is and why it exists." />
+  <meta name="robots" content="index, follow" />
+  <link rel="canonical" href="https://www.custoseye.com/about.html" />
+
+  <!-- Open Graph (social preview) -->
+  <meta property="og:title" content="About - CustosEye" />
+  <meta property="og:description" content="Learn about CustosEye - local-first system visibility and integrity monitoring." />
+  <meta property="og:url" content="https://www.custoseye.com/about.html" />
+  <meta property="og:type" content="website" />
+  <meta property="og:image" content="https://www.custoseye.com/assets/favicon.png" />
+
+  <!-- Favicon -->
+  <link rel="icon" href="https://www.custoseye.com/assets/favicon.png" type="image/png" />
+  <link rel="icon" href="assets/favicon.ico?v=2" sizes="any" />
+
+  <!-- shared styles -->
+  <link rel="stylesheet" href="styles.css?v=2" />
+  <link rel="preload" href="styles.css?v=2" as="style" />
+</head>
+
+<body class="page">
+  <!-- a slim royal-purple stripe for subtle branding -->
+  <div class="top-stripe" aria-hidden="true"></div>
+
+  <!-- header: logo + brand + navigation -->
+  <header class="topbar">
+    <!-- logo links home -->
+    <a class="home-link" href="/" aria-label="Go to homepage">
+      <img class="logo" src="assets/favicon.png" alt="CustosEye logo" />
+    </a>
+
+    <!-- brand (title + tagline) links home -->
+    <a class="home-link brand" href="/" aria-label="Go to homepage">
+      <h1>CustosEye</h1>
+      <p class="tagline">Your Third Eye</p>
+    </a>
+
+    <!-- main navigation: primary site sections only -->
+    <nav class="topbar-nav" role="menubar" aria-label="Main navigation">
+      <a href="index.html" role="menuitem">Home</a>
+      <span class="nav-sep">|</span>
+      <div class="nav-has-submenu">
+        <a href="#" role="menuitem" aria-haspopup="true" aria-expanded="false" id="about-menu-button" tabindex="0">About</a>
+        <div class="nav-submenu" role="menu" aria-labelledby="about-menu-button">
+          <a href="about.html" role="menuitem" aria-current="page">About</a>
+          <a href="methodology.html" role="menuitem">Methodology</a>
+          <a href="ethics.html" role="menuitem">Code of Ethics</a>
+        </div>
+      </div>
+      <span class="nav-sep">|</span>
+      <a href="download.html" role="menuitem">Downloads</a>
+      <span class="nav-sep">|</span>
+      <a href="documentation.html" role="menuitem">Documentation</a>
+    </nav>
+  </header>
+
+  <!-- main content -->
+  <main class="wrap">
+    <!-- about section: overview and story -->
+    <section class="card">
+      <h2 style="margin-bottom: 16px">About CustosEye</h2>
+
+      <p style="margin-bottom: 16px; line-height: 1.6;">
+        CustosEye is a local-first security monitoring tool that gives you visibility into what's happening on your system.
+        It watches your processes, monitors file integrity, and tracks network activity—all without sending data anywhere.
+      </p>
+
+      <h3 style="margin-top: 24px; margin-bottom: 12px; font-size: 1.2rem;">The Problem</h3>
+      <p style="margin-bottom: 16px; line-height: 1.6;">
+        Most security tools either require cloud subscriptions, leak telemetry to unknown servers, or are too complex
+        for everyday use. You shouldn't need to trust a third party just to understand what's running on your own machine.
+      </p>
+
+      <h3 style="margin-top: 24px; margin-bottom: 12px; font-size: 1.2rem;">The Solution</h3>
+      <p style="margin-bottom: 16px; line-height: 1.6;">
+        CustosEye runs entirely on your machine. No cloud, no telemetry, no mystery. It uses a local trust engine to
+        evaluate process behavior, monitors file changes via hash checks, and gives you a simple web dashboard to see
+        everything at a glance.
+      </p>
+
+      <h3 style="margin-top: 24px; margin-bottom: 12px; font-size: 1.2rem;">Why It Exists</h3>
+      <p style="margin-bottom: 16px; line-height: 1.6;">
+        Built out of frustration with existing tools that were either too heavy, too intrusive, or too opaque. CustosEye
+        is designed to be portable, private, and transparent—just download and run. Your data stays on your machine, and
+        you control what gets monitored.
+      </p>
+    </section>
+  </main>
+
+  <!-- footer: legal and consent links -->
+  <footer class="foot">
+    <nav class="foot-nav">
+      <!-- cookie settings link goes to cookies page -->
+      <a href="cookies.html">Cookie Settings</a>
+      <a href="privacy.html">Privacy Policy</a>
+      <a href="license.html">License</a>
+    </nav>
+    <small class="muted">© <span id="year"></span> CustosEye. All rights reserved.</small>
+  </footer>
+
+  <!-- set current year in footer -->
+  <script>
+    document.getElementById('year').textContent = new Date().getFullYear();
+  </script>
+
+  <!-- navigation accessibility and keyboard support -->
+  <script src="js/nav-accessibility.js?v=2"></script>
+
+  <!-- Cookie banner (shows once until a choice is stored) -->
+  <script src="js/consent.js?v=2"></script>
+
+  <!-- GA attaches only after consent -->
+  <script src="js/analytics-attach.js?v=2" defer></script>
+</body>
+</html>
+

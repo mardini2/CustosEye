@@ -25,9 +25,13 @@ class NetworkSnapshot:
         while True:  # run forever until the process is killed
             conns = psutil.net_connections(kind="inet")  # get all TCP/UDP connections on the system
             listening: list[int] = sorted(
-                {c.laddr.port for c in conns if c.status == psutil.CONN_LISTEN}  # extract unique listening ports and sort them
+                {
+                    c.laddr.port for c in conns if c.status == psutil.CONN_LISTEN
+                }  # extract unique listening ports and sort them
             )
-            outbound: list[str] = [f"{c.raddr.ip}:{c.raddr.port}" for c in conns if c.raddr]  # format remote addresses as "ip:port" for connections that have a remote address
+            outbound: list[str] = [
+                f"{c.raddr.ip}:{c.raddr.port}" for c in conns if c.raddr
+            ]  # format remote addresses as "ip:port" for connections that have a remote address
             self.publish(
                 {
                     "source": "network",  # mark this as a network event
