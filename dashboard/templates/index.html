@@ -1,3 +1,8 @@
+<!--
+  goal: CustosEye dashboard, a single-page web application for viewing live security events, process tree, and file integrity monitoring.
+  contains all HTML, CSS, and JavaScript inline. polls the backend API for events and renders them in real-time.
+  supports tabs for Live Events, Process Tree, Integrity monitoring, and About page.
+-->
 <!doctype html>
 <html lang="en">
 <head>
@@ -9,6 +14,7 @@
   <link rel="icon" type="image/png" sizes="16x16" href="/static/assets/favicon-16x16.png?v=2">
   <link rel="apple-touch-icon" href="/static/assets/apple-touch-icon.png?v=2">
   <style>
+    /* CSS styles: theme variables, layout, and component styling */
     :root {
       --bg:#0b0f14; --panel:#141a22; --text:#e7eef7; --muted:#9ab;
       --chip-info:#2a6df1; --chip-warning:#e6a700; --chip-critical:#d43c3c; --chip-border:rgba(255,255,255,0.2);
@@ -387,6 +393,7 @@
   </style>
 </head>
 <body>
+  <!-- main HTML structure: header, tabs, and content panels -->
   <header>
     <div class="wrap">
       <div class="title">
@@ -402,7 +409,7 @@
         <div class="tab"     id="tab-about"     data-tab="about"     data-tip="Build info and buffer capacity"                          role="tab" aria-selected="false" tabindex="-1">About</div>
       </div>
 
-        <!-- Live bar -->
+        <!-- Live Events panel: filter controls and event list -->
       <div class="panel" id="bar-live" role="tabpanel" aria-labelledby="tab-live">
         <div class="controls">
           <button class="chip info"     data-on="true"  data-level="info"     data-tip="Toggle Info events"><span class="dot"></span>Info</button>
@@ -424,9 +431,10 @@
         </div>
        </div>
 
-      <!-- Integrity bar -->
+      <!-- integrity panel: file monitoring controls and target list -->
       <div class="panel" id="bar-integrity" role="tabpanel" aria-labelledby="tab-integrity" style="display:none">
         <div class="grid">
+          <!-- integrity controls: file picker, path input, rule selection, hash preview -->
           <div class="card">
             <div class="controls" style="gap:8px">
             <button class="btn" id="i-browse" data-tip="Pick a file (File Explorer)">Browse (Windows)</button>
@@ -442,6 +450,7 @@
             </div>
             <div class="small" id="i-preview" aria-live="polite"></div>
           </div>
+          <!-- integrity targets table: shows all monitored files with their status -->
           <div class="card allow-overflow">
             <table class="tbl" id="i-table">
               <thead>
@@ -463,9 +472,12 @@
   </header>
 
   <main>
+    <!-- main content area: different panels for each tab -->
     <div class="wrap">
+      <!-- live events list: rendered dynamically from API data -->
       <div id="live"    class="list"  role="tabpanel" aria-labelledby="tab-live"></div>
 
+      <!-- process tree: hierarchical view of running processes with trust verdicts -->
       <div id="tree"    class="tree"  role="tabpanel" aria-labelledby="tab-tree" style="display:none">
         <div class="treebar">
         <input id="treeSearch" class="input" placeholder="Search PIDs, names, verdict/class..." data-tip="Filter nodes by PID, name, verdict/class" />
@@ -478,11 +490,12 @@
         <div id="treeRoot"></div>
       </div>
 
+      <!-- about panel: version info and system stats (rendered dynamically) -->
       <div id="about"   class="panel" role="tabpanel" aria-labelledby="tab-about" style="display:none"></div>
     </div>
   </main>
 
-    <!-- Integrity diff modal -->
+    <!-- modal dialog for showing file changes/diffs -->
   <div id="modal" role="dialog" aria-modal="true"
      aria-labelledby="modalTitle" aria-describedby="modalBody"
      style="display:none; position:fixed; inset:0; background:rgba(0,0,0,.45); z-index:9998;">
@@ -496,6 +509,9 @@
   </div>
 
   <script>
+    /* JavaScript: application state, rendering, and API polling */
+    
+    // application state: current tab, filter settings, search query, etc
     const state = { tab:"live", levels:{info:true,warning:true,critical:true}, paused:false, q:"", timer:null, forceCollapsed:false,treeQ:"" };
     // sync initial from buttons (prevents drift)
     document.querySelectorAll('#bar-live .chip[data-level]').forEach(btn => {
@@ -520,7 +536,7 @@
 
     const treeEl = document.getElementById('treeRoot'), aboutEl = document.getElementById('about');
 
-    // ----- Preserve <details> open state -----
+    // preserve which process tree nodes are expanded when refreshing
     const openKeys = new Set();
 
     function captureOpenKeys() {
@@ -544,7 +560,7 @@
     if (d.open) openKeys.add(k); else openKeys.delete(k);
     });
 
-    //integrity refs
+    // integrity monitoring UI element references
     const iBar = document.getElementById('bar-integrity');
     const iPath = document.getElementById('i-path');
     const iRule = document.getElementById('i-rule');
@@ -556,7 +572,7 @@
     const iPreview = document.getElementById('i-preview');
     const iTbody = document.getElementById('i-tbody');
 
-    //tabs
+    // tab switching: show/hide panels and restore saved tab selection
     document.querySelectorAll('.tab').forEach(t => {
     t.addEventListener('click', () => {
         document.querySelectorAll('.tab').forEach(x => x.classList.remove('on'));
@@ -607,11 +623,11 @@
     }
     setupTabsA11y();
 
-    // Restore last tab selection
+    // restore last tab selection from localStorage
     const savedTab = localStorage.getItem('custoseye.tab');
     if (savedTab) document.querySelector(`.tab[data-tab="${savedTab}"]`)?.click();
 
-    //live filters
+    // live events filter buttons: toggle info/warning/critical visibility
     document.querySelectorAll('#bar-live .chip[data-level]').forEach(btn => {
       btn.addEventListener('click', () => {
         const lvl = btn.getAttribute('data-level');
@@ -623,6 +639,7 @@
       });
     });
 
+    // pause/resume button: stops or resumes background polling
     pauseBtn.addEventListener('click', () => {
       state.paused = !state.paused;
       localStorage.setItem('custoseye.paused', String(state.paused));
@@ -630,6 +647,7 @@
       pauseText.textContent = state.paused ? 'Paused' : 'Live';
     });
 
+    // search input: filter events by text search with debouncing
     function debounce(fn, ms){ let h; return (...a)=>{ clearTimeout(h); h=setTimeout(()=>fn(...a), ms); }; }
     searchEl.addEventListener('input', debounce(e => {
       state.q = e.target.value.toLowerCase().trim();
@@ -637,7 +655,7 @@
     }, 120));
     document.getElementById('refresh').addEventListener('click', fetchData);
 
-    //export live
+    // export button: download filtered events as CSV or JSON
     document.getElementById('export').addEventListener('click', () => {
       const fmt = document.getElementById('exportFmt')?.value || 'csv';
       const includeInfo = '1';
@@ -649,7 +667,7 @@
 
     function safe(v){ return esc(v ?? ''); }   // reused escape from about tab
 
-    //live list rendering
+    // render a single event row in the live events list
     function row(ev) {
       const lvl   = (ev.level || 'info').toLowerCase();
       const reason= esc(ev.reason || 'event');
@@ -726,6 +744,7 @@
     }
     }
 
+    // fetch events and other data from the backend API
     async function fetchData() {
       try {
         const includeInfo = '1';
@@ -736,7 +755,7 @@
       } catch (e) { /* ignore */ }
     }
 
-      // ---------- Tooltip Manager ----------
+      // tooltip manager: shows helpful hints when hovering over UI elements
   (function () {
     const TOOLTIP_ATTR = 'data-tip';
     let tipEl = null;
@@ -834,7 +853,7 @@
     });
   })();
 
-    // ---------- Integrity diff modal + renderer ----------
+    // integrity diff modal: show file changes in a side-by-side view
     const modal = document.getElementById('modal');
     const modalCard = document.getElementById('modalCard');
     const modalTitle = document.getElementById('modalTitle');
@@ -843,8 +862,10 @@
 
     let lastFocused = null;
 
+    // escape HTML to prevent XSS
     function esc(s){ return String(s).replace(/[&<>"']/g, m=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[m])); }
 
+    // show modal dialog with title and HTML content
     function showModal(title, html) {
       lastFocused = document.activeElement;
       modalTitle.innerHTML = `<b>${esc(title||'')}</b>`;
@@ -861,7 +882,7 @@
       modalCard.removeAttribute('tabindex');
       lastFocused?.focus();
       
-      // Clear auto-refresh when modal closes
+      // clear auto-refresh timer when modal closes
       if (window.diffAutoRefreshInterval) {
         clearInterval(window.diffAutoRefreshInterval);
         window.diffAutoRefreshInterval = null;
@@ -886,6 +907,7 @@
     else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
   });
 
+    // format byte count as human-readable string (B, KiB, MiB, etc)
     function bytesHuman(n) {
       if (!Number.isFinite(n) || n < 0) return String(n);
       const units = ['B','KiB','MiB','GiB','TiB'];
@@ -894,6 +916,7 @@
       return `${v.toFixed(v < 10 && i ? 2 : 0)} ${units[i]}`;
     }
 
+    // render file diff: side-by-side text comparison or binary change summary
     function renderDiff(payload) {
       if (!payload || payload.ok !== true) {
         const err = payload && payload.error ? payload.error : 'No diff available';
@@ -1363,27 +1386,27 @@
       return summaryHTML + `<div class="small">No differences found.</div>`;
     }
 
-  // ---------- Background caches ----------
+  // background caches: store API data so all tabs stay fresh even when not visible
   let __events = [];
   let __tree = [];
   let __targets = [];
   let __about = null;
 
-  // Render only the active tab using caches
+  // render only the currently active tab using cached data
   function renderActive() {
     if (state.tab === 'live') {
       render(__events || []);
       return;
     }
     if (state.tab === 'tree') {
-    const filtered = filterTreeList(__tree || [], state.treeQ);
-    captureOpenKeys(); // remember what is open
-    treeEl.innerHTML = (filtered || []).map(n => renderNode(n, 0)).join('');
-    restoreOpenKeys(); // re-open after render
-    return;
+      const filtered = filterTreeList(__tree || [], state.treeQ);  // apply search filter
+      captureOpenKeys(); // remember which nodes are expanded
+      treeEl.innerHTML = (filtered || []).map(n => renderNode(n, 0)).join('');  // render tree
+      restoreOpenKeys(); // restore expanded state after render
+      return;
     }
     if (state.tab === 'integrity') {
-      renderTargets(__targets || []);
+      renderTargets(__targets || []);  // render integrity targets from cache
       return;
     }
     if (state.tab === 'about') {
@@ -1408,7 +1431,7 @@
     }, 120);
     treeSearch.addEventListener('input', dTree);
     document.getElementById('treeRefresh').addEventListener('click', fetchTree);
-    // Expand all handler: also clear the latch
+    // expand all nodes in the process tree
     document.getElementById('treeExpand').addEventListener('click', () => {
     state.forceCollapsed = false;
     document.querySelectorAll('#treeRoot details[data-k]').forEach(d => {
@@ -1416,7 +1439,7 @@
         openKeys.add(d.dataset.k);
     });
     });
-    // Collapse all handler
+    // collapse all nodes in the process tree
     document.getElementById('treeCollapse').addEventListener('click', () => {
     document.querySelectorAll('#treeRoot details[data-k]').forEach(d => d.removeAttribute('open'));
     openKeys.clear();
@@ -1430,6 +1453,7 @@
     window.location.href = `/api/proctree?as=json`;
     });
 
+    // fetch process tree data from the API and render it
     async function fetchTree() {
     try {
         const res = await fetch('/api/proctree');
@@ -1441,6 +1465,7 @@
     } catch (e) {}
     }
 
+    // filter process tree by search query: matches PID, name, verdict, or class
     function filterTreeList(list, q) {
       if (!q) return list;
       function match(n) {
@@ -1455,6 +1480,7 @@
       return list.map(filterNode).filter(Boolean);
     }
 
+    // create a trust verdict badge pill with color coding
     function pill(verdict, cls, conf) {
       const v = (verdict||'unknown').toLowerCase();
       // map v2 verdicts to existing pill styles:
@@ -1467,6 +1493,7 @@
       return `<span class="pill ${style}">${text}</span>`;
     }
 
+    // render a single process tree node (recursive for children)
     function renderNode(n, depth, parentKey = '') {
       const key = parentKey ? `${parentKey}>${n.pid}` : String(n.pid);
       const isOpen = state.forceCollapsed
@@ -1477,7 +1504,7 @@
       if (!kidsHTML) {
         return `<div style="margin-left:10px"><span class="mono">PID ${n.pid}</span> <span class="mono">${n.name}</span> ${pill(n.csc_verdict, n.csc_class, n.csc_confidence)}</div>`;
       }
-      // IMPORTANT: data-k holds the stable key; we set open if in cache
+      // IMPORTANT: data-k holds the stable key, we set open if in cache
       return `<details data-k="${key}"${isOpen ? ' open' : ''}><summary aria-label="Toggle children">${head}</summary>${kidsHTML}</details>`;
     }
 
@@ -1507,13 +1534,15 @@
       }
     }
 
-    // ---------------- about ----------------
+    // about tab helpers
+    // shorten long hashes for display (shows first 8 and last 6 chars)
     function shortHash(h) {
     if (!h) return '';
     if (/^[0-9a-fA-F]{40,}$/.test(h)) return h.slice(0, 8) + '…' + h.slice(-6);
     return h; // keep mtime+size as-is
     }
 
+    // split status string into main status and optional note in parentheses
     function splitStatus(s) {
     if (!s) return { main: '', note: '' };
     const m = s.match(/^([^()]+)\s*\((.+)\)\s*$/); // "OK (baseline set)"
@@ -1521,7 +1550,7 @@
     return { main: s.trim(), note: '' };
     }
 
-    // ---------------- integrity tab logic ----------------
+    // integrity tab logic: load and display monitored file targets
     async function loadTargets() {
     try {
         const res = await fetch('/api/integrity/targets');
@@ -1532,6 +1561,7 @@
     }
     }
 
+    // render integrity targets table with status, actions, and baseline info
     function renderTargets(list) {
       if (!Array.isArray(list) || list.length === 0) {
         iTbody.innerHTML = `<tr><td colspan="5" class="small">No files being watched yet.</td></tr>`;
@@ -1549,6 +1579,7 @@
           </td>`;
         const ruleCell = `<td>${row.rule || 'sha256'}</td>`;
 
+        // format baseline based on rule type (sha256 hash vs mtime+size)
         const baselineRaw = row.rule === 'sha256'
           ? (row.sha256 || '')
           : ((row.mtime && row.size) ? `mtime=${row.mtime} size=${row.size}` : '(none)');
@@ -1597,24 +1628,26 @@
         });
       });
 
-      // Wire actions (after rendering)
+      // wire up action buttons after rendering the table
       window.currentDiffPath = null;
       window.diffAutoRefreshInterval = null;
       
+      // view changes button: show file diff in a modal dialog
       iTbody.querySelectorAll('button[data-act="viewdiff"]').forEach(btn => {
         btn.addEventListener('click', async () => {
           const path = decodeURIComponent(btn.getAttribute('data-path'));
           window.currentDiffPath = path;
           
-          // Clear any existing auto-refresh
+          // clear any existing auto-refresh timer
           if (window.diffAutoRefreshInterval) {
             clearInterval(window.diffAutoRefreshInterval);
             window.diffAutoRefreshInterval = null;
           }
           
-          // Show modal immediately with loading state
+          // show modal immediately with loading state
           showModal('File changes', '<div class="small">Loading diff...</div>');
           
+          // fetch and render the file diff
           async function loadDiff() {
             try {
               const r = await fetch('/api/integrity/diff', {
@@ -1779,6 +1812,7 @@
         });
       });
 
+      // retest button: rehash file and update baseline if needed
       iTbody.querySelectorAll('button[data-act="rehash"]').forEach(btn => {
         btn.addEventListener('click', async () => {
           const path = decodeURIComponent(btn.getAttribute('data-path'));
@@ -1824,6 +1858,7 @@
         });
       });
 
+      // remove button: delete target from watch list
       iTbody.querySelectorAll('button[data-act="remove"]').forEach(btn => {
         btn.addEventListener('click', async () => {
           const path = decodeURIComponent(btn.getAttribute('data-path'));
@@ -1838,6 +1873,7 @@
       });
     }
 
+    // browse button: open Windows file picker dialog
     iBrowse.addEventListener('click', async () => {
       iHint.textContent = 'Opening Windows file dialog...';
       try {
@@ -1847,6 +1883,7 @@
       } catch(e) { iHint.textContent = 'Browse not available'; }
     });
 
+    // helper: show loading state on button while async operation runs
     function withBusy(btn, fn){
     const wasDisabled = btn.disabled;
     btn.disabled = true;
@@ -1903,11 +1940,12 @@
       }
     }));
 
-    // Background poller: keep ALL tabs live; render only the active one
+    // background polling: continuously fetch data and update all tabs (but only render the active one)
     let inFlight = false;
     let lastTreeAt = 0;
     let pollCtrl = null;
 
+    // polling tick: fetch events, integrity targets, about info, and optionally process tree
     async function tick() {
       if (state.paused || inFlight) return;
       inFlight = true;
@@ -1968,7 +2006,7 @@
       }
     }
 
-    // pause when tab not visible
+    // pause polling when browser tab is not visible to save resources
     document.addEventListener('visibilitychange', () => {
       if (document.hidden) {
         state.paused = true;
@@ -1983,13 +2021,13 @@
     // avoid duplicate timers if this script runs twice
     if (state.timer) clearInterval(state.timer);
 
-    // start the poller - faster polling for better status sync
+    // start the polling timer: fetch data every 1.5 seconds
     state.timer = setInterval(tick, 1500);
 
     // clean up the timer when leaving the page
     window.addEventListener('beforeunload', () => { if (state.timer) clearInterval(state.timer); });
 
-    // initial render
+    // initial data fetch and render
     tick();
   </script>
 </body>

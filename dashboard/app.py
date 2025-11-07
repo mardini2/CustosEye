@@ -1,55 +1,44 @@
 # ruff: noqa: E501
 """
-goal: Local Flask dashboard for CustosEye — live telemetry, trust-aware process tree, and
-       privacy-preserving file-integrity baselining/diff. Fast, simple, offline.
+goal: flask web dashboard for CustosEye security monitoring system. provides a web interface
+         for viewing live security events, process tree with trust scores, and file integrity
+         monitoring. runs entirely locally without cloud dependencies.
 
-Highlights (this build):
-1) Event ingestion & performance
-   • Fan-out subscription to a shared EventBus; lightweight /api/ping keeps drains moving.
-   • Bounded ring buffer with fingerprint-based coalescing and “worse event” promotion.
-   • Guardrails: per-call drain cap + short deadlines + a drain lock to avoid concurrent drains.
+what this app is responsible for:
+- event ingestion: subscribes to the event bus from monitoring agents (process monitor, network
+  scanner, integrity checker) and processes incoming events
+- trust scoring: integrates with the CSC trust engine to evaluate process trustworthiness and
+  attach verdicts (trusted, suspicious, malicious, etc.) to process events
+- integrity monitoring: manages a watch list of files to monitor, computes baselines (SHA256 or
+  mtime+size), detects changes, and provides diff views for changed files
+- API endpoints: exposes REST endpoints for the frontend to fetch events, process tree, integrity
+  targets, and file diffs
+- event deduplication: uses fingerprint-based coalescing to prevent duplicate events from flooding
+  the UI, with "worse event" promotion to ensure critical events aren't lost
 
-2) UI surface
-   • Tabs: Live Events, Process Tree, About. Terminal only prints “welcome + URL”.
-   • Static assets (favicon + Apple touch icons) are routed and PyInstaller-friendly.
+how data flows through the app:
+1. agents publish events to the event bus (process monitor, network scanner, integrity checker)
+2. dashboard subscribes to the bus and drains events in a background thread
+3. events are processed: rules engine tags them with levels/reasons, CSC engine scores processes,
+   integrity events update target status
+4. processed events are deduplicated and added to a bounded ring buffer (BUFFER)
+5. frontend polls /api/events to fetch events from the buffer
+6. frontend also polls /api/proctree to get the process tree built from process events
+7. integrity operations (add target, rehash, view diff) go through dedicated API endpoints
 
-3) Live event stream
-   • Level filters (Info/Warning/Critical), free-text search, pause/refresh (client-side).
-   • Export current view as CSV / JSON / JSONL / XLSX (Excel-friendly BOM/quoting; auto-sized XLSX).
-   • Noise control: drop network events that lack pid/name; self-suppression by name/exe/sha256.
-
-4) Trust overlay (v2)
-   • CSCTrustEngine v2 (weights/db from config) scores processes; fields land on rows and in tree:
-     csc_verdict / csc_class / csc_confidence (+ reasons/signals blob).
-   • Fast-paths: kernel/idle/registry are auto-trusted; optional name_trust.json heuristic map.
-   • RulesEngine still evaluates non-integrity events for level/reason tagging (hot-reloaded).
-
-5) Process tree
-   • Compact PPID→PID hierarchy (native <details> in UI). Caps for roots/children from config.
-   • Trust labels/score propagate to each node. Export pretty JSON via /api/proctree?as=json.
-
-6) Integrity watch list & hashing
-   • CRUD: /api/integrity/targets GET/POST/DELETE (paths + rule="sha256" | "mtime+size" + note).
-   • Auto-baseline on first hash (sha256 or mtime+size). Emits live integrity events (OK/CHANGED/ERR).
-   • Per-chunk baseline hashes for diffs (algo, chunk_size, size, hashes).
-   • Optional content-addressed baseline snapshot (ALLOW_MTIME_SNAPSHOTS) with size-cap pruning and
-     download endpoint (/api/integrity/baseline/download?path=…).
-
-7) Privacy-preserving diff (Office-aware)
-   • /api/integrity/diff returns only: changed chunk ranges, tiny “after” previews (hex+ASCII),
-     and an estimated % changed.
-   • Office docs (docx/xlsx/pptx) use a ZIP member manifest (added/removed/modified) to estimate
-     change without 100% spikes from repacking.
-
-8) Quality-of-life
-   • Windows-only file picker (/api/integrity/browse) to add targets.
-   • About endpoint reads VERSION.txt (version/build/buffer_max).
-   • Config-driven paths/limits (rules_path, csc weights/db, integrity targets, self-suppress list).
-
-9) Packaging/runtime
-   • Optional Waitress serve; otherwise Flask dev server (debug off).
-   • Base dir and data paths resolve cleanly under PyInstaller bundles.
-
+major components and logic sections:
+- event processing pipeline: drain_into_buffer() pulls events from bus, applies rules/trust scoring,
+  deduplicates, and stores in BUFFER
+- trust scoring integration: uses CSCTrustEngine to evaluate processes, with fast-paths for known
+  system processes and optional name-based heuristics
+- integrity target management: CRUD operations for watch list, automatic baseline computation,
+  change detection, and status updates
+- diff computation: chunk-based hashing for efficient change detection, text extraction from
+  various file types (Office docs, PDFs, text files), character/word/line-level diff algorithms
+- baseline snapshot storage: optional content-addressed storage for full file snapshots, with
+  automatic pruning to stay within size limits
+- Flask routes: main page, event API, process tree API, integrity management endpoints, diff
+  viewer, file picker, static assets
 """
 
 from __future__ import annotations
@@ -102,11 +91,13 @@ except Exception:
     HAVE_WAITRESS = False
     _serve = None  # type: ignore
 
+# load configuration and set up paths
 CFG: Config = load_config()
 
 ALLOW_MTIME_SNAPSHOTS: bool = bool(getattr(CFG, "allow_mtime_snapshots", True))
 
 # ---------------- Config / paths ----------------
+# extract all config paths for easy access throughout the app
 BASE_DIR = CFG.base_dir
 RULES_PATH = str(CFG.rules_path)
 CSC_WEIGHTS_PATH = str(CFG.csc_weights_path)
@@ -115,6 +106,7 @@ INTEGRITY_TARGETS_PATH = str(CFG.integrity_targets_path)
 SELF_SUPPRESS_PATH = str(CFG.self_suppress_path)
 
 
+# load self-suppression list to filter out our own processes from the event stream
 def _load_self_suppress() -> dict[str, set[str]]:
     try:
         with open(SELF_SUPPRESS_PATH, encoding="utf-8") as f:
@@ -131,15 +123,18 @@ def _load_self_suppress() -> dict[str, set[str]]:
 
 SELF_SUPPRESS = _load_self_suppress()
 
+# initialize rules engine and trust engine with config paths
 _rules = RulesEngine(path=RULES_PATH)
 _rules_mtime = os.path.getmtime(RULES_PATH) if os.path.exists(RULES_PATH) else 0.0
 _csc = CSCTrustEngine(weights_path=CSC_WEIGHTS_PATH, db_path=CSC_DB_PATH)
 
+# optional name-based trust heuristics (fast-path for known-good processes)
 NAME_TRUST_PATH = str((BASE_DIR / "data" / "name_trust.json").resolve())
 _name_trust: dict[str, tuple[str, str, float]] = {}
 _name_trust_mtime: float = 0.0
 
 
+# hot-reload name trust heuristics if the file changed
 def _maybe_reload_name_trust() -> None:
     global _name_trust, _name_trust_mtime
     try:
@@ -162,6 +157,7 @@ def _maybe_reload_name_trust() -> None:
             _name_trust = {}
 
 
+# fast-path: check if process name is in the trust map and apply verdict directly
 def _maybe_promote_to_trusted(ev: dict) -> bool:
     nm = (ev.get("name") or "").lower()
     verdict = _name_trust.get(nm)
@@ -181,6 +177,7 @@ def _maybe_promote_to_trusted(ev: dict) -> bool:
     return True
 
 
+# hot-reload rules if the rules file changed (allows live rule updates)
 def _maybe_reload_rules() -> None:
     global _rules, _rules_mtime
     try:
@@ -193,8 +190,10 @@ def _maybe_reload_rules() -> None:
 
 
 # ---------------- Buffers / indices ----------------
+# bounded ring buffer for live events (oldest events drop when full)
 BUFFER_MAX = CFG.buffer_max
 BUFFER: deque[dict[str, Any]] = deque(maxlen=BUFFER_MAX)
+# process index for building the process tree (PID -> process metadata)
 PROC_INDEX: dict[int, dict[str, Any]] = {}
 
 
@@ -209,15 +208,15 @@ def _update_live_events_for_path(path: str, acceptance_text: str) -> None:
         if not path_lower:
             return
 
-        # Update events in BUFFER
+        # update events in BUFFER
         for ev in BUFFER:
             ev_path = str(ev.get("path") or "").lower()
             ev_level = str(ev.get("level") or "").lower()
             ev_reason = str(ev.get("reason") or "")
             ev_reason_lower = ev_reason.lower()
 
-            # Match integrity events for this path that are critical and related to changes
-            # Skip if already accepted
+            # match integrity events for this path that are critical and related to changes
+            # skip if already accepted
             if (
                 ev.get("source") == "integrity"
                 and ev_path == path_lower
@@ -230,13 +229,13 @@ def _update_live_events_for_path(path: str, acceptance_text: str) -> None:
                     or "missing" in ev_reason_lower
                 )
             ):
-                # Append acceptance text to existing reason, keep level as CRITICAL
+                # append acceptance text to existing reason, keep level as CRITICAL
                 ev["reason"] = ev_reason + " — " + acceptance_text
-                # Preserve timestamp and level - don't change them
-                # Mark as accepted/approved
+                # preserve timestamp and level - don't change them
+                # mark as accepted/approved
                 ev["accepted"] = True
 
-        # Update events in RECENT_MAP
+        # update events in RECENT_MAP
         for fp, rec in RECENT_MAP.items():
             ev_ref = rec.get("ref", {})
             ev_path = str(ev_ref.get("path") or "").lower()
@@ -244,8 +243,8 @@ def _update_live_events_for_path(path: str, acceptance_text: str) -> None:
             ev_reason = str(ev_ref.get("reason") or "")
             ev_reason_lower = ev_reason.lower()
 
-            # Match integrity events for this path that are critical and related to changes
-            # Skip if already accepted
+            # match integrity events for this path that are critical and related to changes
+            # skip if already accepted
             if (
                 ev_ref.get("source") == "integrity"
                 and ev_path == path_lower
@@ -258,34 +257,34 @@ def _update_live_events_for_path(path: str, acceptance_text: str) -> None:
                     or "missing" in ev_reason_lower
                 )
             ):
-                # Append acceptance text to existing reason, keep level as CRITICAL
+                # append acceptance text to existing reason, keep level as CRITICAL
                 ev_ref["reason"] = ev_reason + " — " + acceptance_text
                 ev_ref["accepted"] = True
     except Exception:
-        # Don't break event processing on update errors
+        # do not break event processing on update errors
         pass
 
 
 def _update_live_events_for_hash_verified(path: str) -> None:
     """
-    Update existing Live Events entries for a given path when hash is verified.
-    Replaces the reason with "✔ Hash verified", keeping the level as CRITICAL.
-    Only updates integrity events related to file changes (not verification events).
+    update existing Live Events entries for a given path when hash is verified.
+    replaces the reason with "✔ Hash verified", keeping the level as CRITICAL.
+    only updates integrity events related to file changes (not verification events).
     """
     try:
         path_lower = path.lower() if path else ""
         if not path_lower:
             return
 
-        # Update events in BUFFER
+        # update events in BUFFER
         for ev in BUFFER:
             ev_path = str(ev.get("path") or "").lower()
             ev_level = str(ev.get("level") or "").lower()
             ev_reason = str(ev.get("reason") or "")
             ev_reason_lower = ev_reason.lower()
 
-            # Match integrity events for this path that are critical and related to changes
-            # Skip if already updated to "Hash verified"
+            # match integrity events for this path that are critical and related to changes
+            # skip if already updated to "Hash verified"
             if (
                 ev.get("source") == "integrity"
                 and ev_path == path_lower
@@ -298,13 +297,13 @@ def _update_live_events_for_hash_verified(path: str) -> None:
                     or "missing" in ev_reason_lower
                 )
             ):
-                # Replace reason with "✔ Hash verified", keep level as CRITICAL
+                # replace reason with "✔ Hash verified", keep level as CRITICAL
                 ev["reason"] = "✔ Hash verified"
-                # Preserve timestamp and level - don't change them
-                # Mark as accepted/verified
+                # preserve timestamp and level - don't change them
+                # mark as accepted/verified
                 ev["accepted"] = True
 
-        # Update events in RECENT_MAP
+        # update events in RECENT_MAP
         for fp, rec in RECENT_MAP.items():
             ev_ref = rec.get("ref", {})
             ev_path = str(ev_ref.get("path") or "").lower()
@@ -312,8 +311,8 @@ def _update_live_events_for_hash_verified(path: str) -> None:
             ev_reason = str(ev_ref.get("reason") or "")
             ev_reason_lower = ev_reason.lower()
 
-            # Match integrity events for this path that are critical and related to changes
-            # Skip if already updated to "Hash verified"
+            # match integrity events for this path that are critical and related to changes
+            # skip if already updated to "Hash verified"
             if (
                 ev_ref.get("source") == "integrity"
                 and ev_path == path_lower
@@ -326,27 +325,33 @@ def _update_live_events_for_hash_verified(path: str) -> None:
                     or "missing" in ev_reason_lower
                 )
             ):
-                # Replace reason with "✔ Hash verified", keep level as CRITICAL
+                # replace reason with "✔ Hash verified", keep level as CRITICAL
                 ev_ref["reason"] = "✔ Hash verified"
                 ev_ref["accepted"] = True
     except Exception:
-        # Don't break event processing on update errors
+        # do not break event processing on update errors
         pass
 
 
 # --- dedupe/coalesce guard for live events ---
+# deduplication system: prevents duplicate events from flooding the UI by coalescing similar
+# events within a time window, but promotes "worse" events (higher severity, worse verdicts)
 RECENT_TTL = 15.0  # seconds
 RECENT_MAP: dict[str, RecentMeta] = {}  # fp -> {"ref": ev_dict, "seen": int, "last_seen": float}
 
+# severity and verdict ranking for "worse event" promotion logic
 _SEV_RANK = {"info": 0, "warning": 1, "critical": 2}
 _VERDICT_RANK = {"trusted": 0, "caution": 1, "suspicious": 2, "malicious": 3, "unknown": 1}
 
 
+# create a fingerprint from key event fields to identify duplicate events
 def _fingerprint_base(ev: dict) -> str:
     key_fields = ("source", "reason", "pid", "name", "path", "rule")
     return json.dumps({k: ev.get(k) for k in key_fields}, sort_keys=True, ensure_ascii=False)
 
 
+# check if the current event is "worse" than the previous one (higher severity, worse verdict)
+# used to promote worse events even if they're duplicates
 def _is_worse(prev: dict, cur: dict) -> bool:
     pl = _SEV_RANK.get(str(prev.get("level", "info")).lower(), 0)
     cl = _SEV_RANK.get(str(cur.get("level", "info")).lower(), 0)
@@ -379,14 +384,15 @@ def _is_worse(prev: dict, cur: dict) -> bool:
     return False
 
 
+# deduplication logic: coalesce similar events or admit new/worse events to the buffer
 def _coalesce_or_admit(ev: dict) -> bool:
     """
-    Returns True to append ev to BUFFER, False if merged into a recent one.
-    Keeps a single representative event within RECENT_TTL unless the new event is 'worse'.
+    returns True to append ev to BUFFER, False if merged into a recent one.
+    keeps a single representative event within RECENT_TTL unless the new event is "worse".
     """
     now = time.time()
     # prune expired
-    for k, rec in list(RECENT_MAP.items()):  # <— renamed from `entry`
+    for k, rec in list(RECENT_MAP.items()):  # <— renamed from "entry"
         if now - float(rec.get("last_seen", 0)) > RECENT_TTL:
             RECENT_MAP.pop(k, None)
 
@@ -414,6 +420,8 @@ def _coalesce_or_admit(ev: dict) -> bool:
     return False
 
 
+# guardrails for event draining: limit how many events we process per API call and how long
+# we spend draining to avoid blocking the web server
 DRAIN_LIMIT_PER_CALL = CFG.drain_limit_per_call
 DRAIN_DEADLINE_SEC = CFG.drain_deadline_sec
 
@@ -421,6 +429,7 @@ _DRAIN_LOCK = threading.Lock()  # to prevent concurrent drains
 
 
 # ---------------- fan-out subscription plumbing ----------------
+# subscribe to the event bus and return an iterator that yields events
 def _bus_iterator(bus: Any) -> Iterator[dict[str, Any]]:
     """
     Return an iterator that yields events for this subscriber.
@@ -436,6 +445,7 @@ def _bus_iterator(bus: Any) -> Iterator[dict[str, Any]]:
     return it  # type: ignore[return-value]
 
 
+# integrity target management: read the watch list from JSON
 def _read_integrity_targets() -> list[dict[str, Any]]:
     """
     back-compat:
@@ -467,11 +477,12 @@ def _read_integrity_targets() -> list[dict[str, Any]]:
     return norm
 
 
+# update integrity target status when an integrity event comes in
 def _update_integrity_target_from_event(ev: dict[str, Any]) -> None:
     """
-    Update integrity targets JSON when integrity events come in.
-    Note: Last Result is now only updated when user clicks Retest, not automatically from events.
-    This gives users intentional control over status updates.
+    update integrity targets JSON when integrity events come in.
+    note: Last Result is now only updated when user clicks Retest, not automatically from events.
+    this gives users intentional control over status updates.
     """
     try:
         path = ev.get("path", "")
@@ -481,19 +492,19 @@ def _update_integrity_target_from_event(ev: dict[str, Any]) -> None:
         rows = _read_integrity_targets()
         target = next((r for r in rows if str(r.get("path") or "").lower() == path.lower()), None)
         if target is None:
-            return  # Not on watch list
+            return  # not on watch list
 
-        # Only update hash if provided, but don't update last_result automatically
+        # only update hash if provided, but do not update last_result automatically
         # Last Result will be updated only when user clicks Retest
         if ev.get("actual"):
             target["sha256"] = ev.get("actual")
         elif ev.get("expected"):
             target["sha256"] = ev.get("expected")
 
-        # Only update status for OK/verified events (baseline accepted)
+        # only update status for OK/verified events (baseline accepted)
         reason = ev.get("reason", "").lower()
 
-        # Check for OK/verified status (baseline updated/accepted)
+        # check for OK/verified status (baseline updated/accepted)
         if "baseline updated" in reason or "deletion accepted" in reason:
             if "baseline updated" in reason:
                 target["last_result"] = "OK (baseline updated)"
@@ -503,10 +514,11 @@ def _update_integrity_target_from_event(ev: dict[str, Any]) -> None:
                 target["last_result"] = "OK (verified)"
             _write_integrity_targets(rows)
     except Exception:
-        # Don't break event processing on update errors
+        # do not break event processing on update errors
         pass
 
 
+# write the integrity targets watch list back to JSON
 def _write_integrity_targets(rows: list[dict[str, Any]]) -> None:
     """
     persist as a plain array to keep compatibility with your current file.
@@ -519,6 +531,7 @@ def _write_integrity_targets(rows: list[dict[str, Any]]) -> None:
         pass
 
 
+# compute SHA256 hash of a file and return metadata (size, mtime, hash)
 def _sha256_file(path: str) -> dict[str, Any]:
     # normalize (env vars, ~, quotes) but keep original text in "path"
     p = _norm_user_path(path)
@@ -541,6 +554,7 @@ def _sha256_file(path: str) -> dict[str, Any]:
     return out
 
 
+# normalize file paths: expand environment variables, home directory, strip quotes
 def _norm_user_path(p: str) -> str:
     # normalize, expand env vars (~, %WINDIR%), strip quotes, keep Unicode
     p = (p or "").strip().strip('"')
@@ -549,6 +563,8 @@ def _norm_user_path(p: str) -> str:
 
 
 # ----- Integrity: chunk hashing + diff utilities -----
+# chunk-based hashing: compute SHA256 for each fixed-size chunk to enable efficient
+# region-level diff detection (only changed chunks need to be compared)
 def _chunk_hashes(path: str, chunk_size: int = 4096) -> dict[str, Any]:
     # compute sha256 for each fixed-size chunk to enable region-level diffs
     p = _norm_user_path(path)  # normalize the path
@@ -579,6 +595,7 @@ def _chunk_hashes(path: str, chunk_size: int = 4096) -> dict[str, Any]:
     }
 
 
+# utility: shorten long hex strings for display (show first N and last M chars)
 def _short_hex(s: str, left: int = 8, right: int = 6) -> str:
     # shorten long hex strings for UI readability
     if not s:
@@ -588,6 +605,7 @@ def _short_hex(s: str, left: int = 8, right: int = 6) -> str:
     return f"{s[:left]}…{s[-right:]}"
 
 
+# merge consecutive chunk indexes into ranges for more compact diff display
 def _merge_changed_chunks(changed_idxs: list[int]) -> list[tuple[int, int]]:
     # merge consecutive chunk indexes into ranges [start_idx, end_idx] inclusive
     if not changed_idxs:
@@ -604,6 +622,7 @@ def _merge_changed_chunks(changed_idxs: list[int]) -> list[tuple[int, int]]:
     return ranges
 
 
+# read a small preview of a changed region to show what the new content looks like
 def _read_region_preview(path: str, start: int, length: int, cap: int = 64) -> bytes:
     # return up to `cap` bytes from the start of a region to preview "after" content
     p = _norm_user_path(path)
@@ -615,6 +634,8 @@ def _read_region_preview(path: str, start: int, length: int, cap: int = 64) -> b
         return b""  # on error, no preview
 
 
+# extract ZIP manifest for Office docs (docx/xlsx/pptx) to detect member-level changes
+# this helps avoid false positives when Office docs are repacked but content is unchanged
 def _zip_manifest(path: str) -> dict[str, dict[str, int]]:
     """
     If file is a ZIP, return { member_name: {size, crc, date} }.
@@ -645,6 +666,7 @@ def _zip_manifest(path: str) -> dict[str, dict[str, int]]:
     return out
 
 
+# detect file type from extension for human-readable diff summaries
 def _nl_file_kind(path: str) -> str:
     p = (path or "").lower()
     if p.endswith((".pptx", ".ppt")):
@@ -682,8 +704,9 @@ def _nl_file_kind(path: str) -> str:
     return "file"
 
 
+# check if a file is likely a text file based on extension (for text extraction)
 def _is_text_file(path: str) -> bool:
-    """Determine if a file is likely a text file based on extension."""
+    """determine if a file is likely a text file based on extension."""
     p = (path or "").lower()
     text_extensions = (
         ".txt",
@@ -742,13 +765,13 @@ def _is_text_file(path: str) -> bool:
 
 
 def _is_pdf_file(path: str) -> bool:
-    """Determine if a file is a PDF."""
+    """determine if a file is a PDF."""
     p = (path or "").lower()
     return p.endswith(".pdf")
 
 
 def _is_config_file(path: str) -> bool:
-    """Determine if a file is a config file."""
+    """determine if a file is a config file."""
     p = (path or "").lower()
     config_extensions = (
         ".json",
@@ -765,10 +788,11 @@ def _is_config_file(path: str) -> bool:
     return p.endswith(config_extensions)
 
 
+# read text file content with size limit to avoid loading huge files
 def _read_text_file(path: str, max_size: int = 10 * 1024 * 1024) -> tuple[str | None, str]:
     """
-    Attempt to read a file as text.
-    Returns (content, error_message) where content is None on error.
+    attempt to read a file as text.
+    returns (content, error_message) where content is None on error.
     """
     try:
         p = _norm_user_path(path)
@@ -776,12 +800,12 @@ def _read_text_file(path: str, max_size: int = 10 * 1024 * 1024) -> tuple[str | 
         if st.st_size > max_size:
             return None, f"File too large ({st.st_size} bytes, max {max_size})"
 
-        # Try UTF-8 first
+        # try UTF-8 first
         with open(p, encoding="utf-8", errors="replace") as f:
             content = f.read()
         return content, ""
     except UnicodeDecodeError:
-        # Try other common encodings
+        # try other common encodings
         encodings = ["latin-1", "cp1252", "iso-8859-1"]
         for enc in encodings:
             try:
@@ -795,6 +819,7 @@ def _read_text_file(path: str, max_size: int = 10 * 1024 * 1024) -> tuple[str | 
         return None, f"Error reading file: {e}"
 
 
+# extract readable text from PDF files for diff viewing (privacy-preserving)
 def _extract_text_from_pdf(path: str) -> tuple[str | None, str]:
     """
     Extract readable text from PDF files.
@@ -804,34 +829,34 @@ def _extract_text_from_pdf(path: str) -> tuple[str | None, str]:
     try:
         p = _norm_user_path(path)
 
-        # Simple PDF text extraction - look for readable text streams
-        # This is a basic implementation; for production, consider using PyPDF2 or pdfplumber
+        # simple PDF text extraction - look for readable text streams
+        # this is a basic implementation; for production, consider using PyPDF2 or pdfplumber
         with open(p, "rb") as f:
             content = f.read()
 
-        # Try to extract text from PDF streams (basic approach)
-        # Look for text objects in PDF format
+        # try to extract text from PDF streams (basic approach)
+        # look for text objects in PDF format
         import re
 
-        # Extract text from PDF streams (basic regex approach)
-        # This is a simple fallback - proper PDF parsing would be better
+        # extract text from PDF streams (basic regex approach)
+        # this is a simple fallback, proper PDF parsing would be better
         text_parts: list[str] = []
 
-        # Look for text in PDF streams
+        # look for text in PDF streams
         stream_matches = re.findall(rb"stream\s+(.*?)\s+endstream", content, re.DOTALL)
-        for stream in stream_matches[:20]:  # Limit to first 20 streams
+        for stream in stream_matches[:20]:  # limit to first 20 streams
             try:
-                # Try to decode as text
+                # try to decode as text
                 text = stream.decode("utf-8", errors="replace")
-                # Extract printable text
+                # extract printable text
                 text = re.sub(r"[^\x20-\x7E\n\r\t]", "", text)
-                if len(text.strip()) > 10:  # Only keep substantial text
+                if len(text.strip()) > 10:  # only keep substantial text
                     text_parts.append(text.strip())
             except Exception:
                 continue
 
         if text_parts:
-            # Join with line breaks
+            # join with line breaks
             return "\n".join(text_parts), ""
 
         return None, "No readable text found in PDF (consider using PyPDF2 for better extraction)"
@@ -840,10 +865,11 @@ def _extract_text_from_pdf(path: str) -> tuple[str | None, str]:
         return None, f"Error extracting text from PDF: {e}"
 
 
+# extract embedded images from Office documents (docx/xlsx/pptx) for diff viewing
 def _extract_images_from_office_doc(path: str) -> list[dict[str, Any]]:
     """
-    Extract image metadata from Office documents, including dimensions.
-    Returns list of image info dicts with name, path, size, hash, width, height.
+    extract image metadata from Office documents, including dimensions.
+    returns list of image info dicts with name, path, size, hash, width, height.
     """
     images: list[dict[str, Any]] = []
     try:
@@ -854,7 +880,7 @@ def _extract_images_from_office_doc(path: str) -> list[dict[str, Any]]:
             return images
 
         with zipfile.ZipFile(p, "r") as zf:
-            # Look for images in media folders
+            # look for images in media folders
             if p_lower.endswith(".docx"):
                 # Word: images in word/media/
                 media_pattern = "word/media/"
@@ -881,31 +907,31 @@ def _extract_images_from_office_doc(path: str) -> list[dict[str, Any]]:
                 ):
                     try:
                         info = zf.getinfo(name)
-                        # Compute hash for the image
+                        # compute hash for the image
                         img_data = zf.read(name)
                         img_hash = hashlib.sha256(img_data).hexdigest()[
                             :16
-                        ]  # Short hash for display
+                        ]  # short hash for display
 
-                        # Extract dimensions from document.xml for .docx
+                        # extract dimensions from document.xml for .docx
                         width = None
                         height = None
 
                         if p_lower.endswith(".docx") and doc_xml:
-                            # Find image relationships and extract dimensions
+                            # find image relationships and extract dimensions
                             # Word stores dimensions in EMU (English Metric Units): 1 inch = 914400 EMU
-                            # Look for <wp:extent> or <a:ext> tags with cx/cy attributes
-                            # Search for relationships to this image
+                            # look for <wp:extent> or <a:ext> tags with cx/cy attributes
+                            # search for relationships to this image
                             rel_pattern = r'<a:blip[^>]*r:embed="[^"]*"[^>]*>.*?<wp:extent[^>]*cx="(\d+)"[^>]*cy="(\d+)"[^>]*>'
                             matches = re.findall(rel_pattern, doc_xml, re.DOTALL)
                             if matches:
-                                # Use first match (most common case)
+                                # use first match (most common case)
                                 cx_emu, cy_emu = matches[0]
-                                # Convert EMU to pixels (assuming 96 DPI: 1 inch = 96 pixels = 914400 EMU)
+                                # convert EMU to pixels (assuming 96 DPI: 1 inch = 96 pixels = 914400 EMU)
                                 width = round(int(cx_emu) / 914400 * 96)
                                 height = round(int(cy_emu) / 914400 * 96)
                             else:
-                                # Try alternative pattern for inline images
+                                # try alternative pattern for inline images
                                 alt_pattern = r'<a:blip[^>]*r:embed="[^"]*"[^>]*>.*?<a:ext[^>]*cx="(\d+)"[^>]*cy="(\d+)"[^>]*>'
                                 alt_matches = re.findall(alt_pattern, doc_xml, re.DOTALL)
                                 if alt_matches:
@@ -934,11 +960,12 @@ def _extract_images_from_office_doc(path: str) -> list[dict[str, Any]]:
         return images
 
 
+# extract text formatting (bold, italic, underline) from Office documents for diff viewing
 def _extract_formatting_from_office_doc(path: str) -> dict[str, dict[str, Any]]:
     """
-    Extract formatting information (color, bold, italic, etc.) from Office documents.
-    Returns a dict mapping text content to effective styles (after inheritance).
-    This avoids false positives from run re-segmentation.
+    extract formatting information (color, bold, italic, etc.) from Office documents.
+    returns a dict mapping text content to effective styles (after inheritance).
+    this avoids false positives from run re-segmentation.
     """
     formatting_map: dict[str, dict[str, Any]] = {}
     try:
@@ -952,24 +979,24 @@ def _extract_formatting_from_office_doc(path: str) -> dict[str, dict[str, Any]]:
             try:
                 doc_xml = zf.read("word/document.xml").decode("utf-8", errors="replace")
 
-                # Find all paragraphs first to get paragraph-level styles
+                # find all paragraphs first to get paragraph-level styles
                 paragraph_pattern = r"<w:p[^>]*>(.*?)</w:p>"
                 paragraphs = re.findall(paragraph_pattern, doc_xml, re.DOTALL)
 
                 for para in paragraphs:
-                    # Get paragraph-level default styles (if any)
+                    # get paragraph-level default styles (if any)
                     para_color = re.search(
                         r'<w:pPr[^>]*>.*?<w:color[^>]*w:val="([^"]+)"', para, re.DOTALL
                     )
                     para_bold = re.search(r"<w:pPr[^>]*>.*?<w:b[^>]*/>", para, re.DOTALL)
                     para_italic = re.search(r"<w:pPr[^>]*>.*?<w:i[^>]*/>", para, re.DOTALL)
 
-                    # Find all runs within this paragraph
+                    # find all runs within this paragraph
                     run_pattern = r"<w:r[^>]*>(.*?)</w:r>"
                     runs = re.findall(run_pattern, para, re.DOTALL)
 
                     for run in runs:
-                        # Extract text - handle multi-codepoint graphemes (emojis) as single units
+                        # extract text - handle multi-codepoint graphemes (emojis) as single units
                         text_match = re.search(r"<w:t[^>]*>([^<]+)</w:t>", run)
                         if not text_match:
                             continue
@@ -978,46 +1005,46 @@ def _extract_formatting_from_office_doc(path: str) -> dict[str, dict[str, Any]]:
                         if not text.strip():
                             continue
 
-                        # Get run-level styles (override paragraph defaults)
+                        # get run-level styles (override paragraph defaults)
                         run_color = re.search(r'<w:color[^>]*w:val="([^"]+)"', run)
                         run_bold = re.search(r"<w:b[^>]*/>", run)
                         run_italic = re.search(r"<w:i[^>]*/>", run)
                         run_underline = re.search(r'<w:u[^>]*w:val="([^"]+)"', run)
 
-                        # Determine effective styles (run overrides paragraph)
+                        # determine effective styles (run overrides paragraph)
                         effective_styles: dict[str, str] = {}
 
-                        # Color: run overrides paragraph
+                        # color: run overrides paragraph
                         if run_color:
                             effective_styles["color"] = run_color.group(1)
                         elif para_color:
                             effective_styles["color"] = para_color.group(1)
 
-                        # Bold: run overrides paragraph
+                        # bold: run overrides paragraph
                         if run_bold:
                             effective_styles["bold"] = "true"
                         elif para_bold:
                             effective_styles["bold"] = "true"
 
-                        # Italic: run overrides paragraph
+                        # italic: run overrides paragraph
                         if run_italic:
                             effective_styles["italic"] = "true"
                         elif para_italic:
                             effective_styles["italic"] = "true"
 
-                        # Underline: run-level only
+                        # underline: run-level only
                         if run_underline:
                             effective_styles["underline"] = run_underline.group(1)
 
-                        # Store by text content (normalize whitespace for comparison)
-                        # Use the text as-is for matching, but handle emojis as single units
+                        # store by text content (normalize whitespace for comparison)
+                        # use the text as-is for matching, but handle emojis as single units
                         text_key = text
 
-                        # If this text already exists, merge styles (only if they're identical)
+                        # if this text already exists, merge styles (only if they're identical)
                         if text_key in formatting_map:
                             existing = formatting_map[text_key]
                             existing_styles = existing.get("styles", {})
-                            # Merge - only keep styles that are consistent
+                            # merge, only keep styles that are consistent
                             merged_styles = {}
                             for key, val in effective_styles.items():
                                 if key in existing_styles and existing_styles[key] == val:
@@ -1043,12 +1070,13 @@ def _extract_formatting_from_office_doc(path: str) -> dict[str, dict[str, Any]]:
         return formatting_map
 
 
+# extract readable text from Office documents for diff viewing
 def _extract_text_from_office_doc(path: str) -> tuple[str | None, str]:
     """
-    Extract readable text from Office documents (.docx, .xlsx, .pptx).
-    Returns (content, error_message) where content is None on error.
+    extract readable text from Office documents (.docx, .xlsx, .pptx).
+    returns (content, error_message) where content is None on error.
     Office documents are ZIP files containing XML.
-    Also preserves whitespace (Tab/Enter) for proper diffing.
+    also preserves whitespace (Tab/Enter) for proper diffing.
     """
     try:
         p = _norm_user_path(path)
@@ -1065,55 +1093,55 @@ def _extract_text_from_office_doc(path: str) -> tuple[str | None, str]:
                 try:
                     doc_xml = zf.read("word/document.xml").decode("utf-8", errors="replace")
 
-                    # Better approach: extract paragraphs and their text runs
-                    # Find all paragraphs first
+                    # better approach: extract paragraphs and their text runs
+                    # find all paragraphs first
                     paragraph_pattern = r"<w:p[^>]*>(.*?)</w:p>"
                     paragraphs = re.findall(paragraph_pattern, doc_xml, re.DOTALL)
 
                     if paragraphs:
                         para_texts = []
                         for para in paragraphs:
-                            # Extract all text runs within this paragraph
-                            # Preserve whitespace (Tab, Enter) by checking for <w:br/> and <w:tab/>
+                            # extract all text runs within this paragraph
+                            # preserve whitespace (Tab, Enter) by checking for <w:br/> and <w:tab/>
                             text_runs = re.findall(r"<w:t[^>]*>([^<]+)</w:t>", para)
-                            # Check for line breaks and tabs
+                            # check for line breaks and tabs
                             has_break = re.search(r"<w:br[^>]*/>", para)
                             has_tab = re.search(r"<w:tab[^>]*/>", para)
 
                             if text_runs:
-                                # Join text runs within a paragraph (preserves formatting within para)
+                                # join text runs within a paragraph (preserves formatting within para)
                                 para_text = "".join(text_runs)
-                                # Decode XML entities
+                                # decode XML entities
                                 para_text = (
                                     para_text.replace("&lt;", "<")
                                     .replace("&gt;", ">")
                                     .replace("&amp;", "&")
                                 )
-                                # Preserve tabs and line breaks
+                                # preserve tabs and line breaks
                                 if has_tab:
-                                    para_text = "\t" + para_text  # Add tab at start if present
+                                    para_text = "\t" + para_text  # add tab at start if present
                                 if has_break:
-                                    para_text = para_text + "\n"  # Add line break if present
+                                    para_text = para_text + "\n"  # add line break if present
                                 if para_text.strip() or has_tab or has_break:
                                     para_texts.append(para_text)
 
                         if para_texts:
-                            # Join paragraphs with newlines to preserve structure
-                            # Don't strip to preserve whitespace
+                            # join paragraphs with newlines to preserve structure
+                            # do not strip to preserve whitespace
                             text = "\n".join(para_texts)
                             text_parts.append(f"[Word Document Text]\n{text}\n")
                     else:
-                        # Fallback: extract all text from <w:t> tags
+                        # fallback: extract all text from <w:t> tags
                         text_matches = re.findall(r"<w:t[^>]*>([^<]+)</w:t>", doc_xml)
                         if text_matches:
-                            # Decode XML entities
+                            # decode XML entities
                             text = "".join(text_matches)
                             text = (
                                 text.replace("&lt;", "<").replace("&gt;", ">").replace("&amp;", "&")
                             )
-                            # Add newlines at paragraph boundaries (approximate)
+                            # add newlines at paragraph boundaries (approximate)
                             text = re.sub(r"</w:p>", "\n", text)
-                            text = re.sub(r"\n\s*\n", "\n", text)  # Clean up multiple newlines
+                            text = re.sub(r"\n\s*\n", "\n", text)  # clean up multiple newlines
                             if text.strip():
                                 text_parts.append(f"[Word Document Text]\n{text.strip()}\n")
                 except Exception as e:
@@ -1122,12 +1150,12 @@ def _extract_text_from_office_doc(path: str) -> tuple[str | None, str]:
             elif p_lower.endswith(".xlsx"):
                 # Excel: text is in xl/sharedStrings.xml and sheet data
                 try:
-                    # Get shared strings
+                    # get shared strings
                     try:
                         shared_strings_xml = zf.read("xl/sharedStrings.xml").decode(
                             "utf-8", errors="replace"
                         )
-                        # Extract text from <t> tags (Excel text elements)
+                        # extract text from <t> tags (Excel text elements)
                         text_matches = re.findall(r"<t[^>]*>([^<]+)</t>", shared_strings_xml)
                         if text_matches:
                             text_parts.append(
@@ -1136,7 +1164,7 @@ def _extract_text_from_office_doc(path: str) -> tuple[str | None, str]:
                     except Exception:
                         pass
 
-                    # Get sheet data (first sheet)
+                    # get sheet data (first sheet)
                     try:
                         sheet_list = [
                             name
@@ -1144,9 +1172,9 @@ def _extract_text_from_office_doc(path: str) -> tuple[str | None, str]:
                             if name.startswith("xl/worksheets/sheet") and name.endswith(".xml")
                         ]
                         if sheet_list:
-                            # Read first sheet
+                            # read first sheet
                             sheet_xml = zf.read(sheet_list[0]).decode("utf-8", errors="replace")
-                            # Extract cell values with references
+                            # extract cell values with references
                             cell_matches = re.findall(
                                 r'<c r="([^"]+)"[^>]*><v>([^<]+)</v></c>', sheet_xml
                             )
@@ -1174,10 +1202,10 @@ def _extract_text_from_office_doc(path: str) -> tuple[str | None, str]:
                     ]
                     slide_files.sort()
 
-                    for slide_file in slide_files[:10]:  # Limit to first 10 slides
+                    for slide_file in slide_files[:10]:  # limit to first 10 slides
                         try:
                             slide_xml = zf.read(slide_file).decode("utf-8", errors="replace")
-                            # Extract text from <a:t> tags (text in PowerPoint)
+                            # extract text from <a:t> tags (text in PowerPoint)
                             text_matches = re.findall(r"<a:t[^>]*>([^<]+)</a:t>", slide_xml)
                             if text_matches:
                                 slide_num = slide_file.split("/")[-1].replace(".xml", "")
@@ -1199,10 +1227,11 @@ def _extract_text_from_office_doc(path: str) -> tuple[str | None, str]:
         return None, f"Error extracting text from Office document: {e}"
 
 
+# split text into words for word-level diffing (better readability than character-level)
 def _split_into_words(text: str) -> list[tuple[str, int, int]]:
     """
-    Split text into words, preserving whitespace.
-    Returns list of (word, start_pos, end_pos) tuples.
+    split text into words, preserving whitespace.
+    returns list of (word, start_pos, end_pos) tuples.
     """
     import re
 
@@ -1212,23 +1241,24 @@ def _split_into_words(text: str) -> list[tuple[str, int, int]]:
     return words
 
 
+# compute character-level or word-level diff for a single line (used in line diffs)
 def _compute_char_diff(
     old_line: str, new_line: str, word_level: bool = True
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """
-    Compute word-level or character-level diff for a single line pair.
-    Returns (old_parts, new_parts) where each part is {'type': 'equal'|'removed'|'added', 'text': str}
+    compute word-level or character-level diff for a single line pair.
+    returns (old_parts, new_parts) where each part is {'type': 'equal'|'removed'|'added', 'text': str}
 
-    When word_level=True, groups changes by words for better readability.
+    when word_level=True, groups changes by words for better readability.
     """
     from difflib import SequenceMatcher
 
-    # Initialize result lists
+    # initialize result lists
     old_parts: list[dict[str, Any]] = []
     new_parts: list[dict[str, Any]] = []
 
     if word_level:
-        # Word-level diffing: split into words and diff at word level
+        # word-level diffing: split into words and diff at word level
         old_words = _split_into_words(old_line)
         new_words = _split_into_words(new_line)
 
@@ -1239,24 +1269,24 @@ def _compute_char_diff(
 
         for tag, i1, i2, j1, j2 in matcher.get_opcodes():
             if tag == "equal":
-                # Join equal words
+                # join equal words
                 text = "".join(old_word_texts[i1:i2])
                 old_parts.append({"type": "equal", "text": text})
                 new_parts.append({"type": "equal", "text": "".join(new_word_texts[j1:j2])})
             elif tag == "delete":
-                # Join deleted words
+                # join deleted words
                 text = "".join(old_word_texts[i1:i2])
                 old_parts.append({"type": "removed", "text": text})
             elif tag == "insert":
-                # Join inserted words
+                # join inserted words
                 text = "".join(new_word_texts[j1:j2])
                 new_parts.append({"type": "added", "text": text})
             elif tag == "replace":
-                # Join replaced words
+                # join replaced words
                 old_parts.append({"type": "removed", "text": "".join(old_word_texts[i1:i2])})
                 new_parts.append({"type": "added", "text": "".join(new_word_texts[j1:j2])})
     else:
-        # Character-level diffing (fallback)
+        # character-level diffing (fallback)
         matcher = SequenceMatcher(None, old_line, new_line)
 
         for tag, i1, i2, j1, j2 in matcher.get_opcodes():
@@ -1274,11 +1304,12 @@ def _compute_char_diff(
     return old_parts, new_parts
 
 
+# compute line-by-line diff with character-level highlighting for modified lines
 def _compute_line_diff(old_lines: list[str], new_lines: list[str]) -> list[dict[str, Any]]:
     """
-    Compute a line-by-line diff with character-level highlighting for modified lines.
-    Returns a list of diff segments with type: 'equal', 'added', 'removed', 'modified'
-    For modified lines, includes character-level differences.
+    compute a line-by-line diff with character-level highlighting for modified lines.
+    returns a list of diff segments with type: 'equal', 'added', 'removed', 'modified'
+    for modified lines, includes character-level differences.
     """
     from difflib import SequenceMatcher
 
@@ -1287,7 +1318,7 @@ def _compute_line_diff(old_lines: list[str], new_lines: list[str]) -> list[dict[
 
     for tag, i1, i2, j1, j2 in matcher.get_opcodes():
         if tag == "equal":
-            # Include equal lines
+            # include equal lines
             diff_segments.append(
                 {
                     "type": "equal",
@@ -1320,17 +1351,17 @@ def _compute_line_diff(old_lines: list[str], new_lines: list[str]) -> list[dict[
                 }
             )
         elif tag == "replace":
-            # For modified lines, compute character-level differences
+            # for modified lines, compute character-level differences
             old_section = old_lines[i1:i2]
             new_section = new_lines[j1:j2]
 
-            # If same number of lines, do character-level diff for each pair
+            # if same number of lines, do character-level diff for each pair
             if len(old_section) == len(new_section):
                 old_char_diffs: list[list[dict[str, Any]]] = []
                 new_char_diffs: list[list[dict[str, Any]]] = []
 
                 for old_line, new_line in zip(old_section, new_section):
-                    # Use word-level diffing for better readability
+                    # use word-level diffing for better readability
                     old_parts, new_parts = _compute_char_diff(old_line, new_line, word_level=True)
                     old_char_diffs.append(old_parts)
                     new_char_diffs.append(new_parts)
@@ -1349,7 +1380,7 @@ def _compute_line_diff(old_lines: list[str], new_lines: list[str]) -> list[dict[
                     }
                 )
             else:
-                # Different number of lines - treat as delete + insert
+                # different number of lines, treat as delete + insert
                 diff_segments.append(
                     {
                         "type": "modified",
@@ -1365,6 +1396,7 @@ def _compute_line_diff(old_lines: list[str], new_lines: list[str]) -> list[dict[
     return diff_segments
 
 
+# generate human-readable summary of file changes for the diff viewer
 def _nl_summary_for_diff(
     path: str,
     approx_bytes_changed: int,
@@ -1377,12 +1409,12 @@ def _nl_summary_for_diff(
 ) -> dict[str, str]:
     """Return {'headline': str, 'details': str}"""
     kind = _nl_file_kind(path)
-    # Headline
+    # headline
     if approx_bytes_changed == 0 and not zip_changes:
         headline = f"No differences detected in the {kind}."
         return {"headline": headline, "details": ""}
 
-    # Zip member changes summary
+    # zip member changes summary
     added = [z for z in zip_changes if z.get("change") == "added"]
     removed = [z for z in zip_changes if z.get("change") == "removed"]
     modified = [z for z in zip_changes if z.get("change") == "modified"]
@@ -1391,13 +1423,13 @@ def _nl_summary_for_diff(
     headline = f"{kind.capitalize()} changed ~{percent:.2f}% ({approx_bytes_changed} bytes)."
 
     parts: list[str] = []
-    # File sizes
+    # file sizes
     if base_size and cur_size and base_size != cur_size:
         delta = cur_size - base_size
         sign = "+" if delta >= 0 else ""
         parts.append(f"Size: {base_size} → {cur_size} bytes ({sign}{delta}).")
 
-    # Regions by chunks
+    # regions by chunks
     if chunk_regions:
         total_chunks = 0
         for s, e in ranges:
@@ -1418,7 +1450,7 @@ def _nl_summary_for_diff(
             bits.append(f"{m} modified")
         parts.append("ZIP members: " + ", ".join(bits) + ".")
 
-    # Heuristics by type
+    # heuristics by type
     if kind in ("PowerPoint", "Word document", "Excel workbook"):
         if zip_changes and modified:
             parts.append("Likely content edits to internal parts (slides, document XML, or media).")
@@ -1438,19 +1470,24 @@ def _nl_summary_for_diff(
 
 
 # -------- Baseline snapshot storage (content-addressed) --------
+# optional full-file snapshot storage: stores complete file content in a content-addressed
+# storage system (same content = same hash = same file, deduplication for free)
+# automatically prunes old snapshots to stay within size limits
 BASELINES_DIR = str((BASE_DIR / "data" / "baselines").resolve())
 BASELINES_MAX_BYTES: int = int(getattr(CFG, "baselines_max_bytes", 1_000_000_000))  # ~1 GB default
 
 
+# shard directories by hash prefix to avoid huge flat directories
 def _shard_dir_from_hex(h: str) -> str:
     # shard to avoid huge directories
     return os.path.join(BASELINES_DIR, h[:2], h[2:4], h)
 
 
+# store a full file snapshot in content-addressed storage (same content = same hash = same file)
 def _snapshot_file_to_cas(src_path: str) -> dict[str, Any]:
     """
-    Save the *bytes* of src_path into content-addressed storage by SHA-256.
-    Returns a metadata dict suitable for storing in target["baseline_blob"].
+    save the *bytes* of src_path into content-addressed storage by SHA-256.
+    returns a metadata dict suitable for storing in target["baseline_blob"].
     """
     src = _norm_user_path(src_path)
     st = os.stat(src)
@@ -1483,6 +1520,7 @@ def _snapshot_file_to_cas(src_path: str) -> dict[str, Any]:
     }
 
 
+# validate that a stored baseline blob is still intact (hash matches stored path)
 def _validate_cas_blob(blob: dict[str, Any]) -> bool:
     try:
         p = blob.get("stored_path")
@@ -1490,7 +1528,7 @@ def _validate_cas_blob(blob: dict[str, Any]) -> bool:
             return False
         if int(os.path.getsize(p)) != int(blob.get("size", -1)):
             return False
-        # Optional: verify hash matches
+        # optional: verify hash matches
         h = hashlib.sha256()
         with open(p, "rb") as f:
             for chunk in iter(lambda: f.read(1024 * 1024), b""):
@@ -1500,16 +1538,17 @@ def _validate_cas_blob(blob: dict[str, Any]) -> bool:
         return False
 
 
+# prune old baseline snapshots to stay within size limits (oldest files first)
 def _maybe_prune_baselines() -> None:
     """
-    Keep total size of BASELINES_DIR under BASELINES_MAX_BYTES.
-    Deletes oldest files first. Called after adding new baseline blobs.
+    keep total size of BASELINES_DIR under BASELINES_MAX_BYTES.
+    deletes oldest files first. called after adding new baseline blobs.
     """
     try:
         files: list[tuple[str, float, int]] = []
         total_size = 0
 
-        # Walk recursively and collect all baseline files
+        # walk recursively and collect all baseline files
         for root, _dirs, fnames in os.walk(BASELINES_DIR):
             for fn in fnames:
                 p = os.path.join(root, fn)
@@ -1520,7 +1559,7 @@ def _maybe_prune_baselines() -> None:
                 except Exception:
                     continue
 
-        # If we’re over the cap, remove oldest files until under limit
+        # if we are over the cap, remove oldest files until under limit
         if total_size > BASELINES_MAX_BYTES:
             files.sort(key=lambda x: x[1])  # oldest first
             for p, _mtime, sz in files:
@@ -1536,13 +1575,14 @@ def _maybe_prune_baselines() -> None:
 
 
 # ---------------- Flask app build ----------------
+# build the Flask application with all routes and event processing logic
 def build_app(event_bus) -> Flask:
     app = Flask(__name__)
 
     # make sure our iterator type is clear for mypy
     _iter: Iterator[dict[str, Any]] = _bus_iterator(event_bus)
 
-    # publisher helper used to push live events immediately
+    # publisher helper used to push live events immediately (for integrity events from API calls)
     def _publish(ev: dict[str, Any]) -> None:
         try:
             if hasattr(event_bus, "publish"):
@@ -1554,15 +1594,16 @@ def build_app(event_bus) -> Flask:
             # never break the request on failed publish
             pass
 
+    # emit an integrity event to the live event stream (for manual hash operations)
     def _emit_integrity_event(path: str, status: str, rule: str) -> None:
         """
-        Push an integrity-related event into the live event stream.
-        Used by /api/integrity/hash so that users see CHANGED/OK immediately.
-        Skips emitting events for OK statuses (baseline updated/deletion accepted)
+        push an integrity-related event into the live event stream.
+        used by /api/integrity/hash so that users see CHANGED/OK immediately.
+        skips emitting events for OK statuses (baseline updated/deletion accepted)
         since we update the existing CRITICAL entry instead.
         """
         s = (status or "").upper()
-        # Skip emitting new events for OK statuses - we update existing CRITICAL entries instead
+        # skip emitting new events for OK statuses, we update existing CRITICAL entries instead
         if s.startswith("OK") and (
             "baseline updated" in status.lower() or "deletion accepted" in status.lower()
         ):
@@ -1585,7 +1626,7 @@ def build_app(event_bus) -> Flask:
         }
         _publish(ev)
 
-    # favicon routes
+    # static asset routes (favicon and touch icons for web UI)
     @app.get("/favicon.ico")
     def favicon():
         return app.send_static_file("assets/favicon.ico")
@@ -1602,6 +1643,7 @@ def build_app(event_bus) -> Flask:
     def apple_touch_icon():
         return app.send_static_file("assets/apple-touch-icon.png")
 
+    # main event processing pipeline: drain events from bus, process them, and add to buffer
     def drain_into_buffer() -> int:
         with _DRAIN_LOCK:
             _maybe_reload_rules()
@@ -1617,23 +1659,23 @@ def build_app(event_bus) -> Flask:
                 except Exception:
                     break
                 if ev is None:
-                    continue  # dont exit early; keep trying until deadline
+                    continue  # do not exit early, keep trying until deadline
 
                 ev.setdefault("level", "info")
                 ev.setdefault("reason", "event")
                 ev.setdefault("ts", time.time())
 
                 if ev.get("source") == "integrity":
-                    # Update integrity targets when integrity events come in
+                    # update integrity targets when integrity events come in
                     _update_integrity_target_from_event(ev)
 
-                    # Check if this is a "Hash verified" event that should update existing CRITICAL entry
+                    # check if this is a "Hash verified" event that should update existing CRITICAL entry
                     if ev.get("update_existing") and ev.get("reason") == "Hash verified":
-                        # Update existing CRITICAL entry instead of creating new one
+                        # update existing CRITICAL entry instead of creating new one
                         path = ev.get("path", "")
                         if path:
                             _update_live_events_for_hash_verified(path)
-                            # Don't add this event to buffer - we updated the existing entry
+                            # do not add this event to buffer, we updated the existing entry
                             continue
                 else:
                     # makes sure we always have a dict for mypy and runtime safety
@@ -1680,7 +1722,7 @@ def build_app(event_bus) -> Flask:
                         ev["csc_confidence"] = 0.98
                         ev["csc_reasons"] = ["kernel/idle/registry fast-path"]
 
-                    # 3) everything else → model
+                    # 3) everything else -> model
                     else:
                         csc_out = _csc.evaluate(ev)
                         ev["csc"] = csc_out
@@ -1720,10 +1762,12 @@ def build_app(event_bus) -> Flask:
 
             return drained
 
+    # main page route: serve the dashboard HTML
     @app.get("/")
     def index():
         return render_template("index.html")
 
+    # event stream API: return events from the buffer (with optional filtering)
     @app.get("/api/events")
     def events():
         drain_into_buffer()
@@ -1738,12 +1782,14 @@ def build_app(event_bus) -> Flask:
             data.append(ev)
         return jsonify(data)
 
+    # ping endpoint: lightweight drain trigger to keep event ingestion going
     @app.get("/api/ping")
     def ping():
         """lightweight drain trigger so background ingestion continues on any tab"""
         n = drain_into_buffer()
         return jsonify({"ok": True, "drained": n, "buffer": len(BUFFER)})
 
+    # export endpoint: export events from buffer in various formats (CSV, JSON, JSONL, XLSX)
     @app.get("/api/export")
     def export_current():
         """
@@ -1882,12 +1928,13 @@ def build_app(event_bus) -> Flask:
         resp.headers["Content-Disposition"] = 'attachment; filename="custoseye_export.csv"'
         return resp
 
+    # process tree API: return the process tree built from process events
     @app.get("/api/proctree")
     def proctree():
         """
-        Return the compact process tree.
+        return the compact process tree.
 
-        Query params:
+        query params:
           as=json  -> download pretty JSON (custoseye_proctree.json)
           (none)   -> return JSON to the browser (not as attachment)
         """
@@ -1928,6 +1975,7 @@ def build_app(event_bus) -> Flask:
         # default inline JSON
         return jsonify(tree)
 
+    # about endpoint: return version and build info from VERSION.txt
     @app.get("/api/about")
     def about():
         version = "-"
@@ -1950,11 +1998,13 @@ def build_app(event_bus) -> Flask:
 
         # ---------------- integrity endpoints ----------------
 
+    # integrity targets API: get the watch list
     @app.get("/api/integrity/targets")
     def api_integrity_targets_get():
         # return normalized list
         return jsonify(_read_integrity_targets())
 
+    # integrity targets API: add or update a file on the watch list
     @app.post("/api/integrity/targets")
     def api_integrity_targets_post():
         """
@@ -2040,7 +2090,7 @@ def build_app(event_bus) -> Flask:
                 # leave chunks absent if we couldn't read; UI can re-baseline later
                 target.pop("chunks", None)
 
-            # If it's a ZIP (docx, xlsx, etc), store a member manifest for friendlier diffs
+            # If it is a ZIP (docx, xlsx, etc), store a member manifest for friendlier diffs
             zman = _zip_manifest(path)
             if zman:
                 target["zip_manifest"] = zman
@@ -2053,6 +2103,7 @@ def build_app(event_bus) -> Flask:
         except Exception as e:
             return jsonify({"ok": False, "error": str(e)}), 500
 
+    # integrity targets API: remove a file from the watch list
     @app.delete("/api/integrity/targets")
     def api_integrity_targets_delete():
         try:
@@ -2067,12 +2118,13 @@ def build_app(event_bus) -> Flask:
         except Exception as e:
             return jsonify({"ok": False, "error": str(e)}), 500
 
+    # integrity hash API: manually rehash a file and update its baseline
     @app.post("/api/integrity/hash")
     def api_integrity_hash():
         """
-        Re-hash: Manually compute SHA-256 and update baseline if needed.
-        This is for manually generating a new trusted hash, NOT for detection.
-        Does NOT emit events to avoid duplicate alerts - the integrity checker handles detection.
+        re-hash: manually compute SHA-256 and update baseline if needed.
+        this is for manually generating a new trusted hash, NOT for detection.
+        does NOT emit events to avoid duplicate alerts, the integrity checker handles detection.
         """
         try:
             body: dict[str, Any] = cast(
@@ -2082,9 +2134,9 @@ def build_app(event_bus) -> Flask:
             if not path:
                 return jsonify({"error": "missing path"}), 400  # hard fail if no path
 
-            # Check if file exists first - handle deletion gracefully
+            # check if file exists first, handle deletion gracefully
             if not os.path.exists(_norm_user_path(path)):
-                # File is deleted - update status gracefully
+                # file is deleted, update status gracefully
                 rows = _read_integrity_targets()
                 for r in rows:
                     if str(r.get("path") or "").lower() == path.lower():
@@ -2114,7 +2166,7 @@ def build_app(event_bus) -> Flask:
                         # hashing failed, record the error but do not change baselines
                         r["last_result"] = f"ERR: {info['error']}"
                         changed = True
-                        # DO NOT emit event - this is manual Re-hash, not detection
+                        # DO NOT emit event, this is manual Re-hash, not detection
                     else:
                         new_hash = info.get("sha256", "")  # current SHA-256 hex
                         if rule == "sha256":
@@ -2123,7 +2175,7 @@ def build_app(event_bus) -> Flask:
                                 r["sha256"] = new_hash
                                 r["last_result"] = "OK (baseline set)"
                                 changed = True
-                                # DO NOT emit event - this is manual Re-hash, not detection
+                                # DO NOT emit event, this is manual Re-hash, not detection
                                 if ALLOW_MTIME_SNAPSHOTS:
                                     try:
                                         r["baseline_blob"] = _snapshot_file_to_cas(path)
@@ -2134,7 +2186,7 @@ def build_app(event_bus) -> Flask:
                                 # simple equality check against baseline
                                 r["last_result"] = "OK" if baseline == new_hash else "CHANGED"
                                 changed = True
-                                # DO NOT emit event - this is manual Re-hash, not detection
+                                # DO NOT emit event, this is manual Re-hash, not detection
                         else:
                             # mtime+size rule, compare against or establish baseline
                             try:
@@ -2161,13 +2213,13 @@ def build_app(event_bus) -> Flask:
                                         else "CHANGED"
                                     )
                                     changed = True
-                                    # DO NOT emit event - this is manual Re-hash, not detection
+                                    # DO NOT emit event, this is manual Re-hash, not detection
                             except Exception as e:
                                 r["last_result"] = f"ERR: {e}"
-                                # DO NOT emit event - this is manual Re-hash, not detection
+                                # DO NOT emit event, this is manual Re-hash, not detection
                                 changed = True
 
-                    # ensure we have per chunk baseline so the diff endpoint can work
+                    # make sure we have per chunk baseline so the diff endpoint can work
                     # we only store per chunk hashes, not content
                     if "error" not in info:
                         need_chunks = "chunks" not in r or not isinstance(
@@ -2179,7 +2231,7 @@ def build_app(event_bus) -> Flask:
                                 r["chunks"] = ch  # algo, chunk_size, size, hashes
                                 changed = True
 
-                        # Only capture zip_manifest when (and only when) we establish a baseline
+                        # only capture zip_manifest when (and only when) we establish a baseline
                         if "error" not in info:
                             if (rule == "sha256" and not baseline) or (
                                 rule == "mtime+size" and (not r.get("mtime") or not r.get("size"))
@@ -2208,21 +2260,22 @@ def build_app(event_bus) -> Flask:
         except Exception as e:
             return jsonify({"error": str(e)}), 500
 
+    # integrity diff API: compute privacy-preserving diff between baseline and current file
     @app.post("/api/integrity/diff")
     def api_integrity_diff():
         """
-        Privacy-preserving diff between baseline chunk hashes and the current file.
+        privacy-preserving diff between baseline chunk hashes and the current file.
 
-        We never return file contents, only:
+        we never return file contents, only:
         - which chunk ranges changed (by chunk-hash),
-        - tiny 'after' previews (hex + ASCII) capped per region.
+        - tiny "after" previews (hex + ASCII) capped per region.
 
-        Percent logic:
-        - For ZIP-based Office files (docx/xlsx/pptx), estimate change from ZIP
+        percent logic:
+        - for ZIP-based Office files (docx/xlsx/pptx), estimate change from ZIP
             member deltas (added/removed = size, modified = abs(size diff), or a
             small cap when only CRC differs). Ignore the chunk-floor here to avoid
             100% spikes from container re-packing.
-        - For non-ZIP files, fall back to chunk-region coverage as before.
+        - for non-ZIP files, fall back to chunk-region coverage as before.
         """
         try:
             body: dict[str, Any] = cast(dict[str, Any], request.get_json(force=True) or {})
@@ -2233,7 +2286,7 @@ def build_app(event_bus) -> Flask:
             if not path:
                 return jsonify({"ok": False, "error": "missing path"}), 400
 
-            # Find target + baseline chunks
+            # find target + baseline chunks
             rows = _read_integrity_targets()
             target = next(
                 (r for r in rows if str(r.get("path") or "").lower() == path.lower()), None
@@ -2245,7 +2298,7 @@ def build_app(event_bus) -> Flask:
             if not baseline or not isinstance(baseline.get("hashes"), list):
                 return jsonify({"ok": False, "error": "no baseline chunks available"}), 400
 
-            # Check if file exists
+            # check if file exists
             if not os.path.exists(_norm_user_path(path)):
                 return (
                     jsonify(
@@ -2254,7 +2307,7 @@ def build_app(event_bus) -> Flask:
                     400,
                 )
 
-            # Current per-chunk hashes
+            # current per-chunk hashes
             cur = _chunk_hashes(path)
             if "error" in cur:
                 return jsonify({"ok": False, "error": cur["error"]}), 400
@@ -2301,7 +2354,7 @@ def build_app(event_bus) -> Flask:
                             }
                         )
 
-            # ----- Identify changed chunk indices (for regions UI only) -----
+            # ----- identify changed chunk indices (for regions UI only) -----
             max_len = max(len(base_hashes), len(cur_hashes))
             changed_idxs: list[int] = []
             for i in range(max_len):
@@ -2312,7 +2365,7 @@ def build_app(event_bus) -> Flask:
 
             ranges = _merge_changed_chunks(changed_idxs)
 
-            # Build regions with offsets and tiny 'after' previews
+            # build regions with offsets and tiny "after" previews
             regions_out: list[dict[str, Any]] = []
             chunk_floor_bytes = 0
             for start_idx, end_idx in ranges[:max_regions]:
@@ -2346,13 +2399,13 @@ def build_app(event_bus) -> Flask:
                 chunk_floor_bytes += length
 
             # ----- Estimate % changed -----
-            # Default: non-ZIP → chunk-floor estimate
+            # default: non-ZIP -> chunk-floor estimate
             approx_bytes_changed = chunk_floor_bytes
             estimation_method = "chunks"
 
             if zip_changes:
-                # For Office containers, use only ZIP delta for the %.
-                # This avoids "100%" when the whole archive gets re-packed.
+                # for Office containers, use only ZIP delta for the %.
+                # this avoids "100%" when the whole archive gets re-packed.
                 changed_zip_bytes = 0
                 for z in zip_changes:
                     ch = (z.get("change") or "").lower()
@@ -2365,32 +2418,32 @@ def build_app(event_bus) -> Flask:
                         sa = int(z.get("size_after", 0))
                         delta = abs(sa - sb)
                         if delta == 0 and z.get("crc_before") != z.get("crc_after"):
-                            # Same size but different bytes → treat as a tiny content tweak.
+                            # same size but different bytes -> treat as a tiny content tweak.
                             delta = min(sa, 512)  # cap the tiny edit at 1 KiB
                         changed_zip_bytes += delta
 
-                # In case everything is metadata-only and delta rounds to zero, give a small floor.
+                # in case everything is metadata-only and delta rounds to zero, give a small floor.
                 if changed_zip_bytes == 0 and changed_idxs:
                     changed_zip_bytes = min(cur_size, 1024)
 
                 approx_bytes_changed = min(int(changed_zip_bytes), cur_size)
                 estimation_method = "zip-members-delta"
 
-            # Initial byte-based percentage (will be refined if text_diff is available)
+            # initial byte-based percentage (will be refined if text_diff is available)
             denom = float(max(1, cur_size))
             percent = round((approx_bytes_changed / denom) * 100.0, 2)
 
-            # ----- Try to extract text-based diff for readable files -----
+            # ----- try to extract text-based diff for readable files -----
             text_diff: dict[str, Any] | None = None
             file_type = "binary"
 
-            # Check if this is a text file, Office document, or PDF
+            # check if this is a text file, Office document, or PDF
             is_text = _is_text_file(path)
             is_office = (path or "").lower().endswith((".docx", ".xlsx", ".pptx"))
             is_pdf = _is_pdf_file(path)
 
             if is_text or is_office or is_pdf:
-                # Check if we have a baseline blob stored
+                # check if we have a baseline blob stored
                 baseline_blob = target.get("baseline_blob")
                 baseline_text = None
                 current_text = None
@@ -2400,44 +2453,44 @@ def build_app(event_bus) -> Flask:
                     and isinstance(baseline_blob, dict)
                     and not baseline_blob.get("error")
                 ):
-                    # Read baseline from stored blob
+                    # read baseline from stored blob
                     stored_path = baseline_blob.get("stored_path")
                     if stored_path and os.path.exists(stored_path):
                         if is_office:
-                            # Extract text from Office document baseline
+                            # extract text from Office document baseline
                             baseline_text, _ = _extract_text_from_office_doc(stored_path)
                         elif is_pdf:
-                            # Extract text from PDF baseline
+                            # extract text from PDF baseline
                             baseline_text, _ = _extract_text_from_pdf(stored_path)
                         else:
-                            # Read as regular text file
+                            # read as regular text file
                             baseline_text, _ = _read_text_file(stored_path)
 
-                # Read current file
+                # read current file
                 if is_office:
-                    # Extract text from Office document
+                    # extract text from Office document
                     current_text, text_error = _extract_text_from_office_doc(path)
                 elif is_pdf:
-                    # Extract text from PDF
+                    # extract text from PDF
                     current_text, text_error = _extract_text_from_pdf(path)
                 else:
-                    # Read as regular text file
+                    # read as regular text file
                     current_text, text_error = _read_text_file(path)
 
                 if baseline_text is not None and current_text is not None:
-                    # Both files readable - compute line diff
+                    # both files readable, compute line diff
                     old_lines = baseline_text.splitlines(keepends=False)
                     new_lines = current_text.splitlines(keepends=False)
                     diff_segments = _compute_line_diff(old_lines, new_lines)
 
-                    # Extract images and formatting for Office documents
+                    # extract images and formatting for Office documents
                     images_baseline: list[dict[str, Any]] = []
                     images_current: list[dict[str, Any]] = []
                     image_changes: list[dict[str, Any]] = []
                     formatting_changes: list[dict[str, Any]] = []
 
                     if is_office:
-                        # Extract images from both versions
+                        # extract images from both versions
                         images_baseline = (
                             _extract_images_from_office_doc(stored_path)
                             if stored_path and os.path.exists(stored_path)
@@ -2445,19 +2498,19 @@ def build_app(event_bus) -> Flask:
                         )
                         images_current = _extract_images_from_office_doc(path)
 
-                        # Compare images to detect add/remove/replace/resize
-                        # Create maps by hash for quick lookup
+                        # compare images to detect add/remove/replace/resize
+                        # create maps by hash for quick lookup
                         baseline_img_map = {img["hash"]: img for img in images_baseline}
                         current_img_map = {img["hash"]: img for img in images_current}
 
-                        # Also create maps by name for resize detection (when hash might be same but dimensions differ)
+                        # also create maps by name for resize detection (when hash might be same but dimensions differ)
                         baseline_img_by_name = {img["name"]: img for img in images_baseline}
                         current_img_by_name = {img["name"]: img for img in images_current}
 
                         baseline_hashes = set(baseline_img_map.keys())
                         current_hashes = set(current_img_map.keys())
 
-                        # Added images (new hash)
+                        # added images (new hash)
                         for img_hash in current_hashes - baseline_hashes:
                             image_changes.append(
                                 {
@@ -2467,7 +2520,7 @@ def build_app(event_bus) -> Flask:
                                 }
                             )
 
-                        # Removed images (hash no longer exists)
+                        # removed images (hash no longer exists)
                         for img_hash in baseline_hashes - current_hashes:
                             image_changes.append(
                                 {
@@ -2477,7 +2530,7 @@ def build_app(event_bus) -> Flask:
                                 }
                             )
 
-                        # Check for resized images (same name/hash but different dimensions)
+                        # check for resized images (same name/hash but different dimensions)
                         common_names = set(baseline_img_by_name.keys()) & set(
                             current_img_by_name.keys()
                         )
@@ -2490,7 +2543,7 @@ def build_app(event_bus) -> Flask:
                             current_width = current_img.get("width")
                             current_height = current_img.get("height")
 
-                            # Check if dimensions changed
+                            # check if dimensions changed
                             if (
                                 baseline_width is not None
                                 and baseline_height is not None
@@ -2501,7 +2554,7 @@ def build_app(event_bus) -> Flask:
                                     baseline_width != current_width
                                     or baseline_height != current_height
                                 ):
-                                    # Image was resized
+                                    # image was resized
                                     image_changes.append(
                                         {
                                             "change": "resized",
@@ -2513,10 +2566,10 @@ def build_app(event_bus) -> Flask:
                                             "type": "image",
                                         }
                                     )
-                            # Also check if hash is same but dimensions are missing in one version
+                            # also check if hash is same but dimensions are missing in one version
                             elif baseline_img.get("hash") == current_img.get("hash"):
-                                # Same hash means same image file, but dimensions might have changed
-                                # This is a resize case where we detected the same file but dimensions differ
+                                # same hash means same image file, but dimensions might have changed
+                                # this is a resize case where we detected the same file but dimensions differ
                                 if (baseline_width is not None or baseline_height is not None) and (
                                     current_width is not None or current_height is not None
                                 ):
@@ -2536,7 +2589,7 @@ def build_app(event_bus) -> Flask:
                                             }
                                         )
 
-                        # Extract and compare formatting - use dict-based approach to avoid false positives
+                        # extract and compare formatting, use dict-based approach to avoid false positives
                         formatting_baseline_map = (
                             _extract_formatting_from_office_doc(stored_path)
                             if stored_path and os.path.exists(stored_path)
@@ -2544,8 +2597,8 @@ def build_app(event_bus) -> Flask:
                         )
                         formatting_current_map = _extract_formatting_from_office_doc(path)
 
-                        # Compare formatting - only report actual style changes on matching text
-                        # Text that exists in both versions
+                        # compare formatting, only report actual style changes on matching text
+                        # text that exists in both versions
                         common_texts = set(formatting_baseline_map.keys()) & set(
                             formatting_current_map.keys()
                         )
@@ -2557,14 +2610,14 @@ def build_app(event_bus) -> Flask:
                             old_styles = old_fmt.get("styles", {})
                             new_styles = new_fmt.get("styles", {})
 
-                            # Only report if styles actually changed
+                            # only report if styles actually changed
                             if old_styles != new_styles:
-                                # Calculate what actually changed (only report changed attributes)
+                                # calculate what actually changed (only report changed attributes)
                                 changed_attrs = []
                                 removed_attrs = []
                                 added_attrs = []
 
-                                # Check each attribute
+                                # check each attribute
                                 all_keys = set(old_styles.keys()) | set(new_styles.keys())
                                 for key in all_keys:
                                     old_val = old_styles.get(key)
@@ -2572,18 +2625,18 @@ def build_app(event_bus) -> Flask:
 
                                     if old_val != new_val:
                                         if old_val is not None and new_val is not None:
-                                            # Attribute changed
+                                            # attribute changed
                                             changed_attrs.append(f"{key}: {old_val} → {new_val}")
                                         elif old_val is not None:
-                                            # Attribute removed
+                                            # attribute removed
                                             removed_attrs.append(f"{key}={old_val}")
                                         else:
-                                            # Attribute added
+                                            # attribute added
                                             added_attrs.append(f"{key}={new_val}")
 
-                                # Only report if there are actual changes
+                                # only report if there are actual changes
                                 if changed_attrs or removed_attrs or added_attrs:
-                                    # Convert to list format for display
+                                    # convert to list format for display
                                     old_style_list = [f"{k}={v}" for k, v in old_styles.items()]
                                     new_style_list = [f"{k}={v}" for k, v in new_styles.items()]
 
@@ -2600,8 +2653,8 @@ def build_app(event_bus) -> Flask:
                                         }
                                     )
 
-                    # Show entire file - no truncation
-                    # The UI will handle scrolling for large files
+                    # show entire file, no truncation
+                    # the UI will handle scrolling for large files
 
                     text_diff = {
                         "type": "text",
@@ -2612,7 +2665,7 @@ def build_app(event_bus) -> Flask:
                         "old_line_count": len(old_lines),
                         "new_line_count": len(new_lines),
                         "diff_segments": diff_segments,
-                        "show_full_file": True,  # Flag to show entire file
+                        "show_full_file": True,  # flag to show entire file
                         "images_baseline": images_baseline,
                         "images_current": images_current,
                         "image_changes": image_changes,
@@ -2620,7 +2673,7 @@ def build_app(event_bus) -> Flask:
                     }
                     file_type = "text"
 
-                    # Recalculate percentage based on actual changed lines (more accurate for text files)
+                    # recalculate percentage based on actual changed lines (more accurate for text files)
                     total_lines = max(len(old_lines), len(new_lines))
                     changed_lines = 0
                     changed_chars = 0
@@ -2637,14 +2690,14 @@ def build_app(event_bus) -> Flask:
                             for line in seg.get("old_lines", []):
                                 changed_chars += len(line)
                         elif seg_type == "modified":
-                            # For modified lines, count actual character changes
+                            # for modified lines, count actual character changes
                             old_char_diffs = seg.get("old_char_diffs", [])
                             new_char_diffs = seg.get("new_char_diffs", [])
                             old_lines_seg = seg.get("old_lines", [])
                             new_lines_seg = seg.get("new_lines", [])
 
                             if old_char_diffs or new_char_diffs:
-                                # Count actual changed characters from character-level diffs
+                                # count actual changed characters from character-level diffs
                                 for i in range(max(len(old_lines_seg), len(new_lines_seg))):
                                     if i < len(old_char_diffs) and old_char_diffs[i]:
                                         for part in old_char_diffs[i]:
@@ -2654,35 +2707,35 @@ def build_app(event_bus) -> Flask:
                                         for part in new_char_diffs[i]:
                                             if part.get("type") == "added":
                                                 changed_chars += len(part.get("text", ""))
-                                    changed_lines += 0.5  # Partial line (weighted)
+                                    changed_lines += 0.5  # partial line (weighted)
                             else:
-                                # Fallback: count all modified lines
+                                # fallback: count all modified lines
                                 changed_lines += max(len(old_lines_seg), len(new_lines_seg))
-                                # Estimate character changes
+                                # estimate character changes
                                 for line in old_lines_seg + new_lines_seg:
-                                    changed_chars += len(line) // 2  # Estimate 50% changed
+                                    changed_chars += len(line) // 2  # estimate 50% changed
 
-                    # Count total characters for percentage calculation
+                    # count total characters for percentage calculation
                     for line in old_lines + new_lines:
                         total_chars += len(line)
 
                     if total_lines > 0 and total_chars > 0:
-                        # Use character-based percentage for more accuracy (weighted 60%)
+                        # use character-based percentage for more accuracy (weighted 60%)
                         char_percent = (changed_chars / total_chars) * 100.0
-                        # Use line-based percentage (weighted 40%)
+                        # use line-based percentage (weighted 40%)
                         line_percent = (changed_lines / total_lines) * 100.0
-                        # Blend both
+                        # blend both
                         percent = round((char_percent * 0.6) + (line_percent * 0.4), 2)
                     elif total_lines > 0:
-                        # Fallback to line-based only
+                        # fallback to line-based only
                         line_percent = (changed_lines / total_lines) * 100.0
                         byte_percent = (approx_bytes_changed / float(max(1, cur_size))) * 100.0
                         percent = round((line_percent * 0.7) + (byte_percent * 0.3), 2)
 
-                    # Cap at 100% and ensure non-negative
+                    # cap at 100% and ensure non-negative
                     percent = min(100.0, max(0.0, percent))
                 elif current_text is not None:
-                    # Only current file readable - baseline might be missing or binary
+                    # only current file readable, baseline might be missing or binary
                     text_diff = {
                         "type": "text",
                         "file_type": _nl_file_kind(path),
@@ -2697,7 +2750,7 @@ def build_app(event_bus) -> Flask:
             elif zip_changes:
                 file_type = "office"
 
-            # Generate summary text with accurate percentage
+            # generate summary text with accurate percentage
             nl = _nl_summary_for_diff(
                 path=path,
                 approx_bytes_changed=approx_bytes_changed,
@@ -2729,19 +2782,20 @@ def build_app(event_bus) -> Flask:
                 },
                 "zip_changes": zip_changes,
                 "regions": regions_out,
-                "text_diff": text_diff,  # New: text-based diff for readable files
+                "text_diff": text_diff,  # new: text-based diff for readable files
             }
             return jsonify(out)
 
         except Exception as e:
             return jsonify({"ok": False, "error": str(e)}), 500
 
+    # integrity baseline accept API: accept current file state as new baseline
     @app.post("/api/integrity/baseline/accept")
     def api_integrity_baseline_accept():
         """
-        Accept current file state as the new baseline.
-        This updates the baseline hash/mtime+size and creates a new baseline blob.
-        For deleted files, marks the deletion as intentional and removes from watch list.
+        accept current file state as the new baseline.
+        this updates the baseline hash/mtime+size and creates a new baseline blob.
+        for deleted files, marks the deletion as intentional and removes from watch list.
         """
         try:
             body: dict[str, Any] = cast(dict[str, Any], request.get_json(force=True) or {})
@@ -2756,19 +2810,19 @@ def build_app(event_bus) -> Flask:
             if target is None:
                 return jsonify({"ok": False, "error": "not on watch list"}), 400
 
-            # Check if file is deleted
+            # check if file is deleted
             if not os.path.exists(_norm_user_path(path)):
-                # File is deleted - mark as intentionally deleted and remove from watch list
+                # file is deleted, mark as intentionally deleted and remove from watch list
                 rule = str(target.get("rule") or "sha256").lower()
 
-                # Update existing Live Events entries for this path to reflect acceptance
-                # Append acceptance text to existing CRITICAL entry instead of creating new event
+                # update existing Live Events entries for this path to reflect acceptance
+                # append acceptance text to existing CRITICAL entry instead of creating new event
                 _update_live_events_for_path(path, "✔ Change accepted (deletion accepted)")
 
-                # Note: We don't emit a new event for OK statuses - we update the existing CRITICAL entry instead
-                # The file is removed from the watch list, so no integrity target update is needed
+                # note: we do not emit a new event for OK statuses, we update the existing CRITICAL entry instead
+                # the file is removed from the watch list, so no integrity target update is needed
 
-                # Remove from watch list
+                # remove from watch list
                 rows = [r for r in rows if str(r.get("path") or "").lower() != path.lower()]
                 _write_integrity_targets(rows)
                 return jsonify(
@@ -2781,14 +2835,14 @@ def build_app(event_bus) -> Flask:
 
             rule = str(target.get("rule") or "sha256").lower()
 
-            # Update baseline based on rule
+            # update baseline based on rule
             if rule == "sha256":
                 info = _sha256_file(path)
                 if info.get("sha256"):
                     target["sha256"] = info["sha256"]
                     target["last_result"] = "OK (baseline updated)"
 
-                    # Update baseline blob
+                    # update baseline blob
                     if ALLOW_MTIME_SNAPSHOTS:
                         try:
                             target["baseline_blob"] = _snapshot_file_to_cas(path)
@@ -2805,7 +2859,7 @@ def build_app(event_bus) -> Flask:
                     target["size"] = int(st.st_size)
                     target["last_result"] = "OK (baseline updated)"
 
-                    # Update baseline blob
+                    # update baseline blob
                     if ALLOW_MTIME_SNAPSHOTS:
                         try:
                             target["baseline_blob"] = _snapshot_file_to_cas(path)
@@ -2815,12 +2869,12 @@ def build_app(event_bus) -> Flask:
                 except Exception as e:
                     return jsonify({"ok": False, "error": str(e)}), 400
 
-            # Update chunk baseline
+            # update chunk baseline
             info_chunks = _chunk_hashes(path)
             if "error" not in info_chunks:
                 target["chunks"] = info_chunks
 
-            # Update ZIP manifest if applicable
+            # update ZIP manifest if applicable
             zman = _zip_manifest(path)
             if zman:
                 target["zip_manifest"] = zman
@@ -2829,12 +2883,12 @@ def build_app(event_bus) -> Flask:
 
             _write_integrity_targets(rows)
 
-            # Update existing Live Events entries for this path to reflect acceptance
-            # Append acceptance text to existing CRITICAL entry instead of creating new event
+            # update existing Live Events entries for this path to reflect acceptance
+            # append acceptance text to existing CRITICAL entry instead of creating new event
             _update_live_events_for_path(path, "✔ Marked Safe")
 
-            # Note: We don't emit a new event for OK statuses - we update the existing CRITICAL entry instead
-            # The integrity target status is already updated above with target["last_result"] = "OK (baseline updated)"
+            # note: we do not emit a new event for OK statuses, we update the existing CRITICAL entry instead
+            # the integrity target status is already updated above with target["last_result"] = "OK (baseline updated)"
 
             return jsonify(
                 {
@@ -2847,11 +2901,12 @@ def build_app(event_bus) -> Flask:
         except Exception as e:
             return jsonify({"ok": False, "error": str(e)}), 500
 
+    # integrity baseline download API: download stored baseline snapshot file
     @app.get("/api/integrity/baseline/download")
     def api_integrity_baseline_download():
         """
-        Download the stored baseline blob for a given path, if present and valid.
-        Query: ?path=<watch-list path>
+        download the stored baseline blob for a given path, if present and valid.
+        query: ?path=<watch-list path>
         """
         try:
             path = (request.args.get("path") or "").strip()
@@ -2878,34 +2933,35 @@ def build_app(event_bus) -> Flask:
         except Exception as e:
             return jsonify({"ok": False, "error": str(e)}), 500
 
+    # integrity browse API: Windows-only file picker dialog for selecting files to watch
     @app.post("/api/integrity/browse")
     def api_integrity_browse():
         """
         windows-only file picker via tkinter. returns {"path": "..."} or {} if cancelled.
         we keep it very small and guarded. it will no-op on non-Windows.
-        Sets app icon and enables DPI awareness for crisp rendering.
+        sets app icon and enables DPI awareness for crisp rendering.
         """
         try:
             if sys.platform != "win32":
                 return jsonify({"error": "browse supported on Windows only"}), 400
             
-            # Enable DPI awareness for crisp rendering (must be done before creating any windows)
+            # enable DPI awareness for crisp rendering (must be done before creating any windows)
             try:
                 import ctypes
                 
-                # Try to set Per-Monitor DPI awareness (Windows 10+)
+                # try to set Per-Monitor DPI awareness (Windows 10+)
                 try:
                     # PROCESS_PER_MONITOR_DPI_AWARE = 2
                     ctypes.windll.shcore.SetProcessDpiAwareness(2)
                 except (AttributeError, OSError):
-                    # Fallback to system DPI awareness (Windows Vista+)
+                    # fallback to system DPI awareness (Windows Vista+)
                     try:
                         # PROCESS_DPI_AWARE = 1
                         ctypes.windll.user32.SetProcessDPIAware()
                     except (AttributeError, OSError):
-                        pass  # Older Windows or already set
+                        pass  # older Windows or already set
             except Exception:
-                pass  # Non-critical, continue without DPI awareness
+                pass  # non-critical, continue without DPI awareness
             
             # late imports to avoid importing Tk on non-Windows
             import tkinter as _tk  # type: ignore
@@ -2914,16 +2970,16 @@ def build_app(event_bus) -> Flask:
             root = _tk.Tk()
             root.withdraw()
             
-            # Set app icon for dialog title bar and taskbar
+            # set app icon for dialog title bar and taskbar
             icon_path = BASE_DIR / "assets" / "favicon.ico"
             if icon_path.exists():
                 try:
                     root.iconbitmap(str(icon_path))
                 except Exception:
-                    pass  # Non-critical if icon fails to load
+                    pass  # non-critical if icon fails to load
             
             root.attributes("-topmost", True)  # bring dialog front
-            root.title("CustosEye - Select File")  # Set window title
+            root.title("CustosEye - Select File")  # set window title
             
             sel = _fd.askopenfilename(title="Select a file to watch")
             try:
@@ -2939,6 +2995,7 @@ def build_app(event_bus) -> Flask:
     return app
 
 
+# run the dashboard: start the Flask app with optional Waitress server
 def run_dashboard(event_bus) -> None:
     app = build_app(event_bus)
     if app is None:
@@ -2952,6 +3009,7 @@ def run_dashboard(event_bus) -> None:
 
 
 # standalone mode (optional): if you run "python -m dashboard.app"
+# creates a minimal event bus and starts agents + dashboard for testing
 if __name__ == "__main__":
     # minimal pub/sub bus for standalone dashboard
     import queue

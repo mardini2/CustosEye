@@ -1,3 +1,8 @@
+<!--
+  goal: license page for CustosEye website. fetches and displays the LICENSE.md file
+        from the repository root, showing it in a formatted monospace container.
+        dynamically loads the license text when the page loads.
+-->
 <!doctype html>
 <html lang="en">
   
@@ -49,13 +54,14 @@
 
   <!-- main content -->
   <main class="wrap">
+    <!-- license display card: shows the LICENSE.md file content -->
     <section class="card">
       <h2 style="margin-bottom:8px">License</h2>
       <p class="muted" style="margin-bottom:16px">
         Current license for CustosEye
       </p>
 
-      <!-- container where we will render the LICENSE text -->
+      <!-- container where we will render the LICENSE text (monospace formatting for code-like display) -->
       <div id="license-container" style="
            white-space: pre-wrap;      /* keep line breaks from the LICENSE file */
            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
@@ -90,25 +96,28 @@
     // write the current year in the footer
     document.getElementById('year').textContent = new Date().getFullYear();
 
-    // try common license filenames in order
+    // try common license filenames in order (different repos use different naming)
     const CANDIDATES = ['LICENSE.md', 'LICENSE', 'LICENSE.txt'];
 
+    // fetch and display the license file
     (async () => {
         const el = document.getElementById('license-container');
+        // try each candidate filename until one works
         for (const path of CANDIDATES) {
         try {
-            const res = await fetch(path, { cache: 'no-store' });
-            if (!res.ok) continue; // try the next candidate
-            const text = await res.text();
+            const res = await fetch(path, { cache: 'no-store' });  // fetch without caching
+            if (!res.ok) continue; // try the next candidate if this one fails
+            const text = await res.text();  // read the file as text
 
-            // keep it simple: show the text exactly as written
+            // keep it simple: show the text exactly as written (preserves formatting)
             // if we later want nicer Markdown rendering, we can add a tiny parser.
             el.textContent = text;
-            return;
+            return;  // success, exit the loop
         } catch {
-            // ignore and try next
+            // ignore and try next candidate if fetch fails
         }
         }
+        // if none of the candidates worked, show an error message
         el.textContent = 'Could not load license. Please try again later.';
         console.warn('[license] None of the expected license files were found:', CANDIDATES.join(', '));
     })();

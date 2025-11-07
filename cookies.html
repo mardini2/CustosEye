@@ -1,3 +1,8 @@
+<!--
+  goal: cookie consent settings page for CustosEye website. allows users to accept or decline
+        analytics cookies, displays their current choice, and stores the preference in localStorage.
+        this page is separate from the consent modal and provides a dedicated settings interface.
+-->
 <!doctype html>
 <html lang="en">
 
@@ -50,6 +55,7 @@
 
   <!-- main content -->
   <main class="wrap">
+    <!-- cookie settings card: accept/decline buttons and status display -->
     <section class="card">
       <h2 style="margin-bottom:8px">Cookie settings</h2>
 
@@ -62,11 +68,11 @@
       <div class="btn-row" style="margin-top:8px">
         <button class="btn btn-primary" id="accept-cookies">Accept cookies</button>
         <button class="btn btn-ghost" id="decline-cookies">Decline</button>
-        <!-- “Home” replaces “Cookie settings” when you’re on this page -->
+        <!-- "Home" replaces "Cookie settings" when you're on this page -->
         <a class="btn btn-ghost" href="/" rel="noopener">Back Home</a>
       </div>
 
-      <!-- where we reflect the current stored state -->
+      <!-- where we reflect the current stored state (shows "accepted", "declined", or "no choice") -->
       <div id="cookie-status" class="muted" style="margin-top:12px"></div>
     </section>
   </main>
@@ -84,11 +90,11 @@
     // write the current year in the footer
     document.getElementById('year').textContent = new Date().getFullYear();
 
-    // use the same key as the banner/index page
+    // use the same key as the banner/index page (must match consent.js)
     const KEY = 'analytics_consent';
     const statusEl = document.getElementById('cookie-status');
 
-    // helper to show the current choice
+    // helper to show the current choice (reads from localStorage and displays status)
     function setStatusText() {
       const v = localStorage.getItem(KEY);
       statusEl.textContent = v
@@ -98,20 +104,20 @@
 
     // Accept => store 'granted', notify any listeners, go home
     document.getElementById('accept-cookies').addEventListener('click', () => {
-      localStorage.setItem(KEY, 'granted');
-      window.dispatchEvent(new Event('analytics:consent-granted'));
-      setStatusText();
+      localStorage.setItem(KEY, 'granted');  // save acceptance to localStorage
+      window.dispatchEvent(new Event('analytics:consent-granted'));  // fire event for analytics script
+      setStatusText();  // update status display
       window.location.href = '/'; // back to homepage
     });
 
     // Decline => store 'denied', go home
     document.getElementById('decline-cookies').addEventListener('click', () => {
-      localStorage.setItem(KEY, 'denied');
-      setStatusText();
+      localStorage.setItem(KEY, 'denied');  // save denial to localStorage
+      setStatusText();  // update status display
       window.location.href = '/'; // back to homepage
     });
 
-    // show initial state
+    // show initial state when page loads
     setStatusText();
   </script>
 </body>

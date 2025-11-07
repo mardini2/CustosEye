@@ -1,33 +1,21 @@
 """
-goal: verify the integrity of configured files by recomputing SHA256 and comparing to known-good values,
-      but only emit events when a file's status changes (quiet output).
-
-design:
-- targets are listed in data/integrity_targets.json:
-  [
-    {"path": "%WINDIR%/System32/notepad.exe", "sha256": "..."},
-    {"path": "data/fixtures/ok.txt", "sha256": "..."}
-  ]
-- paths can be relative, absolute, with %ENVVARS%, or with ~.
-- status transitions that trigger a print:
-    missing  -> ok | mismatch | noaccess | error
-    ok       -> missing | mismatch | noaccess | error
-    mismatch -> ok | missing | noaccess | error
-    noaccess -> ok | missing | mismatch | error
-    error    -> ok | missing | mismatch | noaccess
-- interval defaults to 30s; you can set a faster interval from app/console.py when constructing IntegrityChecker.
+goal: continuously monitors file integrity by checking SHA256 hashes against expected values.
+only emits events when a file's status changes (missing -> ok, ok -> mismatch, etc).
+reloads the target list from JSON on each check loop so changes take effect immediately.
+handles various file states: ok, missing, mismatch, noaccess, and error.
 """
 
-from __future__ import annotations
+from __future__ import annotations  # lets us use string annotations like "IntegrityChecker" before the class is defined
 
-import hashlib
-import json
-import os
-import pathlib
-import time
-from collections.abc import Callable
-from typing import Any
+import hashlib  # for computing SHA256 hashes of files
+import json  # for reading the targets JSON file
+import os  # for checking if files exist and expanding environment variables
+import pathlib  # for normalizing file paths
+import time  # for sleeping between check intervals
+from collections.abc import Callable  # type hint for function callbacks
+from typing import Any  # type hint for flexible dictionary values
 
+# type alias for the publish callback, takes a dictionary and returns nothing
 PublishFn = Callable[[dict[str, Any]], None]
 
 
@@ -40,81 +28,82 @@ class IntegrityChecker:
         :param publish: Callback for publishing alert events
         :param interval_sec: How often to recheck files (seconds)
         """
-        self.targets_path = targets_path
-        self.publish = publish
-        self.interval = interval_sec
-        self.targets: list[dict[str, str]] = []
+        self.targets_path = targets_path  # where to find the JSON file with file paths and expected hashes
+        self.publish = publish  # callback function to send events/alerts to
+        self.interval = interval_sec  # how many seconds to wait between check cycles
+        self.targets: list[dict[str, str]] = []  # list of target files to check, loaded from JSON
+        # tracks the last known status for each file path so we only emit on changes
         # path -> "ok" | "mismatch" | "missing" | "noaccess" | "error"
         self._last_status: dict[str, str] = {}
-        self._load_targets()
+        self._load_targets()  # load the initial list of files to monitor
 
     def _load_targets(self) -> None:
         """Load integrity targets from JSON file."""
-        if not os.path.exists(self.targets_path):
-            self.targets = []
+        if not os.path.exists(self.targets_path):  # check if the targets file exists
+            self.targets = []  # no file means no targets to check
             return
         try:
-            with open(self.targets_path, encoding="utf-8") as f:
-                content = f.read().strip()
-                if not content:
-                    # Empty file - treat as empty list
-                    self.targets = []
+            with open(self.targets_path, encoding="utf-8") as f:  # open the JSON file as UTF-8 text
+                content = f.read().strip()  # read everything and strip whitespace
+                if not content:  # if the file is empty after stripping
+                    # empty file, so treat as empty list
+                    self.targets = []  # no targets to monitor
                     return
-                data = json.loads(content)
-            self.targets = data if isinstance(data, list) else []
-        except (json.JSONDecodeError, ValueError):
-            # Invalid JSON - treat as empty list
-            self.targets = []
-        except Exception:
-            # Any other error - treat as empty list
-            self.targets = []
+                data = json.loads(content)  # parse the JSON string into Python objects
+            self.targets = data if isinstance(data, list) else []  # make sure we got a list, otherwise use empty list
+        except (json.JSONDecodeError, ValueError):  # if the JSON is malformed
+            # invalid JSON, so treat as empty list
+            self.targets = []  # can't parse it, so no targets
+        except Exception:  # catch any other weird errors (permissions, etc)
+            # any other error, so treat as empty list
+            self.targets = []  # safer to just have no targets than crash
 
     @staticmethod
     def _sha256(path: str) -> str:
         """Compute SHA256 of a file (1 MB buffer for efficiency)."""
-        h = hashlib.sha256()
-        with open(path, "rb") as f:
-            for chunk in iter(lambda: f.read(1024 * 1024), b""):
-                h.update(chunk)
-        return h.hexdigest()
+        h = hashlib.sha256()  # create a new SHA256 hash object
+        with open(path, "rb") as f:  # open the file in binary read mode
+            for chunk in iter(lambda: f.read(1024 * 1024), b""):  # read 1MB chunks at a time until empty (more efficient for large files)
+                h.update(chunk)  # feed each chunk into the hash
+        return h.hexdigest()  # return the final hash as a hex string
 
     def _normalize_path(self, raw: str) -> str:
         """
         Normalize and expand paths so they work on any Windows system.
         Handles %ENVVARS%, ~, and mixed slashes.
         """
-        expanded = os.path.expandvars(os.path.expanduser(raw))
-        normalized = str(pathlib.Path(expanded))
-        return normalized
+        expanded = os.path.expandvars(os.path.expanduser(raw))  # expand ~ to home dir, then expand %ENVVARS% like %WINDIR%
+        normalized = str(pathlib.Path(expanded))  # convert to Path object then back to string to normalize slashes and resolve relative paths
+        return normalized  # return the final normalized absolute path
 
     def _emit_if_changed(self, path: str, status: str, payload: dict[str, Any]) -> None:
         """
         Publish the event only if the status for this path changed since the last check.
         """
-        prev = self._last_status.get(path)
-        if prev != status:
-            self._last_status[path] = status
-            self.publish(payload)
+        prev = self._last_status.get(path)  # get the previous status for this file (None if first time checking)
+        if prev != status:  # only do something if the status actually changed
+            self._last_status[path] = status  # update our record of the status
+            self.publish(payload)  # send the event/alert to the callback
 
     def run(self) -> None:
         """Main loop: check each file's integrity at regular intervals and emit only on change."""
-        while True:
-            # Reload targets on each iteration to pick up changes
-            self._load_targets()
-            for entry in self.targets:
-                raw_path = entry.get("path", "")
-                expected = entry.get("sha256", "").lower()
+        while True:  # run forever until the process is killed
+            # reload targets on each iteration to pick up changes
+            self._load_targets()  # reload the JSON file so we can add/remove targets without restarting
+            for entry in self.targets:  # loop through each file we're supposed to monitor
+                raw_path = entry.get("path", "")  # get the file path from the JSON entry
+                expected = entry.get("sha256", "").lower()  # get the expected hash (lowercase for comparison)
 
-                if not raw_path or not expected:
+                if not raw_path or not expected:  # skip this entry if path or hash is missing
                     continue
 
-                path = self._normalize_path(raw_path)
+                path = self._normalize_path(raw_path)  # expand env vars and normalize the path
 
                 # missing file
-                if not os.path.exists(path):
+                if not os.path.exists(path):  # check if the file actually exists
                     self._emit_if_changed(
                         path,
-                        "missing",
+                        "missing",  # file was deleted or doesn't exist
                         {
                             "source": "integrity",
                             "level": "critical",  # Changed to critical for deletion
@@ -122,47 +111,47 @@ class IntegrityChecker:
                             "path": path,
                         },
                     )
-                    continue
+                    continue  # skip to next file since this one doesn't exist
 
                 try:
-                    actual = self._sha256(path).lower()
-                    if actual != expected:
+                    actual = self._sha256(path).lower()  # compute the actual hash of the file
+                    if actual != expected:  # hash doesn't match - file has been modified
                         # Emit single combined event message
                         self._emit_if_changed(
                             path,
-                            "mismatch",
+                            "mismatch",  # file content changed
                             {
                                 "source": "integrity",
                                 "level": "critical",
                                 "reason": "File content changed (Hash changed)",
                                 "path": path,
-                                "expected": expected,
-                                "actual": actual,
+                                "expected": expected,  # what the hash should be
+                                "actual": actual,  # what the hash actually is
                             },
                         )
-                    else:
-                        # When hash matches, update existing CRITICAL entry instead of creating new INFO event
-                        # This happens after user marks change as safe (baseline updated, causing mismatch->ok transition)
-                        prev_status = self._last_status.get(path)
-                        if prev_status == "mismatch":
-                            # Transitioning from mismatch to ok - update existing CRITICAL entry
-                            # Emit CRITICAL event with "Hash verified" reason (will be updated in-place by backend)
+                    else:  # hash matches - file is good
+                        # when hash matches, update existing CRITICAL entry instead of creating new INFO event
+                        # this happens after user marks change as safe (baseline updated, causing mismatch->ok transition)
+                        prev_status = self._last_status.get(path)  # check what the previous status was
+                        if prev_status == "mismatch":  # if it was a mismatch before, now it's fixed
+                            # transitioning from mismatch to ok - update existing CRITICAL entry
+                            # emit CRITICAL event with "Hash verified" reason (will be updated in-place by backend)
                             self._emit_if_changed(
                                 path,
-                                "ok",
+                                "ok",  # file is now verified as correct
                                 {
                                     "source": "integrity",
-                                    "level": "critical",  # Keep as CRITICAL, not INFO
-                                    "reason": "Hash verified",  # Will be updated to "✔ Hash verified" in green
+                                    "level": "critical",  # keep as CRITICAL, not INFO
+                                    "reason": "Hash verified",  # will be updated to "✔ Hash verified" in green
                                     "path": path,
-                                    "update_existing": True,  # Flag to update existing CRITICAL entry
+                                    "update_existing": True,  # flag to update existing CRITICAL entry
                                 },
                             )
-                        else:
-                            # Transitioning from missing/noaccess/error to ok - emit normal event
+                        else:  # transitioning from missing/noaccess/error back to ok
+                            # transitioning from missing/noaccess/error to ok - emit normal event
                             self._emit_if_changed(
                                 path,
-                                "ok",
+                                "ok",  # file is verified and good
                                 {
                                     "source": "integrity",
                                     "level": "info",
@@ -170,10 +159,10 @@ class IntegrityChecker:
                                     "path": path,
                                 },
                             )
-                except PermissionError:
+                except PermissionError:  # can not read the file due to permissions
                     self._emit_if_changed(
                         path,
-                        "noaccess",
+                        "noaccess",  # no permission to access this file
                         {
                             "source": "integrity",
                             "level": "warning",
@@ -181,10 +170,10 @@ class IntegrityChecker:
                             "path": path,
                         },
                     )
-                except Exception as e:
+                except Exception as e:  # catch any other errors (file locked, disk error, etc)
                     self._emit_if_changed(
                         path,
-                        "error",
+                        "error",  # something went wrong checking this file
                         {
                             "source": "integrity",
                             "level": "warning",
@@ -193,4 +182,4 @@ class IntegrityChecker:
                         },
                     )
 
-            time.sleep(self.interval)
+            time.sleep(self.interval)  # wait before checking again

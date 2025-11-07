@@ -1,4 +1,10 @@
+/* ===== styles.css ===== */
+/* goal: shared stylesheet for CustosEye website. provides dark theme styling with
+   purple accents, responsive layout, and accessibility features. used by all HTML
+   pages (index.html, cookies.html, license.html) for consistent visual design. */
+
 /* ===== base reset ===== */
+/* reset all margins and padding, use border-box sizing for predictable layouts */
 * { box-sizing: border-box; margin: 0; padding: 0; }
 
 /* body becomes a column flex container so footer sticks to bottom */
@@ -6,6 +12,7 @@ html, body {
   height: 100%;
 }
 
+/* main page container with dark theme and flex layout for sticky footer */
 body.page {
   min-height: 100svh;
   display: flex;
@@ -34,6 +41,7 @@ body.page {
 }
 
 /* ===== header ===== */
+/* top navigation bar with logo and branding */
 .topbar {
   display: flex;
   align-items: center;
@@ -45,23 +53,27 @@ body.page {
   backdrop-filter: blur(4px);
 }
 
+/* home link styling (logo and brand both link to homepage) */
 .home-link { display: inline-flex; text-decoration: none; }
 .logo { height: 40px; width: auto; }
 
+/* brand typography (title and tagline) */
 .brand h1 { font-size: 1.4rem; font-weight: 700; }
 .brand .tagline { color: #a8b1c0; font-size: 0.95rem; }
 
 /* ===== cards & visual style ===== */
+/* card component: dark background with subtle borders and purple glow edge */
 .card {
   background: rgba(17, 24, 39, 0.9);
   border: 1px solid rgba(255,255,255,0.07);
   border-radius: 16px;
   padding: 24px;
   box-shadow: 0 24px 60px rgba(0,0,0,0.35);
-  /* subtle purple glow edge on cards for the “royal” touch */
+  /* subtle purple glow edge on cards for the "royal" touch */
   outline: 1px solid rgba(109, 40, 217, 0.18); /* #6d28d9 */
 }
 
+/* responsive grid layout (3 columns on desktop, 1 column on mobile) */
 .grid {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
@@ -71,11 +83,13 @@ body.page {
 @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
 
 /* ===== hero ===== */
+/* hero section styling (main landing area with download CTA) */
 .hero { margin-top: 24px; }
 .hero-title { font-size: 1.6rem; margin-bottom: 8px; }
 .hero-sub { color: #c8d0dd; margin-bottom: 16px; }
 
 /* ===== buttons ===== */
+/* base button styles with smooth transitions */
 .btn {
   display: inline-block;
   padding: 12px 16px;
@@ -88,7 +102,7 @@ body.page {
   -webkit-user-select: none; /* Safari prefix fix */
 }
 
-/* primary — keep green but add purple hover ring to satisfy the purple ask */
+/* primary button: green with purple glow on hover */
 .btn-primary {
   background: #22c55e; /* green accent */
   color: #062e12;      /* dark text on green */
@@ -100,17 +114,18 @@ body.page {
   box-shadow: 0 16px 36px rgba(109, 40, 217, 0.45); /* purple glow on hover */
 }
 
-/* ghost button */
+/* ghost button: subtle background, minimal styling */
 .btn-ghost { background: rgba(255,255,255,0.03); color: #e5e7eb; }
 .btn-ghost:hover { background: rgba(255,255,255,0.07); }
 
-/* row that holds buttons */
+/* row that holds buttons (flex layout with wrapping) */
 .btn-row { margin-top: 12px; display: flex; gap: 10px; flex-wrap: wrap; }
 
-/* subtle helper text */
+/* subtle helper text (muted/secondary text color) */
 .muted { color: #9aa3b2; font-size: 0.9rem; margin-top: 8px; }
 
 /* ===== footer (now truly at the bottom) ===== */
+/* footer styling: flex layout pushes it to bottom via parent flex container */
 .foot {
   padding: 20px 24px 40px;
   display: flex;
@@ -121,10 +136,12 @@ body.page {
   color: #a8b1c0;
   /* footer does not need absolute positioning; flex column handles it */
 }
+/* footer navigation links */
 .foot-nav { display: flex; gap: 16px; }
 .foot-nav a { color: #c8d0dd; text-decoration: none; }
 .foot-nav a:hover { text-decoration: underline; }
 
+/* cookie banner text styling (legacy, kept for compatibility) */
 .cookie-text { color: #d1d7e4; line-height: 1.5; }
 .cookie-actions { display: flex; gap: 10px; margin-left: auto; }
 .cookie-btn { padding: 10px 14px; border-radius: 10px; border: 1px solid rgba(255,255,255,0.12); cursor: pointer; }
@@ -132,6 +149,7 @@ body.page {
 .cookie-decline, .cookie-settings { background: rgba(255,255,255,0.06); color: #e5e7eb; }
 
 /* ===== accessibility: focus rings ===== */
+/* remove default browser focus outlines and add custom accessible focus indicators */
 :focus { outline: none; }
 .btn:focus, .cookie-btn:focus, .home-link:focus {
   outline: 2px solid #93c5fd;  /* soft blue ring */
@@ -140,20 +158,21 @@ body.page {
 }
 
 /* ===== reduced motion ===== */
+/* respect user's motion preferences (disables all transitions for accessibility) */
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; }
 }
 
-/* keep brand-as-link looking like text */
+/* keep brand-as-link looking like text (maintains text appearance while being clickable) */
 .brand { color: inherit; text-decoration: none; display: inline-block; }
 .brand:hover { text-decoration: none; filter: brightness(1.05); }
 
-/* layout that pushes footer to page bottom */
+/* layout that pushes footer to page bottom (flex column layout ensures footer sticks to bottom) */
 body.page { display: flex; flex-direction: column; min-height: 100svh; }
 .wrap { flex: 1; }
 
 /* ===== binary design section ===== */
-/* a card container so it matches your visual system */
+/* container for the binary rain animation canvas */
 .binary-wrap {
   margin-top: 16px;
   padding: 0;                 /* canvas fills it */
@@ -163,7 +182,7 @@ body.page { display: flex; flex-direction: column; min-height: 100svh; }
   outline: 1px solid rgba(109, 40, 217, 0.18); /* keep the royal edge */
 }
 
-/* the canvas should fully cover this section */
+/* the canvas should fully cover this section (absolute positioning fills parent) */
 #binary-canvas {
   position: absolute;
   inset: 0;
@@ -173,13 +192,14 @@ body.page { display: flex; flex-direction: column; min-height: 100svh; }
   background: #0a0f1e; /* gentle dark base */
 }
 
-/* respect users who prefer reduced motion: freeze the animation */
+/* respect users who prefer reduced motion: hide the animation entirely */
 @media (prefers-reduced-motion: reduce) {
   #binary-canvas { display: none; }  /* simplest: hide the animation entirely */
   .binary-wrap { height: 0; padding: 0; border: 0; outline: 0; } /* collapse it */
 }
 
 /* make this section ignore the centered .wrap and stretch edge-to-edge */
+/* full-bleed technique: breaks out of centered container to span full viewport width */
 .full-bleed {
   position: relative;
   left: 50%;
@@ -192,10 +212,11 @@ body.page { display: flex; flex-direction: column; min-height: 100svh; }
   border-radius: 0;   /* optional: square edges for the full-width band */
 }
 
-/* prevent any horizontal scrollbar due to full-bleed */
+/* prevent any horizontal scrollbar due to full-bleed technique */
 html, body { overflow-x: hidden; }
 
 /* full-screen cookie modal overlay */
+/* modal backdrop: covers entire screen with blurred dark background */
 .cookie-modal-overlay {
   position: fixed;
   inset: 0;
@@ -208,15 +229,15 @@ html, body { overflow-x: hidden; }
   padding: 24px;
 }
 
-/* dialog container (reuses your .card look) */
+/* dialog container (reuses your .card look for consistency) */
 .cookie-modal {
   max-width: 560px;
   width: 100%;
   padding: 24px;
 }
 
-/* when modal is open, prevent the page from scrolling */
+/* when modal is open, prevent the page from scrolling (body lock) */
 .no-scroll { overflow: hidden !important; }
 
-/* kill any legacy bottom banner if its CSS/HTML is still around */
+/* kill any legacy bottom banner if its CSS/HTML is still around (cleanup) */
 .cookie-banner { display: none !important; }
