@@ -50,6 +50,7 @@ import io
 import json
 import os
 import re
+import secrets
 import sys
 import threading
 import time
@@ -58,6 +59,14 @@ from collections import deque
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any, TypedDict, cast
+
+# load environment variables from .env file before importing auth modules
+try:
+    from dotenv import load_dotenv
+
+    load_dotenv()  # load .env file if it exists (required for auth secrets)
+except ImportError:
+    pass  # python-dotenv is optional, but required for .env support
 
 # --- third-party ---
 from flask import (
@@ -72,6 +81,8 @@ from flask import (
 # --- local/project imports (move these up here) ---
 from agent.rules_engine import RulesEngine
 from algorithm.csc_engine import CSCTrustEngine  # v2 under the hood
+from dashboard.auth import SESSION_SECRET
+from dashboard.auth_routes import register_auth_routes, require_auth
 from dashboard.config import Config, load_config
 
 
@@ -99,6 +110,22 @@ ALLOW_MTIME_SNAPSHOTS: bool = bool(getattr(CFG, "allow_mtime_snapshots", True))
 # ---------------- Config / paths ----------------
 # extract all config paths for easy access throughout the app
 BASE_DIR = CFG.base_dir
+
+# session invalidation: generate a new session key on each program start
+# this ensures all sessions from previous runs are invalidated when program restarts
+# by changing the session secret key, all old session cookies become invalid
+SESSION_KEY_FILE = BASE_DIR / "data" / ".session_key"
+SESSION_START_TIME = time.time()
+
+# generate new session key for this run (changes on each program start)
+# this invalidates all sessions from previous program runs
+_current_session_key = secrets.token_hex(32)
+try:
+    SESSION_KEY_FILE.parent.mkdir(parents=True, exist_ok=True)
+    with open(SESSION_KEY_FILE, "w", encoding="utf-8") as f:
+        f.write(_current_session_key)
+except Exception:
+    pass  # if we can't write, continue anyway (sessions will still work, just won't invalidate on restart)
 RULES_PATH = str(CFG.rules_path)
 CSC_WEIGHTS_PATH = str(CFG.csc_weights_path)
 CSC_DB_PATH = str(CFG.csc_db_path)
@@ -1579,6 +1606,26 @@ def _maybe_prune_baselines() -> None:
 def build_app(event_bus) -> Flask:
     app = Flask(__name__)
 
+    # configure session security (httpOnly, sameSite, secure when HTTPS)
+    # sessions are NOT persistent - cookies expire when browser closes (session-only)
+    # combine the base secret with a per-run session key to invalidate old sessions on program restart
+    # this ensures users must login again each time the program launches
+    # SESSION_SECRET is guaranteed to be str after validation in auth.py
+    assert SESSION_SECRET is not None
+    app.secret_key = SESSION_SECRET + _current_session_key
+    app.config["SESSION_COOKIE_HTTPONLY"] = True  # prevent XSS attacks
+    app.config["SESSION_COOKIE_SAMESITE"] = "Lax"  # CSRF protection
+    # secure cookies only over HTTPS (default to False for localhost, set to True in production with HTTPS)
+    # check if we're running on HTTPS by examining the host config or environment
+    app.config["SESSION_COOKIE_SECURE"] = os.getenv("CUSTOSEYE_HTTPS", "false").lower() in (
+        "true",
+        "1",
+        "yes",
+    )
+    # session cookies expire when browser closes (non-persistent sessions)
+    # do not set PERMANENT_SESSION_LIFETIME - sessions will be session-only by default
+    app.config["SESSION_COOKIE_NAME"] = "custoseye_session"  # custom session cookie name
+
     # make sure our iterator type is clear for mypy
     _iter: Iterator[dict[str, Any]] = _bus_iterator(event_bus)
 
@@ -1762,13 +1809,85 @@ def build_app(event_bus) -> Flask:
 
             return drained
 
-    # main page route: serve the dashboard HTML
+    # register authentication routes (must be registered before other routes)
+    register_auth_routes(app)
+
+    # preview route: serve dashboard for background preview (no auth required, read-only)
+    @app.get("/preview")
+    def preview():
+        """serve dashboard preview for login page background - read-only, non-interactive"""
+        return render_template("index.html")
+
+    # preview API endpoints: allow preview mode to fetch data without auth (read-only)
+    @app.get("/api/preview/events")
+    def preview_events():
+        """preview endpoint for events - no auth required"""
+        drain_into_buffer()
+        include_info = (request.args.get("include_info") or "").lower() in ("1", "true", "yes")
+        data = []
+        for ev in BUFFER:
+            if ev.get("source") == "network" and not (ev.get("pid") or ev.get("name")):
+                continue
+            lvl = (ev.get("level") or "info").lower()
+            if not include_info and lvl == "info":
+                continue
+            data.append(ev)
+        return jsonify(data)
+
+    @app.get("/api/preview/integrity/targets")
+    def preview_integrity_targets():
+        """preview endpoint for integrity targets - no auth required"""
+        return jsonify(_read_integrity_targets())
+
+    @app.get("/api/preview/about")
+    def preview_about():
+        """preview endpoint for about info - no auth required"""
+        return jsonify({"version": "preview"})
+
+    @app.get("/api/preview/proctree")
+    def preview_proctree():
+        """preview endpoint for process tree - no auth required"""
+        drain_into_buffer()
+        children: dict[int, list[int]] = {}
+        roots: list[int] = []
+        for pid, rec in PROC_INDEX.items():
+            ppid = rec.get("ppid")
+            if isinstance(ppid, int) and ppid in PROC_INDEX:
+                children.setdefault(ppid, []).append(pid)
+            else:
+                roots.append(pid)
+
+        def build(pid: int) -> dict[str, Any]:
+            r = PROC_INDEX.get(pid, {})
+            return {
+                "pid": pid,
+                "ppid": r.get("ppid", None),
+                "name": r.get("name", ""),
+                "csc_verdict": r.get("csc_verdict", "unknown"),
+                "csc_class": r.get("csc_class", "unknown"),
+                "csc_confidence": float(r.get("csc_confidence", 0.5)),
+                "children": [build(c) for c in children.get(pid, [])],
+            }
+
+        tree = [build(r) for r in sorted(roots)]
+        if request.args.get("as") == "json":
+            response = make_response(json.dumps(tree, indent=2))
+            response.headers["Content-Type"] = "application/json"
+            response.headers["Content-Disposition"] = (
+                'attachment; filename="custoseye_proctree.json"'
+            )
+            return response
+        return jsonify(tree)
+
+    # main page route: serve the dashboard HTML (requires authentication)
     @app.get("/")
+    @require_auth
     def index():
         return render_template("index.html")
 
     # event stream API: return events from the buffer (with optional filtering)
     @app.get("/api/events")
+    @require_auth
     def events():
         drain_into_buffer()
         include_info = (request.args.get("include_info") or "").lower() in ("1", "true", "yes")
@@ -1784,6 +1903,7 @@ def build_app(event_bus) -> Flask:
 
     # ping endpoint: lightweight drain trigger to keep event ingestion going
     @app.get("/api/ping")
+    @require_auth
     def ping():
         """lightweight drain trigger so background ingestion continues on any tab"""
         n = drain_into_buffer()
@@ -1791,6 +1911,7 @@ def build_app(event_bus) -> Flask:
 
     # export endpoint: export events from buffer in various formats (CSV, JSON, JSONL, XLSX)
     @app.get("/api/export")
+    @require_auth
     def export_current():
         """
         export live buffer with current filters.
@@ -1930,6 +2051,7 @@ def build_app(event_bus) -> Flask:
 
     # process tree API: return the process tree built from process events
     @app.get("/api/proctree")
+    @require_auth
     def proctree():
         """
         return the compact process tree.
@@ -1977,6 +2099,7 @@ def build_app(event_bus) -> Flask:
 
     # about endpoint: return version and build info from VERSION.txt
     @app.get("/api/about")
+    @require_auth
     def about():
         version = "-"
         build = "-"
@@ -2000,12 +2123,14 @@ def build_app(event_bus) -> Flask:
 
     # integrity targets API: get the watch list
     @app.get("/api/integrity/targets")
+    @require_auth
     def api_integrity_targets_get():
         # return normalized list
         return jsonify(_read_integrity_targets())
 
     # integrity targets API: add or update a file on the watch list
     @app.post("/api/integrity/targets")
+    @require_auth
     def api_integrity_targets_post():
         """
         body: { path, rule, note? }
@@ -2105,6 +2230,7 @@ def build_app(event_bus) -> Flask:
 
     # integrity targets API: remove a file from the watch list
     @app.delete("/api/integrity/targets")
+    @require_auth
     def api_integrity_targets_delete():
         try:
             body: dict[str, Any] = cast(dict[str, Any], request.get_json(force=True) or {})
@@ -2120,6 +2246,7 @@ def build_app(event_bus) -> Flask:
 
     # integrity hash API: manually rehash a file and update its baseline
     @app.post("/api/integrity/hash")
+    @require_auth
     def api_integrity_hash():
         """
         re-hash: manually compute SHA-256 and update baseline if needed.
@@ -2262,6 +2389,7 @@ def build_app(event_bus) -> Flask:
 
     # integrity diff API: compute privacy-preserving diff between baseline and current file
     @app.post("/api/integrity/diff")
+    @require_auth
     def api_integrity_diff():
         """
         privacy-preserving diff between baseline chunk hashes and the current file.
@@ -2791,6 +2919,7 @@ def build_app(event_bus) -> Flask:
 
     # integrity baseline accept API: accept current file state as new baseline
     @app.post("/api/integrity/baseline/accept")
+    @require_auth
     def api_integrity_baseline_accept():
         """
         accept current file state as the new baseline.
@@ -2903,6 +3032,7 @@ def build_app(event_bus) -> Flask:
 
     # integrity baseline download API: download stored baseline snapshot file
     @app.get("/api/integrity/baseline/download")
+    @require_auth
     def api_integrity_baseline_download():
         """
         download the stored baseline blob for a given path, if present and valid.
@@ -2935,6 +3065,7 @@ def build_app(event_bus) -> Flask:
 
     # integrity browse API: Windows-only file picker dialog for selecting files to watch
     @app.post("/api/integrity/browse")
+    @require_auth
     def api_integrity_browse():
         """
         windows-only file picker via tkinter. returns {"path": "..."} or {} if cancelled.
@@ -2995,17 +3126,34 @@ def build_app(event_bus) -> Flask:
     return app
 
 
+# global shutdown flag for graceful shutdown
+_shutdown_requested = False
+
+
 # run the dashboard: start the Flask app with optional Waitress server
 def run_dashboard(event_bus) -> None:
+    global _shutdown_requested
     app = build_app(event_bus)
     if app is None:
         raise RuntimeError(
             "build_app() returned None; check for exceptions or missing `return app`."
         )
     if HAVE_WAITRESS:
-        _serve(app, host=CFG.host, port=CFG.port)
+        # waitress doesn't have a built-in shutdown, so we'll use os._exit
+        # but first, set up a shutdown endpoint that can be called
+        try:
+            _serve(app, host=CFG.host, port=CFG.port)
+        except SystemExit:
+            pass  # expected when shutting down
+        except KeyboardInterrupt:
+            pass  # expected when shutting down
     else:
-        app.run(host=CFG.host, port=CFG.port, debug=False)
+        try:
+            app.run(host=CFG.host, port=CFG.port, debug=False)
+        except SystemExit:
+            pass  # expected when shutting down
+        except KeyboardInterrupt:
+            pass  # expected when shutting down
 
 
 # standalone mode (optional): if you run "python -m dashboard.app"

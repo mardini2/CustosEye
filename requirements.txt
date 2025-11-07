@@ -26,6 +26,18 @@ openpyxl==3.1.5
 # HTTP library (used by algorithm module and for integrity scanning)
 requests==2.32.3
 
+# --- Authentication ---
+# load environment variables from .env file
+python-dotenv==1.0.0
+# TOTP 2FA support for authenticator apps
+pyotp==2.9.0
+# QR code generation for 2FA setup
+qrcode==7.4.2
+# password hashing library (preferred, more secure)
+argon2-cffi==23.1.0
+# password hashing library (fallback if argon2 not available)
+bcrypt==4.1.2
+
 # --- Development & Testing ---
 # test framework for running unit tests
 pytest==8.2.0

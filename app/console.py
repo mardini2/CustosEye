@@ -17,6 +17,14 @@ import webbrowser  # for opening the dashboard in the browser
 from pathlib import Path  # for working with file paths
 from typing import Any  # type hint for flexible dictionary values
 
+# load environment variables from .env file before importing dashboard
+try:
+    from dotenv import load_dotenv
+
+    load_dotenv()  # load .env file if it exists
+except ImportError:
+    pass  # python-dotenv is optional, but recommended
+
 from agent.integrity_check import IntegrityChecker  # agent that monitors file integrity
 from agent.monitor import ProcessMonitor  # agent that monitors running processes
 from agent.network_scan import NetworkSnapshot  # agent that scans network connections
@@ -249,7 +257,16 @@ def main() -> None:
 
     # minimal terminal output (no live stream)
     print_banner()  # print the welcome banner
-    print("Welcome to CustosEye!")  # print welcome message
+    # print welcome message with purple "CustosEye"
+    try:
+        from colorama import init as _colorama_init
+
+        _colorama_init()
+        purple = "\x1b[35m"
+        reset = "\x1b[0m"
+    except Exception:
+        purple = reset = ""
+    print(f"Welcome to {purple}CustosEye{reset}!")  # print welcome message with colored CustosEye
     print("Dashboard running at http://127.0.0.1:8765/ 𒆙")  # print dashboard URL
 
     # keep main alive

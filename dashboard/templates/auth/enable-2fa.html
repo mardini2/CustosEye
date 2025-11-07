@@ -1,0 +1,544 @@
+<!--
+  goal: enable 2FA page for CustosEye. shows QR code and allows users to enable TOTP 2FA.
+-->
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>CustosEye · Enable 2FA</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <link rel="icon" href="/static/assets/favicon.ico?v=2">
+  <link rel="prefetch" href="/preview" />
+  <style>
+    :root {
+      --bg:#0b0f14; --panel:#141a22; --text:#e7eef7; --muted:#9ab;
+      --accent:#7cc5ff; --ok:#1db954; --border:#1f2a36; --input:#0f141b;
+      --bad:#c03d3d;
+    }
+    @media (prefers-color-scheme: light) {
+      :root {
+        --bg:#f6f8fb; --panel:#fff; --text:#10131a; --muted:#445;
+        --accent:#1565c0; --ok:#128b3a; --border:#e7ebf0; --input:#f3f6fa;
+      }
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin:0; background:var(--bg); color:var(--text);
+      font:14px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial;
+      padding:0; position:relative; min-height:100vh; overflow-y:auto;
+    }
+    .dashboard-background {
+      position:fixed; top:0; left:0; width:100%; height:100%;
+      z-index:0; filter:blur(8px) brightness(0.3); pointer-events:none;
+      border:none; transform:scale(1.1);
+    }
+    .auth-overlay {
+      position:relative; z-index:1; width:100%; max-width:600px;
+      margin:0 auto; padding:20px;
+      min-height:100vh;
+      display:flex; align-items:center; justify-content:center;
+      box-sizing:border-box;
+    }
+    .auth-container {
+      background:var(--panel); border:1px solid var(--border); border-radius:12px;
+      padding:32px; max-width:500px; width:100%; box-shadow:0 6px 20px rgba(0,0,0,0.15);
+    }
+    .auth-title {
+      font-size:24px; font-weight:700; margin:0 0 8px; text-align:center;
+    }
+    .auth-subtitle {
+      color:var(--muted); font-size:13px; text-align:center; margin:0 0 24px;
+    }
+    .qr-container {
+      text-align:center; margin:24px 0;
+    }
+    .qr-code {
+      display:inline-block; padding:16px; background:white; border-radius:8px;
+      border:1px solid var(--border);
+    }
+    .qr-code img {
+      display:block; max-width:100%;
+    }
+    .secret-text {
+      background:var(--input); border:1px solid var(--border); padding:10px;
+      border-radius:8px; font-family:monospace; font-size:12px; word-break:break-all;
+      margin:16px 0; text-align:center; color:var(--muted);
+    }
+    .form-group {
+      margin-bottom:16px;
+    }
+    .form-label {
+      display:block; font-size:13px; font-weight:500; margin-bottom:6px; color:var(--text);
+    }
+    .form-input {
+      width:100%; background:var(--input); border:1px solid var(--border);
+      padding:10px 12px; border-radius:8px; color:var(--text); font-size:14px;
+    }
+    .form-input:focus {
+      outline:2px solid var(--accent); outline-offset:2px; border-color:var(--accent);
+    }
+    .btn {
+      width:100%; background:var(--accent); color:white; border:0;
+      padding:12px; border-radius:8px; cursor:pointer; font-size:14px; font-weight:500;
+      margin-top:8px;
+    }
+    .btn:hover { opacity:0.9; }
+    .btn:disabled { opacity:0.6; cursor:not-allowed; }
+    .btn-primary {
+      background:var(--accent); color:white; font-weight:600;
+      padding:14px 24px; font-size:15px; width:auto; flex:1;
+    }
+    .btn-secondary {
+      background:transparent; color:var(--muted); border:1px solid var(--border);
+      padding:12px 20px; font-size:14px; font-weight:400;
+      display:inline-flex; flex-direction:column; align-items:center; justify-content:center;
+      text-align:center; min-width:120px;
+    }
+    .btn-secondary:hover {
+      background:var(--input); border-color:var(--muted);
+    }
+    .btn-group {
+      display:flex; gap:12px; margin-top:8px; align-items:stretch;
+    }
+    .skip-warning {
+      color:var(--bad); font-size:11px; margin-top:2px; font-weight:500;
+      line-height:1.2;
+    }
+    .error {
+      background:rgba(212,60,60,0.1); border:1px solid var(--bad);
+      color:var(--bad); padding:10px; border-radius:8px; font-size:13px; margin-bottom:16px;
+    }
+    .info {
+      background:rgba(124,197,255,0.1); border:1px solid var(--accent);
+      color:var(--accent); padding:10px; border-radius:8px; font-size:13px; margin-bottom:16px;
+    }
+    .success {
+      background:rgba(29,185,84,0.1); border:1px solid var(--ok);
+      color:var(--ok); padding:10px; border-radius:8px; font-size:13px; margin-bottom:16px;
+    }
+    .hidden { display:none; }
+    .hint {
+      color:var(--muted); font-size:12px; margin-top:4px; display:block;
+    }
+    .status-icon {
+      font-size:48px; text-align:center; margin:16px 0;
+    }
+    .verify-form {
+      margin-top:24px;
+    }
+    .hidden {
+      display:none !important;
+    }
+  </style>
+</head>
+<body>
+  <iframe id="dashboardPreview" class="dashboard-background" src="/preview" title="Dashboard Preview"></iframe>
+  <div class="auth-overlay">
+  <div class="auth-container" data-totp-enabled="{% if totp_enabled %}true{% else %}false{% endif %}">
+    {% if totp_enabled %}
+    <!-- 2FA already enabled - show status/verification page -->
+    <h1 class="auth-title">Two-Factor Authentication</h1>
+    <p class="auth-subtitle">2FA is enabled for your account</p>
+    
+    <div class="status-icon">✓</div>
+    
+    <div class="success">
+      <strong>2FA is active</strong><br>
+      Your account is protected with two-factor authentication. You'll need to enter a 6-digit code from your authenticator app every time you log in.
+    </div>
+    
+    <div class="verify-form">
+      <p style="text-align:center; color:var(--muted); margin:16px 0; font-size:13px;">
+        Verify your 2FA is working correctly:
+      </p>
+      
+      <form id="verify2faForm">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+        
+        <div class="form-group">
+          <label class="form-label" for="token">Enter 6-digit code from your authenticator app</label>
+          <input type="text" id="token" name="token" class="form-input" placeholder="000000" maxlength="6" autocomplete="one-time-code" inputmode="numeric" pattern="[0-9]*" required />
+        </div>
+        
+        <button type="submit" class="btn btn-primary" id="verifyBtn" style="width:100%; margin-top:8px;">Verify 2FA</button>
+      </form>
+      
+      <div id="error" class="error hidden"></div>
+      <div id="successMsg" class="success hidden"></div>
+    </div>
+    
+    <div style="text-align:center; margin-top:32px; padding-top:24px; border-top:1px solid var(--border);">
+      <div style="margin-bottom:12px;">
+        <button id="disable2faBtn" class="btn" style="background:var(--bad); width:100%; margin-bottom:4px;">Disable 2FA</button>
+        <span style="color:var(--bad); font-size:12px; font-weight:500;">(not recommended)</span>
+      </div>
+      <a href="/" style="color:var(--accent); text-decoration:none; font-size:13px;">← Back to Dashboard</a>
+    </div>
+    
+    <!-- custom confirmation Modal -->
+    <div id="confirmModal" class="hidden" style="position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.7); display:none; align-items:center; justify-content:center; z-index:1000;">
+      <div class="auth-container" style="max-width:400px; position:relative;">
+        <div id="confirmMessage" style="color:var(--text); margin-bottom:20px; font-size:14px; line-height:1.6; white-space:pre-line;"></div>
+        <div style="display:flex; gap:8px; justify-content:flex-end;">
+          <button id="confirmCancel" class="btn btn-secondary" style="padding:8px 16px; width:auto;">Cancel</button>
+          <button id="confirmOk" class="btn btn-primary" style="padding:8px 16px; width:auto;">OK</button>
+        </div>
+      </div>
+    </div>
+    
+    <!-- disable 2FA modal -->
+    <div id="disable2faModal" class="hidden" style="position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.7); display:flex; align-items:center; justify-content:center; z-index:1001;">
+      <div class="auth-container" style="max-width:450px; position:relative;">
+        <h2 class="auth-title" style="font-size:20px; margin-bottom:8px;">Disable Two-Factor Authentication</h2>
+        <p class="auth-subtitle" style="margin-bottom:16px;">This will remove 2FA protection from your account</p>
+        
+        <div class="error" style="margin-bottom:16px;">
+          <strong>Warning:</strong> Disabling 2FA will make your account less secure.
+        </div>
+        
+        <form id="disable2faForm">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+          <input type="hidden" name="confirmed" id="disableConfirmed" value="false" />
+          
+          <div class="form-group">
+            <label class="form-label" for="disableToken">Enter 2FA code to confirm</label>
+            <input type="text" id="disableToken" name="token" class="form-input" placeholder="Enter 6-digit code or backup code" maxlength="20" autocomplete="one-time-code" inputmode="numeric" pattern="[0-9\s]*" required />
+            <span class="hint">You must enter a code from your authenticator app or a backup code to disable 2FA.</span>
+          </div>
+          
+          <div class="btn-group" style="margin-top:16px;">
+            <button type="submit" class="btn btn-primary" id="disableSubmitBtn" style="flex:1;">Disable 2FA</button>
+            <button type="button" class="btn btn-secondary" id="cancelDisableBtn" style="padding:12px 20px;">Cancel</button>
+          </div>
+        </form>
+        
+        <div id="disableError" class="error hidden" style="margin-top:12px;"></div>
+      </div>
+    </div>
+    
+    {% else %}
+    <!-- 2FA not enabled - show setup page -->
+    <h1 class="auth-title">Enable Two-Factor Authentication</h1>
+    <p class="auth-subtitle">Scan the QR code with your authenticator app</p>
+    
+    <div id="error" class="error hidden"></div>
+    <div class="info">
+      <strong>Setting up 2FA:</strong><br>
+      1. Open your authenticator app (Google Authenticator, Authy, Microsoft Authenticator, etc.)<br>
+      2. Scan the QR code below (or manually enter the secret key)<br>
+      3. Enter the 6-digit code that appears in your app to verify and enable 2FA<br>
+      <br>
+      <strong>Note:</strong> Once 2FA is enabled, you'll need to enter a 6-digit code from your authenticator app every time you log in. Save your backup codes securely!<br>
+      <br>
+      <strong>Optional:</strong> You can skip this step and enable 2FA later from the dashboard.
+    </div>
+    
+    <div class="qr-container">
+      <div class="qr-code">
+        <img src="{{ qr_code }}" alt="QR Code" />
+      </div>
+    </div>
+    
+    <div class="secret-text">
+      Secret: {{ secret }}
+    </div>
+    
+    <form id="enable2faForm">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+      
+      <div class="form-group">
+        <label class="form-label" for="token">Verification Code</label>
+        <input type="text" id="token" name="token" class="form-input" placeholder="Enter 6-digit code from your app" maxlength="6" autocomplete="one-time-code" inputmode="numeric" pattern="[0-9]*" />
+        <span class="hint">After scanning the QR code, your authenticator app will show a 6-digit code. Enter it here to verify and enable 2FA.</span>
+      </div>
+      
+      <div class="btn-group">
+        <button type="submit" class="btn btn-primary" id="submitBtn">Enable 2FA</button>
+        <a href="/" class="btn btn-secondary" style="text-decoration:none;">
+          Skip for Now
+          <span class="skip-warning">(not recommended)</span>
+        </a>
+      </div>
+    </form>
+    {% endif %}
+  </div>
+  
+  <script>
+    // check if 2FA is enabled (read from data attribute)
+    const container = document.querySelector('.auth-container');
+    const totpEnabled = container && container.dataset.totpEnabled === 'true';
+    
+    if (totpEnabled) {
+      // 2FA verification form (when 2FA is already enabled)
+      const verifyForm = document.getElementById('verify2faForm');
+      const errorDiv = document.getElementById('error');
+      const successMsg = document.getElementById('successMsg');
+      const verifyBtn = document.getElementById('verifyBtn');
+      
+      function showError(msg) {
+        errorDiv.textContent = msg;
+        errorDiv.classList.remove('hidden');
+        if (successMsg) successMsg.classList.add('hidden');
+      }
+      
+      function showSuccess(msg) {
+        if (successMsg) {
+          successMsg.textContent = msg;
+          successMsg.classList.remove('hidden');
+          errorDiv.classList.add('hidden');
+        }
+      }
+      
+      function hideMessages() {
+        errorDiv.classList.add('hidden');
+        if (successMsg) successMsg.classList.add('hidden');
+      }
+      
+      if (verifyForm) {
+        verifyForm.addEventListener('submit', async (e) => {
+          e.preventDefault();
+          hideMessages();
+          verifyBtn.disabled = true;
+          verifyBtn.textContent = 'Verifying...';
+          
+          const formData = new FormData(verifyForm);
+          const data = Object.fromEntries(formData);
+          
+          try {
+            const res = await fetch('/auth/verify-2fa', {
+              method: 'POST',
+              headers: {'Content-Type': 'application/json'},
+              body: JSON.stringify({ token: data.token, csrf_token: data.csrf_token })
+            });
+            
+            const result = await res.json();
+            
+            if (res.ok && result.success) {
+              showSuccess('✓ 2FA verification successful! Your authenticator app is working correctly.');
+              verifyForm.reset();
+              setTimeout(() => {
+                hideMessages();
+              }, 3000);
+            } else {
+              showError(result.error || 'Invalid code. Please check your authenticator app and try again.');
+            }
+          } catch (err) {
+            showError('Network error. Please try again.');
+          } finally {
+            verifyBtn.disabled = false;
+            verifyBtn.textContent = 'Verify 2FA';
+          }
+        });
+      }
+    } else {
+      // 2FA setup form (when 2FA is not enabled)
+      const form = document.getElementById('enable2faForm');
+      const errorDiv = document.getElementById('error');
+      const submitBtn = document.getElementById('submitBtn');
+      
+      function showError(msg) {
+        errorDiv.textContent = msg;
+        errorDiv.classList.remove('hidden');
+      }
+      
+      function hideError() {
+        errorDiv.classList.add('hidden');
+      }
+      
+      if (form) {
+        form.addEventListener('submit', async (e) => {
+          e.preventDefault();
+          hideError();
+          submitBtn.disabled = true;
+          submitBtn.textContent = 'Enabling...';
+          
+          const formData = new FormData(form);
+          const data = Object.fromEntries(formData);
+          
+          try {
+            const res = await fetch('/auth/enable-2fa', {
+              method: 'POST',
+              headers: {'Content-Type': 'application/json'},
+              body: JSON.stringify(data)
+            });
+            
+            const result = await res.json();
+            
+            if (res.ok && result.success) {
+              // redirect to backup codes page
+              window.location.href = result.redirect || '/auth/backup-codes';
+            } else {
+              showError(result.error || 'Failed to enable 2FA');
+              submitBtn.disabled = false;
+              submitBtn.textContent = 'Enable 2FA';
+            }
+          } catch (err) {
+            showError('Network error. Please try again.');
+            submitBtn.disabled = false;
+            submitBtn.textContent = 'Enable 2FA';
+          }
+        });
+      }
+    }
+    
+    // disable 2FA functionality (only when 2FA is enabled)
+    if (totpEnabled) {
+      const disable2faBtn = document.getElementById('disable2faBtn');
+      const disable2faModal = document.getElementById('disable2faModal');
+      const disable2faForm = document.getElementById('disable2faForm');
+      const cancelDisableBtn = document.getElementById('cancelDisableBtn');
+      const disableError = document.getElementById('disableError');
+      const disableSubmitBtn = document.getElementById('disableSubmitBtn');
+      const disableConfirmed = document.getElementById('disableConfirmed');
+      
+      // custom confirmation dialog (shared for disable 2FA and success messages)
+      const confirmModal = document.getElementById('confirmModal');
+      const confirmMessage = document.getElementById('confirmMessage');
+      const confirmOk = document.getElementById('confirmOk');
+      const confirmCancel = document.getElementById('confirmCancel');
+      
+      let confirmResolve = null;
+      let currentModalType = 'confirm'; // 'confirm' or 'alert'
+      
+      // ensure modal starts hidden
+      if (confirmModal) {
+        confirmModal.style.display = 'none';
+      }
+      
+      if (confirmOk && confirmCancel) {
+        confirmOk.addEventListener('click', () => {
+          if (confirmModal) {
+            confirmModal.style.display = 'none';
+            confirmModal.classList.add('hidden');
+          }
+          if (confirmCancel) confirmCancel.style.display = 'flex'; // restore for next use
+          if (confirmResolve) {
+            confirmResolve(true);
+            confirmResolve = null;
+          }
+        });
+        
+        confirmCancel.addEventListener('click', () => {
+          if (confirmModal) {
+            confirmModal.style.display = 'none';
+            confirmModal.classList.add('hidden');
+          }
+          if (confirmCancel) confirmCancel.style.display = 'flex'; // restore for next use
+          if (confirmResolve) {
+            // for alerts, cancel means OK (single button)
+            confirmResolve(currentModalType === 'alert' ? true : false);
+            confirmResolve = null;
+          }
+        });
+      }
+      
+      function showCustomConfirm(message) {
+        return new Promise((resolve) => {
+          confirmResolve = resolve;
+          currentModalType = 'confirm';
+          // set message (white-space:pre-line will preserve line breaks)
+          if (confirmMessage) {
+            confirmMessage.textContent = message;
+          }
+          // show cancel button for confirm dialogs
+          if (confirmCancel) confirmCancel.style.display = 'flex';
+          if (confirmModal) {
+            confirmModal.style.display = 'flex';
+            confirmModal.classList.remove('hidden');
+          }
+        });
+      }
+      
+      function showCustomAlert(message) {
+        return new Promise((resolve) => {
+          confirmResolve = resolve;
+          currentModalType = 'alert';
+          // set message
+          if (confirmMessage) {
+            confirmMessage.textContent = message;
+          }
+          // hide cancel button for alerts (single button)
+          if (confirmCancel) confirmCancel.style.display = 'none';
+          if (confirmModal) {
+            confirmModal.style.display = 'flex';
+            confirmModal.classList.remove('hidden');
+          }
+        });
+      }
+      
+      if (disable2faBtn && disable2faModal) {
+        disable2faBtn.addEventListener('click', async () => {
+          // single confirmation with custom dialog
+          const confirmed = await showCustomConfirm('Are you sure you want to disable 2FA?\n\nThis will remove two-factor authentication protection from your account. You can re-enable it later if needed.');
+          if (!confirmed) return;
+          
+          // show disable modal
+          disable2faModal.classList.remove('hidden');
+          if (disableError) disableError.classList.add('hidden');
+          if (disable2faForm) disable2faForm.reset();
+          if (disableConfirmed) disableConfirmed.value = 'false';
+        });
+        
+        if (cancelDisableBtn) {
+          cancelDisableBtn.addEventListener('click', () => {
+            if (disable2faModal) disable2faModal.classList.add('hidden');
+            if (disable2faForm) disable2faForm.reset();
+          });
+        }
+        
+        if (disable2faForm) {
+          disable2faForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            if (disableError) disableError.classList.add('hidden');
+            if (disableSubmitBtn) {
+              disableSubmitBtn.disabled = true;
+              disableSubmitBtn.textContent = 'Disabling...';
+            }
+            
+            const formData = new FormData(disable2faForm);
+            const data = Object.fromEntries(formData);
+            
+            // set confirmed flag since user already confirmed twice
+            data.confirmed = 'true';
+            
+            try {
+              const res = await fetch('/auth/disable-2fa', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(data)
+              });
+              
+              const result = await res.json();
+              
+              if (res.ok && result.success) {
+                // success - redirect to dashboard
+                await showCustomAlert('2FA has been disabled successfully. You can re-enable it anytime from the dashboard.');
+                window.location.href = '/';
+              } else {
+                if (disableError) {
+                  disableError.textContent = result.error || 'Failed to disable 2FA';
+                  disableError.classList.remove('hidden');
+                }
+                if (disableSubmitBtn) {
+                  disableSubmitBtn.disabled = false;
+                  disableSubmitBtn.textContent = 'Disable 2FA';
+                }
+              }
+            } catch (err) {
+              if (disableError) {
+                disableError.textContent = 'Network error. Please try again.';
+                disableError.classList.remove('hidden');
+              }
+              if (disableSubmitBtn) {
+                disableSubmitBtn.disabled = false;
+                disableSubmitBtn.textContent = 'Disable 2FA';
+              }
+            }
+          });
+        }
+      }
+    }
+  </script>
+  </div>
+</body>
+</html>

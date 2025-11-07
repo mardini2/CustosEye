@@ -25,6 +25,9 @@ venv.bak/
 .env.*
 *.env
 .envrc
+# exceptions: allow .env.example to be tracked (it's documentation only, no secrets)
+!.env.example
+!*.env.example
 
 # byte-compiled / optimized / DLL files (compiled extensions and optimizations)
 *.pyo
@@ -155,6 +158,10 @@ data/temp/
 data/trust_db.json
 # autosave files for integrity targets (generated automatically)
 data/integrity_targets_autosave.json
+# session key file (generated on each program start to invalidate old sessions)
+data/.session_key
+# user database (contains hashed passwords and 2FA secrets)
+data/users.json
 # test fixtures (test data that shouldn't be in the repo)
 data/fixtures/
 # build artifacts and test reports

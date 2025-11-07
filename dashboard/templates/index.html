@@ -396,9 +396,15 @@
   <!-- main HTML structure: header, tabs, and content panels -->
   <header>
     <div class="wrap">
-      <div class="title">
-        <img src="/favicon.ico" alt="" style="width:20px;height:20px;border-radius:4px;opacity:.9" />
-        CustosEye <span class="subtitle">local dashboard</span>
+      <div class="title" style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
+        <div style="display:flex; align-items:center; gap:10px;">
+          <img src="/favicon.ico" alt="" style="width:20px;height:20px;border-radius:4px;opacity:.9" />
+          CustosEye <span class="subtitle">local dashboard</span>
+        </div>
+        <div style="display:flex; align-items:center; gap:8px;">
+          <a href="/auth/enable-2fa" class="btn" style="padding:6px 12px; font-size:12px; text-decoration:none; display:inline-block;" data-tip="Enable or manage 2FA">2FA</a>
+          <button id="logoutBtn" class="btn" style="padding:6px 12px; font-size:12px; background:var(--bad);" data-tip="Sign out and shutdown">Logout & Shutdown</button>
+        </div>
       </div>
 
       <!-- tabs -->
@@ -1945,6 +1951,20 @@
     let lastTreeAt = 0;
     let pollCtrl = null;
 
+    // check if we're in preview mode (loaded in iframe for login background)
+    const isPreview = window.self !== window.top || window.location.pathname === '/preview';
+    
+    // if in preview mode, disable interactions and make read-only
+    if (isPreview) {
+      document.body.style.pointerEvents = 'none';
+      document.body.style.userSelect = 'none';
+      // hide logout button and 2FA button in preview
+      const logoutBtn = document.getElementById('logoutBtn');
+      if (logoutBtn) logoutBtn.style.display = 'none';
+      const fa2Btn = document.querySelector('a[href="/auth/enable-2fa"]');
+      if (fa2Btn) fa2Btn.style.display = 'none';
+    }
+    
     // polling tick: fetch events, integrity targets, about info, and optionally process tree
     async function tick() {
       if (state.paused || inFlight) return;
@@ -1960,18 +1980,19 @@
         const needTree = wantsTree || (now - lastTreeAt > 8000); // every 8s if not on tab
         const includeInfo = '1';
 
+        // in preview mode, use preview API endpoints that don't require auth
         const jobs = [
-          fetch(`/api/events?include_info=${includeInfo}`, { signal: pollCtrl?.signal }), // 0
-          fetch(`/api/integrity/targets`,                 { signal: pollCtrl?.signal }),   // 1
-          fetch(`/api/about`,                             { signal: pollCtrl?.signal }),   // 2
+          fetch(isPreview ? `/api/preview/events?include_info=${includeInfo}` : `/api/events?include_info=${includeInfo}`, { signal: pollCtrl?.signal }).catch(() => ({ ok: false, json: async () => [] })), // 0
+          fetch(isPreview ? `/api/preview/integrity/targets` : `/api/integrity/targets`,                 { signal: pollCtrl?.signal }).catch(() => ({ ok: false, json: async () => [] })),   // 1
+          fetch(isPreview ? `/api/preview/about` : `/api/about`,                             { signal: pollCtrl?.signal }).catch(() => ({ ok: false, json: async () => ({version: 'preview'}) })),   // 2
           fetch(`/api/ping`,                              { signal: pollCtrl?.signal }).catch(() => ({ ok: true })) // 3
         ];
         if (needTree) {
           jobs.push(
-            fetch(`/api/proctree`, { signal: pollCtrl?.signal }).then(r => {
+            fetch(isPreview ? `/api/preview/proctree` : `/api/proctree`, { signal: pollCtrl?.signal }).then(r => {
               lastTreeAt = now;
               return r;
-            }) // 4
+            }).catch(() => ({ ok: false, json: async () => [] })) // 4
           );
         }
 
@@ -2029,6 +2050,178 @@
 
     // initial data fetch and render
     tick();
+    
+    // custom logout/shutdown dialog
+    const logoutModal = document.createElement('div');
+    logoutModal.id = 'logoutModal';
+    logoutModal.className = 'hidden';
+    logoutModal.style.cssText = 'position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.7); display:none; align-items:center; justify-content:center; z-index:10000;';
+    logoutModal.innerHTML = `
+      <div class="panel" style="max-width:400px; position:relative; padding:24px;">
+        <div id="logoutMessage" style="color:var(--text); margin-bottom:20px; font-size:14px; line-height:1.6; white-space:pre-line;"></div>
+        <div style="display:flex; gap:8px; justify-content:flex-end; flex-wrap:wrap;">
+          <button id="logoutCancel" class="btn" style="padding:8px 16px; width:auto; background:transparent; color:var(--muted); border:1px solid var(--border);">Cancel</button>
+          <button id="logoutLogout" class="btn" style="padding:8px 16px; width:auto; background:var(--accent);">Logout</button>
+          <button id="logoutShutdown" class="btn" style="padding:8px 16px; width:auto; background:var(--bad);">Shutdown</button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(logoutModal);
+    
+    const logoutMessage = document.getElementById('logoutMessage');
+    const logoutCancel = document.getElementById('logoutCancel');
+    const logoutLogout = document.getElementById('logoutLogout');
+    const logoutShutdown = document.getElementById('logoutShutdown');
+    
+    let logoutResolve = null;
+    
+    if (logoutCancel && logoutLogout && logoutShutdown) {
+      logoutCancel.addEventListener('click', () => {
+        logoutModal.style.display = 'none';
+        logoutModal.classList.add('hidden');
+        if (logoutResolve) {
+          logoutResolve('cancel');
+          logoutResolve = null;
+        }
+      });
+      
+      logoutLogout.addEventListener('click', () => {
+        logoutModal.style.display = 'none';
+        logoutModal.classList.add('hidden');
+        if (logoutResolve) {
+          logoutResolve('logout');
+          logoutResolve = null;
+        }
+      });
+      
+      logoutShutdown.addEventListener('click', () => {
+        logoutModal.style.display = 'none';
+        logoutModal.classList.add('hidden');
+        if (logoutResolve) {
+          logoutResolve('shutdown');
+          logoutResolve = null;
+        }
+      });
+    }
+    
+    function showLogoutDialog(message) {
+      return new Promise((resolve) => {
+        logoutResolve = resolve;
+        if (logoutMessage) {
+          logoutMessage.textContent = message;
+        }
+        logoutModal.style.display = 'flex';
+        logoutModal.classList.remove('hidden');
+      });
+    }
+    
+    // custom confirmation/alert dialogs (for other uses)
+    const confirmModal = document.createElement('div');
+    confirmModal.id = 'confirmModal';
+    confirmModal.className = 'hidden';
+    confirmModal.style.cssText = 'position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.7); display:none; align-items:center; justify-content:center; z-index:10000;';
+    confirmModal.innerHTML = `
+      <div class="panel" style="max-width:400px; position:relative; padding:24px;">
+        <div id="confirmMessage" style="color:var(--text); margin-bottom:20px; font-size:14px; line-height:1.6; white-space:pre-line;"></div>
+        <div style="display:flex; gap:8px; justify-content:flex-end;">
+          <button id="confirmCancel" class="btn" style="padding:8px 16px; width:auto; background:transparent; color:var(--muted); border:1px solid var(--border);">Cancel</button>
+          <button id="confirmOk" class="btn" style="padding:8px 16px; width:auto;">OK</button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(confirmModal);
+    
+    const confirmMessage = document.getElementById('confirmMessage');
+    const confirmOk = document.getElementById('confirmOk');
+    const confirmCancel = document.getElementById('confirmCancel');
+    
+    let confirmResolve = null;
+    let currentModalType = 'confirm';
+    
+    if (confirmOk && confirmCancel) {
+      confirmOk.addEventListener('click', () => {
+        confirmModal.style.display = 'none';
+        confirmModal.classList.add('hidden');
+        if (confirmCancel) confirmCancel.style.display = 'flex';
+        if (confirmResolve) {
+          confirmResolve(true);
+          confirmResolve = null;
+        }
+      });
+      
+      confirmCancel.addEventListener('click', () => {
+        confirmModal.style.display = 'none';
+        confirmModal.classList.add('hidden');
+        if (confirmCancel) confirmCancel.style.display = 'flex';
+        if (confirmResolve) {
+          confirmResolve(currentModalType === 'alert' ? true : false);
+          confirmResolve = null;
+        }
+      });
+    }
+    
+    function showCustomConfirm(message) {
+      return new Promise((resolve) => {
+        confirmResolve = resolve;
+        currentModalType = 'confirm';
+        if (confirmMessage) {
+          confirmMessage.textContent = message;
+        }
+        if (confirmCancel) confirmCancel.style.display = 'flex';
+        confirmModal.style.display = 'flex';
+        confirmModal.classList.remove('hidden');
+      });
+    }
+    
+    function showCustomAlert(message) {
+      return new Promise((resolve) => {
+        confirmResolve = resolve;
+        currentModalType = 'alert';
+        if (confirmMessage) {
+          confirmMessage.textContent = message;
+        }
+        if (confirmCancel) confirmCancel.style.display = 'none';
+        confirmModal.style.display = 'flex';
+        confirmModal.classList.remove('hidden');
+      });
+    }
+    
+    // logout button: sign out and optionally shutdown the program
+    document.getElementById('logoutBtn')?.addEventListener('click', async () => {
+      const action = await showLogoutDialog('What would you like to do?');
+      
+      if (action === 'cancel') {
+        // user cancelled, stay on dashboard
+        return;
+      }
+      
+      try {
+        const res = await fetch('/auth/logout', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({ shutdown: action === 'shutdown' })
+        });
+        const result = await res.json();
+        if (result.success) {
+          if (action === 'shutdown' || (result.message && result.message.includes('Shutting down'))) {
+            // show shutdown message
+            await showCustomAlert('Shutting down CustosEye...');
+            // give server time to shutdown
+            setTimeout(() => {
+              window.location.href = '/auth/login';
+            }, 1000);
+          } else if (result.redirect) {
+            window.location.href = result.redirect;
+          } else {
+            window.location.href = '/auth/login';
+          }
+        }
+      } catch (err) {
+        console.error('Logout error:', err);
+        // if logout fails, just redirect anyway
+        window.location.href = '/auth/login';
+      }
+    });
   </script>
 </body>
 </html>

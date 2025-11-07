@@ -32,15 +32,13 @@ py -3.11 -m venv .venv
 python -m pip install -U pip
 python -m pip install -r requirements.txt
 
-# 3. Launch
+# Setup environment variables (auto-generates .env with secrets)
+python setup_env.py
+
+# Launch
 python -m app.console
 # Console output:
 # CustosEye running at http://127.0.0.1:8765/
-
-# 4. Website launch
-python -m http.server 8765
-# Console output (or visit this on your machine to test the website)
-# Serving HTTP on :: port 8765 (http://localhost:8765/)
 ```
 
 **Command-line options**
@@ -48,6 +46,12 @@ python -m http.server 8765
 python -m app.console --console    # run headless (no browser)
 python -m app.console --no-open    # dashboard only
 python -m app.console --tray       # run with system tray icon
+```
+
+```bash
+# if you need to regenerate .env (deletes existing .env first):
+rm .env  # or del .env on Windows
+python setup_env.py
 ```
 
 ---

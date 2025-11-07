@@ -1,0 +1,84 @@
+<!--
+  goal: display backup codes after enabling 2FA. users should save these codes securely.
+-->
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>CustosEye · Backup Codes</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <link rel="icon" href="/static/assets/favicon.ico?v=2">
+  <style>
+    :root {
+      --bg:#0b0f14; --panel:#141a22; --text:#e7eef7; --muted:#9ab;
+      --accent:#7cc5ff; --ok:#1db954; --border:#1f2a36; --input:#0f141b;
+    }
+    @media (prefers-color-scheme: light) {
+      :root {
+        --bg:#f6f8fb; --panel:#fff; --text:#10131a; --muted:#445;
+        --accent:#1565c0; --ok:#128b3a; --border:#e7ebf0; --input:#f3f6fa;
+      }
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin:0; background:var(--bg); color:var(--text);
+      font:14px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial;
+      display:flex; align-items:center; justify-content:center; min-height:100vh;
+      padding:20px;
+    }
+    .auth-container {
+      background:var(--panel); border:1px solid var(--border); border-radius:12px;
+      padding:32px; max-width:500px; width:100%; box-shadow:0 6px 20px rgba(0,0,0,0.15);
+    }
+    .auth-title {
+      font-size:24px; font-weight:700; margin:0 0 8px; text-align:center;
+    }
+    .auth-subtitle {
+      color:var(--muted); font-size:13px; text-align:center; margin:0 0 24px;
+    }
+    .warning {
+      background:rgba(230,167,0,0.1); border:1px solid #e6a700;
+      color:#e6a700; padding:12px; border-radius:8px; font-size:13px; margin-bottom:24px;
+    }
+    .codes-container {
+      background:var(--input); border:1px solid var(--border); border-radius:8px;
+      padding:20px; margin:24px 0;
+    }
+    .codes-list {
+      display:grid; grid-template-columns:repeat(2,1fr); gap:12px;
+      font-family:monospace; font-size:14px; font-weight:500;
+    }
+    .code-item {
+      padding:8px; background:var(--panel); border:1px solid var(--border);
+      border-radius:6px; text-align:center;
+    }
+    .btn {
+      width:100%; background:var(--accent); color:white; border:0;
+      padding:12px; border-radius:8px; cursor:pointer; font-size:14px; font-weight:500;
+      margin-top:8px;
+    }
+    .btn:hover { opacity:0.9; }
+  </style>
+</head>
+<body>
+  <div class="auth-container">
+    <h1 class="auth-title">Backup Codes</h1>
+    <p class="auth-subtitle">Save these codes in a safe place</p>
+    
+    <div class="warning">
+      <strong>Important:</strong> Save these backup codes now. You won't be able to see them again.
+      Use them if you lose access to your authenticator app.
+    </div>
+    
+    <div class="codes-container">
+      <div class="codes-list">
+        {% for code in backup_codes %}
+        <div class="code-item">{{ code }}</div>
+        {% endfor %}
+      </div>
+    </div>
+    
+    <button class="btn" onclick="window.location.href='/'">Continue to Dashboard</button>
+  </div>
+</body>
+</html>

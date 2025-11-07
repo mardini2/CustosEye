@@ -1,0 +1,405 @@
+<!--
+  goal: login page for CustosEye. allows users to sign in with username and password, with optional 2FA.
+        shows a clean interface that matches the dashboard style :)
+-->
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>CustosEye · Login</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <link rel="icon" href="/static/assets/favicon.ico?v=2">
+  <link rel="prefetch" href="/preview" />
+  <style>
+    :root {
+      --bg:#0b0f14; --panel:#141a22; --text:#e7eef7; --muted:#9ab;
+      --accent:#7cc5ff; --ok:#1db954; --border:#1f2a36; --input:#0f141b;
+      --bad:#c03d3d; --warn:#e6a700; --good:#1db954;
+    }
+    @media (prefers-color-scheme: light) {
+      :root {
+        --bg:#f6f8fb; --panel:#fff; --text:#10131a; --muted:#445;
+        --accent:#1565c0; --ok:#128b3a; --border:#e7ebf0; --input:#f3f6fa;
+      }
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin:0; background:var(--bg); color:var(--text);
+      font:14px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial;
+      display:flex; align-items:center; justify-content:center; min-height:100vh;
+      padding:20px; position:relative; overflow:hidden;
+    }
+    .dashboard-background {
+      position:fixed; top:0; left:0; width:100%; height:100%;
+      z-index:0; filter:blur(8px) brightness(0.3); pointer-events:none;
+      border:none; transform:scale(1.1);
+    }
+    .auth-overlay {
+      position:relative; z-index:1; width:100%; max-width:400px;
+    }
+    .auth-container {
+      background:var(--panel); border:1px solid var(--border); border-radius:12px;
+      padding:32px; max-width:400px; width:100%; box-shadow:0 6px 20px rgba(0,0,0,0.15);
+    }
+    .auth-title {
+      font-size:24px; font-weight:700; margin:0 0 8px; text-align:center;
+    }
+    .auth-subtitle {
+      color:var(--muted); font-size:13px; text-align:center; margin:0 0 24px;
+    }
+    .form-group {
+      margin-bottom:16px;
+    }
+    .form-label {
+      display:block; font-size:13px; font-weight:500; margin-bottom:6px; color:var(--text);
+    }
+    .form-input {
+      width:100%; background:var(--input); border:1px solid var(--border);
+      padding:10px 12px; border-radius:8px; color:var(--text); font-size:14px;
+    }
+    .form-input:focus {
+      outline:2px solid var(--accent); outline-offset:2px; border-color:var(--accent);
+    }
+    .password-wrapper {
+      position:relative;
+    }
+    .password-toggle {
+      position:absolute; right:12px; top:50%; transform:translateY(-50%);
+      background:none; border:none; cursor:pointer; padding:4px;
+      color:white; font-size:16px; display:flex; align-items:center; justify-content:center;
+      opacity:0.7; transition:opacity 0.2s; width:26px; height:26px;
+      display:none; /* hidden by default, shown when password has content */
+    }
+    .password-toggle.visible {
+      display:flex;
+    }
+    .password-toggle:hover {
+      opacity:1;
+    }
+    .btn {
+      width:100%; background:var(--accent); color:white; border:0;
+      padding:12px; border-radius:8px; cursor:pointer; font-size:14px; font-weight:500;
+      margin-top:8px;
+    }
+    .btn:hover { opacity:0.9; }
+    .btn:disabled { opacity:0.6; cursor:not-allowed; }
+    .error {
+      background:rgba(212,60,60,0.1); border:1px solid var(--bad);
+      color:var(--bad); padding:10px; border-radius:8px; font-size:13px; margin-bottom:16px;
+    }
+    .success {
+      background:rgba(29,185,84,0.1); border:1px solid var(--good);
+      color:var(--good); padding:10px; border-radius:8px; font-size:13px; margin-bottom:16px;
+    }
+    .auth-links {
+      text-align:center; margin-top:20px; font-size:13px; color:var(--muted);
+    }
+    .auth-links a {
+      color:var(--accent); text-decoration:none;
+    }
+    .auth-links a:hover { text-decoration:underline; }
+    .hidden { display:none; }
+  </style>
+</head>
+<body>
+  <iframe id="dashboardPreview" class="dashboard-background" src="/preview" title="Dashboard Preview"></iframe>
+  <div class="auth-overlay">
+  <div class="auth-container">
+    <div style="text-align:center; margin-bottom:24px;">
+      <img src="/favicon.ico" alt="CustosEye" style="width:80px;height:80px;border-radius:12px;opacity:.95; margin-bottom:16px;" />
+      <h1 class="auth-title" style="margin-bottom:4px;">CustosEye</h1>
+      <p class="auth-subtitle">Sign in to your account</p>
+    </div>
+    
+    {% if error_msg %}
+    <div id="error" class="error">{{ error_msg }}</div>
+    {% else %}
+    <div id="error" class="error hidden"></div>
+    {% endif %}
+    <div id="success" class="success hidden"></div>
+    
+    <form id="loginForm">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+      
+      <div class="form-group">
+        <label class="form-label" for="username">Username</label>
+        <input type="text" id="username" name="username" class="form-input" required autocomplete="username" />
+      </div>
+      
+      <div class="form-group">
+        <label class="form-label" for="password">Password</label>
+        <div class="password-wrapper">
+          <input type="password" id="password" name="password" class="form-input" required autocomplete="current-password" />
+          <button type="button" class="password-toggle" id="passwordToggle" aria-label="Toggle password visibility">
+            <img src="/static/assets/vision.svg" alt="Show password" style="width:18px;height:18px;filter:invert(1);" />
+          </button>
+        </div>
+      </div>
+      
+      <div class="form-group hidden" id="totpGroup">
+        <label class="form-label" for="totp_token">2FA Code</label>
+        <input type="text" id="totp_token" name="totp_token" class="form-input" placeholder="Enter 6-digit code or backup code" maxlength="20" autocomplete="one-time-code" inputmode="numeric" pattern="[0-9\s]*" />
+        <small style="color:var(--muted); font-size:12px; margin-top:4px; display:block;">
+          Enter the 6-digit code from your authenticator app, or an 8-character backup code.
+        </small>
+      </div>
+      
+      <button type="submit" class="btn" id="submitBtn">Sign In</button>
+    </form>
+    
+    <div class="auth-links">
+      {% if not account_exists %}
+      <a href="/auth/signup">Create account</a> · 
+      {% endif %}
+      <a href="/auth/forgot-password">Forgot password?</a>
+      <span style="color:var(--muted);"> · </span>
+      <a href="/auth/forgot-username">Forgot username?</a>
+    </div>
+    
+    <div style="text-align:center; margin-top:24px; padding-top:24px; border-top:1px solid var(--border);">
+      <button id="shutdownBtn" class="btn" style="background:var(--bad); padding:8px 16px; font-size:13px; width:auto; display:inline-block;">Shutdown CustosEye</button>
+    </div>
+  </div>
+  
+  <script>
+    const form = document.getElementById('loginForm');
+    const errorDiv = document.getElementById('error');
+    const successDiv = document.getElementById('success');
+    const totpGroup = document.getElementById('totpGroup');
+    const submitBtn = document.getElementById('submitBtn');
+    
+    function showError(msg) {
+      errorDiv.textContent = msg;
+      errorDiv.classList.remove('hidden');
+      successDiv.classList.add('hidden');
+    }
+    
+    function showSuccess(msg) {
+      successDiv.textContent = msg;
+      successDiv.classList.remove('hidden');
+      errorDiv.classList.add('hidden');
+    }
+    
+    function hideMessages() {
+      errorDiv.classList.add('hidden');
+      successDiv.classList.add('hidden');
+    }
+    
+    // password visibility toggle with auto-hide after 1 second
+    const passwordInput = document.getElementById('password');
+    const passwordToggle = document.getElementById('passwordToggle');
+    let passwordHideTimeout = null;
+    
+    if (passwordToggle && passwordInput) {
+      // show/hide toggle based on password field content
+      const updateToggleVisibility = () => {
+        if (passwordInput.value.length > 0) {
+          passwordToggle.classList.add('visible');
+        } else {
+          passwordToggle.classList.remove('visible');
+          // reset to password type and hide icon when empty
+          if (passwordInput.getAttribute('type') === 'text') {
+            passwordInput.setAttribute('type', 'password');
+            passwordToggle.innerHTML = '<img src="/static/assets/vision.svg" alt="Show password" style="width:18px;height:18px;filter:invert(1);" />';
+          }
+          if (passwordHideTimeout) {
+            clearTimeout(passwordHideTimeout);
+            passwordHideTimeout = null;
+          }
+        }
+      };
+      
+      // listen for input changes
+      passwordInput.addEventListener('input', updateToggleVisibility);
+      // check initial state
+      updateToggleVisibility();
+      
+      const showPassword = () => {
+        // clear any existing timeout
+        if (passwordHideTimeout) {
+          clearTimeout(passwordHideTimeout);
+        }
+        
+        // show password - use hide.svg (closed eye) when password is visible
+        passwordInput.setAttribute('type', 'text');
+        passwordToggle.innerHTML = '<img src="/static/assets/hide.svg" alt="Hide password" style="width:18px;height:18px;filter:invert(1);" />';
+        
+        // auto-hide after 1 second
+        passwordHideTimeout = setTimeout(() => {
+          passwordInput.setAttribute('type', 'password');
+          passwordToggle.innerHTML = '<img src="/static/assets/vision.svg" alt="Show password" style="width:18px;height:18px;filter:invert(1);" />';
+          passwordHideTimeout = null;
+        }, 1000);
+      };
+      
+      passwordToggle.addEventListener('click', () => {
+        if (passwordInput.getAttribute('type') === 'password') {
+          showPassword();
+        } else {
+          // if already showing, hide immediately - use vision.svg (open eye) when password is hidden
+          if (passwordHideTimeout) {
+            clearTimeout(passwordHideTimeout);
+            passwordHideTimeout = null;
+          }
+          passwordInput.setAttribute('type', 'password');
+          passwordToggle.innerHTML = '<img src="/static/assets/vision.svg" alt="Show password" style="width:18px;height:18px;filter:invert(1);" />';
+        }
+      });
+    }
+    
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      hideMessages();
+      submitBtn.disabled = true;
+      submitBtn.textContent = 'Signing in...';
+      
+      const formData = new FormData(form);
+      const data = Object.fromEntries(formData);
+      
+      try {
+        const res = await fetch('/auth/login', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify(data)
+        });
+        
+        const result = await res.json();
+        
+        if (res.ok) {
+          if (result.requires_2fa) {
+            // show 2FA input - 2FA is required for this user
+            totpGroup.classList.remove('hidden');
+            const totpInput = document.getElementById('totp_token');
+            totpInput.focus();
+            submitBtn.disabled = false;
+            submitBtn.textContent = 'Verify 2FA';
+            showSuccess('2FA is enabled. Please enter the 6-digit code from your authenticator app, or use a backup code.');
+            // don't clear password field - keep it filled like the username
+          } else if (result.success) {
+            // redirect to dashboard
+            window.location.href = result.redirect || '/';
+          } else {
+            showError(result.error || 'Login failed');
+            submitBtn.disabled = false;
+            submitBtn.textContent = 'Sign In';
+          }
+        } else {
+          // if 2FA is required but token was wrong, show the error but keep 2FA field visible
+          if (result.error && result.error.includes('2FA')) {
+            showError(result.error);
+            totpGroup.classList.remove('hidden');
+            document.getElementById('totp_token').focus();
+            submitBtn.disabled = false;
+            submitBtn.textContent = 'Verify 2FA';
+          } else {
+            showError(result.error || 'Login failed');
+            submitBtn.disabled = false;
+            submitBtn.textContent = 'Sign In';
+          }
+        }
+      } catch (err) {
+        showError('Network error. Please try again.');
+        submitBtn.disabled = false;
+        submitBtn.textContent = 'Sign In';
+      }
+    });
+    
+    // custom confirmation dialog for shutdown
+    const confirmModal = document.createElement('div');
+    confirmModal.id = 'confirmModal';
+    confirmModal.className = 'hidden';
+    confirmModal.style.cssText = 'position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.7); display:none; align-items:center; justify-content:center; z-index:1000;';
+    confirmModal.innerHTML = `
+      <div class="auth-container" style="max-width:400px; position:relative;">
+        <div id="confirmMessage" style="color:var(--text); margin-bottom:20px; font-size:14px; line-height:1.6; white-space:pre-line;"></div>
+        <div style="display:flex; gap:8px; justify-content:flex-end;">
+          <button id="confirmCancel" class="btn btn-secondary" style="padding:8px 16px; width:auto; background:transparent; color:var(--muted); border:1px solid var(--border);">Cancel</button>
+          <button id="confirmOk" class="btn btn-primary" style="padding:8px 16px; width:auto;">OK</button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(confirmModal);
+    
+    const confirmMessage = document.getElementById('confirmMessage');
+    const confirmOk = document.getElementById('confirmOk');
+    const confirmCancel = document.getElementById('confirmCancel');
+    
+    let confirmResolve = null;
+    
+    if (confirmOk && confirmCancel) {
+      confirmOk.addEventListener('click', () => {
+        confirmModal.style.display = 'none';
+        confirmModal.classList.add('hidden');
+        if (confirmCancel) confirmCancel.style.display = 'flex'; // restore for next use
+        if (confirmResolve) {
+          confirmResolve(true);
+          confirmResolve = null;
+        }
+      });
+      
+      confirmCancel.addEventListener('click', () => {
+        confirmModal.style.display = 'none';
+        confirmModal.classList.add('hidden');
+        if (confirmCancel) confirmCancel.style.display = 'flex'; // restore for next use
+        if (confirmResolve) {
+          confirmResolve(false);
+          confirmResolve = null;
+        }
+      });
+    }
+    
+    function showCustomConfirm(message) {
+      return new Promise((resolve) => {
+        confirmResolve = resolve;
+        if (confirmMessage) {
+          confirmMessage.textContent = message;
+        }
+        confirmModal.style.display = 'flex';
+        confirmModal.classList.remove('hidden');
+      });
+    }
+    
+    function showCustomAlert(message) {
+      return new Promise((resolve) => {
+        confirmResolve = resolve;
+        if (confirmMessage) {
+          confirmMessage.textContent = message;
+        }
+        if (confirmCancel) confirmCancel.style.display = 'none';
+        confirmModal.style.display = 'flex';
+        confirmModal.classList.remove('hidden');
+      });
+    }
+    
+    // shutdown button
+    const shutdownBtn = document.getElementById('shutdownBtn');
+    if (shutdownBtn) {
+      shutdownBtn.addEventListener('click', async () => {
+        const confirmShutdown = await showCustomConfirm('Are you sure you want to shutdown CustosEye?\n\nThis will stop all monitoring and close the application.');
+        if (!confirmShutdown) return;
+        
+        try {
+          const res = await fetch('/auth/shutdown', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({})
+          });
+          
+          if (res.ok) {
+            // show another custom message instead of alert
+            await showCustomAlert('Shutting down CustosEye... Goodbye ✌︎︎');
+            // give server time to shutdown
+            setTimeout(() => {
+              window.location.reload();
+            }, 1000);
+          }
+        } catch (err) {
+          // server might already be shutting down
+          console.log('Shutdown initiated');
+        }
+      });
+    }
+  </script>
+  </div>
+</body>
+</html>
