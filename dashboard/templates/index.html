@@ -51,9 +51,15 @@
     .chip.ok .dot { background:var(--ok); }
     .input { background:var(--input); border:1px solid var(--border); padding:8px 10px; border-radius:8px; color:var(--text); min-width:220px; }
     .btn { background:var(--accent); color:white; border:0; padding:8px 12px; border-radius:8px; cursor:pointer; }
-    .list { margin-top:12px; border-top:1px dashed var(--border); }
+    .list { margin-top:12px; border-top:1px dashed var(--border); transition:opacity 0.2s ease-in-out; }
+    .list.updating { opacity:0.7; }
     .row { display:grid; grid-template-columns:108px 100px 1fr; gap:14px; padding:10px 4px; border-bottom:1px solid var(--border); background:var(--row); }
     .row:nth-child(odd) { background:var(--rowAlt); }
+    .row.new-row { animation:fadeInRow 0.2s ease-in; }
+    @keyframes fadeInRow {
+      from { opacity:0; transform:translateY(-2px); }
+      to { opacity:1; transform:translateY(0); }
+    }
     .lvl { display:inline-flex; align-items:center; gap:8px; padding:4px 8px; border-radius:999px; font-weight:600; letter-spacing:.3px; }
     .lvl.info {
       color: var(--chip-info);
@@ -410,9 +416,9 @@
       <!-- tabs -->
       <div class="tabs" role="tablist">
         <div class="tab on" id="tab-live"      data-tab="live"      data-tip="View live events stream" role="tab" aria-selected="true"  tabindex="0">Live Events</div>
-        <div class="tab"     id="tab-tree"      data-tab="tree"      data-tip="Inspect the process tree with trust labels"              role="tab" aria-selected="false" tabindex="-1">Process Tree</div>
-        <div class="tab"     id="tab-integrity" data-tab="integrity" data-tip="Watch files for tamper (hash or mtime+size)"             role="tab" aria-selected="false" tabindex="-1">Integrity</div>
-        <div class="tab"     id="tab-about"     data-tab="about"     data-tip="Build info and buffer capacity"                          role="tab" aria-selected="false" tabindex="-1">About</div>
+        <div class="tab"     id="tab-tree"      data-tab="tree"      data-tip="Inspect the process tree with trust labels"              role="tab" aria-selected="false" tabindex="0">Process Tree</div>
+        <div class="tab"     id="tab-integrity" data-tab="integrity" data-tip="Watch files for tamper (hash or mtime+size)"             role="tab" aria-selected="false" tabindex="0">Integrity</div>
+        <div class="tab"     id="tab-about"     data-tab="about"     data-tip="Build info and buffer capacity"                          role="tab" aria-selected="false" tabindex="0">About</div>
       </div>
 
         <!-- Live Events panel: filter controls and event list -->
@@ -579,8 +585,22 @@
     const iTbody = document.getElementById('i-tbody');
 
     // tab switching: show/hide panels and restore saved tab selection
-    document.querySelectorAll('.tab').forEach(t => {
-    t.addEventListener('click', () => {
+    const tabs = [...document.querySelectorAll('.tab')];
+    const tablist = document.querySelector('.tabs');
+    
+    // function to sync ARIA attributes for accessibility
+    function syncTabAttrs(){
+      tabs.forEach(tab=>{
+        const on = tab.classList.contains('on');
+        tab.setAttribute('role','tab');
+        // keep all tabs in tab order (tabindex="0") so keyboard users can Tab through them
+        tab.setAttribute('tabindex', '0');
+        tab.setAttribute('aria-selected', on ? 'true' : 'false');
+      });
+    }
+    
+    // tab click handler: switches between tabs
+    function switchTab(t) {
         document.querySelectorAll('.tab').forEach(x => x.classList.remove('on'));
         t.classList.add('on'); 
         state.tab = t.getAttribute('data-tab');
@@ -596,35 +616,43 @@
 
         // render from caches; background poller keeps data fresh
         renderActive();
-    });
-    });
-
+        
+        // update ARIA attributes after tab switch
+        syncTabAttrs();
+    }
+    
+    // set up tab accessibility and keyboard navigation
     function setupTabsA11y(){
-      const tabs = [...document.querySelectorAll('.tab')];
-      const tablist = document.querySelector('.tabs');
       tablist.setAttribute('role','tablist');
-
-      function syncAttrs(){
-        tabs.forEach(tab=>{
-          const on = tab.classList.contains('on');
-          tab.setAttribute('role','tab');
-          tab.setAttribute('tabindex', on ? '0' : '-1');
-          tab.setAttribute('aria-selected', on ? 'true' : 'false');
+      
+      // initialize ARIA attributes
+      syncTabAttrs();
+      
+      // handle click events on tabs
+      tabs.forEach(t => {
+        t.addEventListener('click', () => switchTab(t));
+      });
+      
+      // handle keyboard navigation on individual tabs
+      tabs.forEach(tab => {
+        tab.addEventListener('keydown', e=>{
+          const i = tabs.indexOf(tab);
+          if (i === -1) return;
+          
+          // arrow keys: navigate between tabs and activate the focused tab
+          if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
+            e.preventDefault();
+            const dir = e.key === 'ArrowRight' ? 1 : -1;
+            const next = (i + dir + tabs.length) % tabs.length;
+            switchTab(tabs[next]);
+            tabs[next].focus();
+          }
+          // Enter or Space: activate the currently focused tab
+          else if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            switchTab(tab);
+          }
         });
-      }
-      syncAttrs();
-
-      tablist.addEventListener('click', syncAttrs);
-      tablist.addEventListener('keydown', e=>{
-        const i = tabs.findIndex(t=>t.classList.contains('on'));
-        if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
-          e.preventDefault();
-          const dir = e.key === 'ArrowRight' ? 1 : -1;
-          const next = (i + dir + tabs.length) % tabs.length;
-          tabs[next].click();
-          tabs[next].focus();
-          syncAttrs();
-        }
       });
     }
     setupTabsA11y();
@@ -642,6 +670,8 @@
         btn.setAttribute('aria-pressed', on ? 'true' : 'false'); // NEW
         state.levels[lvl] = on;
         render(window.__data || []);
+        // reset last rendered events when filter changes to force re-render
+        __lastRenderedEvents = null;
       });
     });
 
@@ -657,6 +687,8 @@
     function debounce(fn, ms){ let h; return (...a)=>{ clearTimeout(h); h=setTimeout(()=>fn(...a), ms); }; }
     searchEl.addEventListener('input', debounce(e => {
       state.q = e.target.value.toLowerCase().trim();
+      // reset last rendered events when search changes to force re-render
+      __lastRenderedEvents = null;
       render(window.__data || []);
     }, 120));
     document.getElementById('refresh').addEventListener('click', fetchData);
@@ -729,6 +761,15 @@
         </div>`;
     }
 
+    // simple hash function for quick data comparison
+    function hashData(data) {
+      if (!Array.isArray(data)) return JSON.stringify(data);
+      // for events, create a hash based on key fields that matter
+      return data.map(ev => {
+        return `${ev.ts || ''}|${ev.level || ''}|${ev.reason || ''}|${ev.source || ''}|${ev.pid || ''}|${ev.name || ''}|${ev.path || ''}|${ev.seen || ''}`;
+      }).join('||');
+    }
+    
     function render(data) {
     const byLevel = data.filter(ev => state.levels[(ev.level || 'info').toLowerCase()]);
     const q = state.q;
@@ -737,12 +778,29 @@
         return s.toLowerCase().includes(q);
     }) : byLevel;
 
+    // check if data has actually changed by comparing hash
+    const currentHash = hashData(byQuery);
+    const lastHash = __lastRenderedEvents ? hashData(__lastRenderedEvents) : null;
+    
+    // only update if data has changed
+    if (currentHash === lastHash && __lastRenderedEvents) {
+      return; // data hasn't changed, skip rendering
+    }
+    
+    // store current filtered data for next comparison
+    __lastRenderedEvents = byQuery;
+
     const prevCount = countEl.textContent;
     const prevTotal = totalEl.textContent;
 
+    // update counts first (these are fast)
     countEl.textContent = byQuery.length;
     totalEl.textContent = data.length;
-    listEl.innerHTML = byQuery.map(row).join('');
+    
+    // update list content only when data changes
+    requestAnimationFrame(() => {
+      listEl.innerHTML = byQuery.map(row).join('');
+    });
 
     if (countEl.textContent !== prevCount || totalEl.textContent !== prevTotal) {
       const status = document.getElementById('countStatus');
@@ -1397,6 +1455,55 @@
   let __tree = [];
   let __targets = [];
   let __about = null;
+  
+  // store last rendered data to detect changes and avoid unnecessary re-renders
+  let __lastRenderedEvents = null;
+  let __lastRenderedTargets = null;
+  let __lastRenderedTree = null;
+
+  // cache data in sessionStorage for instant display when navigating back
+  function saveDataCache() {
+    try {
+      sessionStorage.setItem('custoseye.events', JSON.stringify(__events));
+      sessionStorage.setItem('custoseye.tree', JSON.stringify(__tree));
+      sessionStorage.setItem('custoseye.targets', JSON.stringify(__targets));
+      if (__about) {
+        sessionStorage.setItem('custoseye.about', JSON.stringify(__about));
+      }
+    } catch (e) {
+      // ignore storage errors (e.g., private browsing mode)
+    }
+  }
+
+  // load cached data from sessionStorage for instant display
+  function loadDataCache() {
+    try {
+      const cachedEvents = sessionStorage.getItem('custoseye.events');
+      const cachedTree = sessionStorage.getItem('custoseye.tree');
+      const cachedTargets = sessionStorage.getItem('custoseye.targets');
+      const cachedAbout = sessionStorage.getItem('custoseye.about');
+      
+      if (cachedEvents) {
+        __events = JSON.parse(cachedEvents);
+      }
+      if (cachedTree) {
+        __tree = JSON.parse(cachedTree);
+      }
+      if (cachedTargets) {
+        __targets = JSON.parse(cachedTargets);
+      }
+      if (cachedAbout) {
+        __about = JSON.parse(cachedAbout);
+      }
+      
+      // immediately render cached data if available
+      if (__events.length > 0 || __tree.length > 0 || __targets.length > 0) {
+        renderActive();
+      }
+    } catch (e) {
+      // ignore storage errors or parsing errors
+    }
+  }
 
   // render only the currently active tab using cached data
   function renderActive() {
@@ -1406,9 +1513,20 @@
     }
     if (state.tab === 'tree') {
       const filtered = filterTreeList(__tree || [], state.treeQ);  // apply search filter
+      
+      // check if tree data has changed
+      const currentTreeHash = JSON.stringify(filtered);
+      if (currentTreeHash === __lastRenderedTree) {
+        return; // tree hasn't changed, skip rendering
+      }
+      __lastRenderedTree = currentTreeHash;
+      
       captureOpenKeys(); // remember which nodes are expanded
-      treeEl.innerHTML = (filtered || []).map(n => renderNode(n, 0)).join('');  // render tree
-      restoreOpenKeys(); // restore expanded state after render
+      // use requestAnimationFrame for smoother updates
+      requestAnimationFrame(() => {
+        treeEl.innerHTML = (filtered || []).map(n => renderNode(n, 0)).join('');  // render tree
+        restoreOpenKeys(); // restore expanded state after render
+      });
       return;
     }
     if (state.tab === 'integrity') {
@@ -1433,6 +1551,8 @@
     const dTree = debounce((e) => {
       state.treeQ = e.target.value.toLowerCase().trim();
       state.forceCollapsed = false;
+      // reset last rendered tree when search changes to force re-render
+      __lastRenderedTree = null;
       renderActive();
     }, 120);
     treeSearch.addEventListener('input', dTree);
@@ -1464,10 +1584,10 @@
     try {
         const res = await fetch('/api/proctree');
         const data = await res.json();
-        const filtered = filterTreeList(data, state.treeQ);
-        captureOpenKeys();
-        treeEl.innerHTML = filtered.map(n => renderNode(n, 0)).join('');
-        restoreOpenKeys();
+        __tree = data; // update cache
+        // reset last rendered tree to force re-render after manual refresh
+        __lastRenderedTree = null;
+        renderActive();
     } catch (e) {}
     }
 
@@ -1561,7 +1681,12 @@
     try {
         const res = await fetch('/api/integrity/targets');
         const data = await res.json();
-        renderTargets(data);
+        __targets = data; // update cache
+        // reset last rendered targets to force re-render after manual refresh
+        __lastRenderedTargets = null;
+        if (state.tab === 'integrity') {
+          renderTargets(data);
+        }
     } catch (e) {
         iTbody.innerHTML = `<tr><td colspan="5" class="small">Failed to load targets</td></tr>`;
     }
@@ -1569,12 +1694,32 @@
 
     // render integrity targets table with status, actions, and baseline info
     function renderTargets(list) {
+      // create a hash of the targets data to detect changes
+      // we hash based on path, status, and baseline since those are what matter for display
+      const targetsHash = JSON.stringify(list.map(t => ({
+        path: t.path || '',
+        last_result: t.last_result || '',
+        sha256: t.sha256 || '',
+        mtime: t.mtime || '',
+        size: t.size || '',
+        rule: t.rule || ''
+      })));
+      
+      // only render if data has changed
+      if (targetsHash === __lastRenderedTargets && __lastRenderedTargets !== null) {
+        return; // data hasn't changed, skip rendering
+      }
+      __lastRenderedTargets = targetsHash;
+      
       if (!Array.isArray(list) || list.length === 0) {
-        iTbody.innerHTML = `<tr><td colspan="5" class="small">No files being watched yet.</td></tr>`;
+        requestAnimationFrame(() => {
+          iTbody.innerHTML = `<tr><td colspan="5" class="small">No files being watched yet.</td></tr>`;
+        });
         return;
       }
 
-      iTbody.innerHTML = list.map(row => {
+      // use requestAnimationFrame for smoother updates
+      const html = list.map(row => {
         const note = (row.note || '').trim();
         const pathCell = `
           <td class="baseline-cell">
@@ -1626,20 +1771,25 @@
 
         return `<tr>${pathCell}${ruleCell}${baselineCell}${statusCell}${actionsCell}</tr>`;
       }).join('');
-
-      iTbody.querySelectorAll('button[data-act="downloadBaseline"]').forEach(btn => {
-        btn.addEventListener('click', () => {
-          const path = decodeURIComponent(btn.getAttribute('data-path'));
-          window.location.href = `/api/integrity/baseline/download?path=${encodeURIComponent(path)}`;
-        });
-      });
-
-      // wire up action buttons after rendering the table
-      window.currentDiffPath = null;
-      window.diffAutoRefreshInterval = null;
       
-      // view changes button: show file diff in a modal dialog
-      iTbody.querySelectorAll('button[data-act="viewdiff"]').forEach(btn => {
+      // update table content with smooth transition using requestAnimationFrame
+      requestAnimationFrame(() => {
+        iTbody.innerHTML = html;
+        
+        // wire up event listeners after DOM update
+        iTbody.querySelectorAll('button[data-act="downloadBaseline"]').forEach(btn => {
+          btn.addEventListener('click', () => {
+            const path = decodeURIComponent(btn.getAttribute('data-path'));
+            window.location.href = `/api/integrity/baseline/download?path=${encodeURIComponent(path)}`;
+          });
+        });
+
+        // wire up action buttons after rendering the table
+        window.currentDiffPath = null;
+        window.diffAutoRefreshInterval = null;
+        
+        // view changes button: show file diff in a modal dialog
+        iTbody.querySelectorAll('button[data-act="viewdiff"]').forEach(btn => {
         btn.addEventListener('click', async () => {
           const path = decodeURIComponent(btn.getAttribute('data-path'));
           window.currentDiffPath = path;
@@ -1818,63 +1968,64 @@
         });
       });
 
-      // retest button: rehash file and update baseline if needed
-      iTbody.querySelectorAll('button[data-act="rehash"]').forEach(btn => {
-        btn.addEventListener('click', async () => {
-          const path = decodeURIComponent(btn.getAttribute('data-path'));
-          btn.disabled = true;
-          const originalText = btn.textContent;
-          btn.textContent = 'Retesting...';
-          
-          try {
-            const r = await fetch('/api/integrity/hash', {
-              method:'POST',
-              headers:{'Content-Type':'application/json'},
-              body: JSON.stringify({ path })
-            });
-            const j = await r.json();
+        // retest button: rehash file and update baseline if needed
+        iTbody.querySelectorAll('button[data-act="rehash"]').forEach(btn => {
+          btn.addEventListener('click', async () => {
+            const path = decodeURIComponent(btn.getAttribute('data-path'));
+            btn.disabled = true;
+            const originalText = btn.textContent;
+            btn.textContent = 'Retesting...';
             
-            // Show status result instead of just hash
-            if (j.last_result) {
-              const status = j.last_result;
-              if (status.toUpperCase().startsWith('OK')) {
-                alert(`File status: ${status}\n\nBaseline confirmed, no changes detected.`);
-              } else if (status.toUpperCase().startsWith('CHANGED')) {
-                alert(`File status: ${status}\n\nChanges detected. Click "View changes" to review.`);
+            try {
+              const r = await fetch('/api/integrity/hash', {
+                method:'POST',
+                headers:{'Content-Type':'application/json'},
+                body: JSON.stringify({ path })
+              });
+              const j = await r.json();
+              
+              // Show status result instead of just hash
+              if (j.last_result) {
+                const status = j.last_result;
+                if (status.toUpperCase().startsWith('OK')) {
+                  alert(`File status: ${status}\n\nBaseline confirmed, no changes detected.`);
+                } else if (status.toUpperCase().startsWith('CHANGED')) {
+                  alert(`File status: ${status}\n\nChanges detected. Click "View changes" to review.`);
+                } else if (j.error) {
+                  alert(`Error: ${j.error}`);
+                } else {
+                  alert(`Status: ${status}`);
+                }
               } else if (j.error) {
                 alert(`Error: ${j.error}`);
               } else {
-                alert(`Status: ${status}`);
+                // Fallback to hash display
+                alert((j.sha256 ? `SHA-256:\n${j.sha256}` : 'No hash'));
               }
-            } else if (j.error) {
-              alert(`Error: ${j.error}`);
-            } else {
-              // Fallback to hash display
-              alert((j.sha256 ? `SHA-256:\n${j.sha256}` : 'No hash'));
+              
+              // Reload targets to refresh status
+              loadTargets();
+            } catch (e) {
+              alert(`Error: ${e.message}`);
+            } finally {
+              btn.disabled = false;
+              btn.textContent = originalText;
             }
-            
-            // Reload targets to refresh status
-            loadTargets();
-          } catch (e) {
-            alert(`Error: ${e.message}`);
-          } finally {
-            btn.disabled = false;
-            btn.textContent = originalText;
-          }
-        });
-      });
-
-      // remove button: delete target from watch list
-      iTbody.querySelectorAll('button[data-act="remove"]').forEach(btn => {
-        btn.addEventListener('click', async () => {
-          const path = decodeURIComponent(btn.getAttribute('data-path'));
-          if (!confirm('Remove from watch list?')) return;
-          await fetch('/api/integrity/targets', {
-            method:'DELETE',
-            headers:{'Content-Type':'application/json'},
-            body: JSON.stringify({ path })
           });
-          loadTargets();
+        });
+
+        // remove button: delete target from watch list
+        iTbody.querySelectorAll('button[data-act="remove"]').forEach(btn => {
+          btn.addEventListener('click', async () => {
+            const path = decodeURIComponent(btn.getAttribute('data-path'));
+            if (!confirm('Remove from watch list?')) return;
+            await fetch('/api/integrity/targets', {
+              method:'DELETE',
+              headers:{'Content-Type':'application/json'},
+              body: JSON.stringify({ path })
+            });
+            loadTargets();
+          });
         });
       });
     }
@@ -2012,11 +2163,15 @@
           if (openKeys.size === 0 && Array.isArray(__tree)) {
             for (const root of __tree) openKeys.add(String(root.pid));
           }
-          if (state.tab === 'tree') {
-            renderActive();
-            inFlight = false;
-            return;
-          }
+        }
+
+        // save fresh data to cache for instant display on next navigation
+        saveDataCache();
+        
+        if (needTree && state.tab === 'tree') {
+          renderActive();
+          inFlight = false;
+          return;
         }
 
         renderActive();
@@ -2047,6 +2202,9 @@
 
     // clean up the timer when leaving the page
     window.addEventListener('beforeunload', () => { if (state.timer) clearInterval(state.timer); });
+
+    // load cached data immediately for instant display when navigating back
+    loadDataCache();
 
     // initial data fetch and render
     tick();

@@ -25,10 +25,20 @@
       font:14px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial;
       display:flex; align-items:center; justify-content:center; min-height:100vh;
       padding:20px;
+      transition:opacity 0.3s ease-in-out;
+    }
+    body.fade-out {
+      opacity:0;
+      pointer-events:none;
     }
     .auth-container {
       background:var(--panel); border:1px solid var(--border); border-radius:12px;
       padding:32px; max-width:500px; width:100%; box-shadow:0 6px 20px rgba(0,0,0,0.15);
+      transition:opacity 0.3s ease-in-out, transform 0.3s ease-in-out;
+    }
+    body.fade-out .auth-container {
+      opacity:0;
+      transform:translateY(-10px);
     }
     .auth-title {
       font-size:24px; font-weight:700; margin:0 0 8px; text-align:center;
@@ -78,7 +88,25 @@
       </div>
     </div>
     
-    <button class="btn" onclick="window.location.href='/'">Continue to Dashboard</button>
+    <button class="btn" id="continueBtn">Continue to Dashboard</button>
   </div>
+  
+  <script>
+    // smooth page exit transition when navigating to dashboard
+    function fadeOutAndNavigate(url) {
+      document.body.classList.add('fade-out');
+      setTimeout(() => {
+        window.location.href = url;
+      }, 300);
+    }
+    
+    const continueBtn = document.getElementById('continueBtn');
+    if (continueBtn) {
+      continueBtn.addEventListener('click', function(e) {
+        e.preventDefault();
+        fadeOutAndNavigate('/');
+      });
+    }
+  </script>
 </body>
 </html>

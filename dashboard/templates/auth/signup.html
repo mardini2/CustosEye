@@ -8,6 +8,9 @@
   <title>CustosEye · Sign Up</title>
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <link rel="icon" href="/static/assets/favicon.ico?v=2">
+  <link rel="prefetch" href="/preview" />
+  <link rel="preconnect" href="/preview" />
+  <link rel="dns-prefetch" href="/preview" />
   <style>
     :root {
       --bg:#0b0f14; --panel:#141a22; --text:#e7eef7; --muted:#9ab;
@@ -25,11 +28,31 @@
       margin:0; background:var(--bg); color:var(--text);
       font:14px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial;
       display:flex; align-items:center; justify-content:center; min-height:100vh;
-      padding:20px;
+      padding:20px; position:relative; overflow:hidden;
+    }
+    .dashboard-background {
+      position:fixed; top:0; left:0; width:100%; height:100%;
+      z-index:0; filter:blur(8px) brightness(0.3); pointer-events:none;
+      border:none; transform:scale(1.1);
+      opacity:0; transition:opacity 0.4s ease-in-out;
+      will-change:opacity;
+    }
+    .dashboard-background.loaded {
+      opacity:1;
+    }
+    .auth-overlay {
+      position:relative; z-index:1; width:100%; max-width:400px;
+      opacity:0; animation:fadeIn 0.3s ease-in-out 0.2s forwards;
+    }
+    @keyframes fadeIn {
+      from { opacity:0; transform:translateY(10px); }
+      to { opacity:1; transform:translateY(0); }
     }
     .auth-container {
       background:var(--panel); border:1px solid var(--border); border-radius:12px;
       padding:32px; max-width:400px; width:100%; box-shadow:0 6px 20px rgba(0,0,0,0.15);
+      position:relative;
+      will-change:transform, opacity;
     }
     .auth-title {
       font-size:24px; font-weight:700; margin:0 0 8px; text-align:center;
@@ -92,15 +115,28 @@
     .hint {
       color:var(--muted); font-size:12px; margin-top:4px; display:block;
     }
+    .close-btn {
+      position:absolute; top:16px; right:16px;
+      background:none; border:none; color:var(--muted);
+      font-size:24px; line-height:1; cursor:pointer; padding:4px 8px;
+      width:32px; height:32px; display:flex; align-items:center; justify-content:center;
+      border-radius:6px; transition:all 0.2s; text-decoration:none;
+    }
+    .close-btn:hover {
+      background:var(--input); color:var(--text);
+    }
   </style>
 </head>
 <body>
+  <iframe id="dashboardPreview" class="dashboard-background" src="/preview" title="Dashboard Preview"></iframe>
+  <div class="auth-overlay">
   <div class="auth-container">
+    <a href="/auth/login" class="close-btn" aria-label="Close and go to login">×</a>
     <h1 class="auth-title">Create Account</h1>
     <p class="auth-subtitle">Sign up for CustosEye</p>
     
     <div class="info" style="background:rgba(124,197,255,0.1); border:1px solid var(--accent); color:var(--accent); padding:10px; border-radius:8px; font-size:13px; margin-bottom:16px;">
-      <strong>Note:</strong> Only one account is allowed. If an account already exists, you cannot create a new one. After creating your account, you can enable 2FA from the dashboard.
+      <strong>Note:</strong> Only one account is allowed. If an account already exists, you cannot create a new one. After creating your account, you can enable 2FA from the dashboard, this will help with account recovery as well.
     </div>
     
     <div id="error" class="error hidden"></div>
@@ -119,21 +155,41 @@
         <div class="password-wrapper">
           <input type="password" id="password" name="password" class="form-input" required autocomplete="new-password" minlength="8" />
           <button type="button" class="password-toggle" id="passwordToggle" aria-label="Toggle password visibility">
-            <img src="/static/assets/vision.svg" alt="Show password" style="width:18px;height:18px;filter:invert(1);" />
+            <img src="/static/assets/hide.svg" alt="Show password" style="width:18px;height:18px;filter:invert(1);" />
           </button>
         </div>
         <span class="hint">At least 8 characters, must include: capital letter, number, special character. No spaces.</span>
       </div>
       
+      <div class="form-group">
+        <label class="form-label" for="confirmPassword">Confirm Password</label>
+        <div class="password-wrapper">
+          <input type="password" id="confirmPassword" name="confirmPassword" class="form-input" required autocomplete="new-password" minlength="8" />
+          <button type="button" class="password-toggle" id="confirmPasswordToggle" aria-label="Toggle password visibility">
+            <img src="/static/assets/hide.svg" alt="Show password" style="width:18px;height:18px;filter:invert(1);" />
+          </button>
+        </div>
+        <span class="hint">Re-enter your password to confirm</span>
+      </div>
+      
       <button type="submit" class="btn" id="submitBtn">Create Account</button>
     </form>
-    
-    <div class="auth-links">
-      Already have an account? <a href="/auth/login">Sign in</a>
-    </div>
   </div>
   
   <script>
+    // handle iframe loading for smooth background transition
+    const dashboardPreview = document.getElementById('dashboardPreview');
+    if (dashboardPreview) {
+      // fade in iframe when loaded to prevent freeze/lag feeling
+      dashboardPreview.addEventListener('load', function() {
+        this.classList.add('loaded');
+      });
+      // if iframe is already loaded (cached), show it immediately
+      if (dashboardPreview.complete || dashboardPreview.readyState === 'complete') {
+        dashboardPreview.classList.add('loaded');
+      }
+    }
+    
     const form = document.getElementById('signupForm');
     const errorDiv = document.getElementById('error');
     const submitBtn = document.getElementById('submitBtn');
@@ -148,66 +204,73 @@
     }
     
     // password visibility toggle with auto-hide after 1 second
-    const passwordInput = document.getElementById('password');
-    const passwordToggle = document.getElementById('passwordToggle');
-    let passwordHideTimeout = null;
-    
-    if (passwordToggle && passwordInput) {
-      // show/hide toggle based on password field content
-      const updateToggleVisibility = () => {
-        if (passwordInput.value.length > 0) {
-          passwordToggle.classList.add('visible');
-        } else {
-          passwordToggle.classList.remove('visible');
-          // reset to password type and hide icon when empty
-          if (passwordInput.getAttribute('type') === 'text') {
+    // helper function to set up password toggle for a field
+    function setupPasswordToggle(inputId, toggleId) {
+      const passwordInput = document.getElementById(inputId);
+      const passwordToggle = document.getElementById(toggleId);
+      let passwordHideTimeout = null;
+      
+      if (passwordToggle && passwordInput) {
+        // show/hide toggle based on password field content
+        const updateToggleVisibility = () => {
+          if (passwordInput.value.length > 0) {
+            passwordToggle.classList.add('visible');
+          } else {
+            passwordToggle.classList.remove('visible');
+            // reset to password type and hide icon when empty
+            if (passwordInput.getAttribute('type') === 'text') {
+              passwordInput.setAttribute('type', 'password');
+              passwordToggle.innerHTML = '<img src="/static/assets/hide.svg" alt="Show password" style="width:18px;height:18px;filter:invert(1);" />';
+            }
+            if (passwordHideTimeout) {
+              clearTimeout(passwordHideTimeout);
+              passwordHideTimeout = null;
+            }
+          }
+        };
+        
+        // listen for input changes
+        passwordInput.addEventListener('input', updateToggleVisibility);
+        // check initial state
+        updateToggleVisibility();
+        
+        const showPassword = () => {
+          // clear any existing timeout
+          if (passwordHideTimeout) {
+            clearTimeout(passwordHideTimeout);
+          }
+          
+          // show password - use vision.svg (open eye) when password is visible
+          passwordInput.setAttribute('type', 'text');
+          passwordToggle.innerHTML = '<img src="/static/assets/vision.svg" alt="Hide password" style="width:18px;height:18px;filter:invert(1);" />';
+          
+          // auto-hide after 1 second
+          passwordHideTimeout = setTimeout(() => {
             passwordInput.setAttribute('type', 'password');
-            passwordToggle.innerHTML = '<img src="/static/assets/vision.svg" alt="Show password" style="width:18px;height:18px;filter:invert(1);" />';
-          }
-          if (passwordHideTimeout) {
-            clearTimeout(passwordHideTimeout);
+            passwordToggle.innerHTML = '<img src="/static/assets/hide.svg" alt="Show password" style="width:18px;height:18px;filter:invert(1);" />';
             passwordHideTimeout = null;
-          }
-        }
-      };
-      
-      // listen for input changes
-      passwordInput.addEventListener('input', updateToggleVisibility);
-      // check initial state
-      updateToggleVisibility();
-      
-      const showPassword = () => {
-        // clear any existing timeout
-        if (passwordHideTimeout) {
-          clearTimeout(passwordHideTimeout);
-        }
+          }, 1000);
+        };
         
-        // show password - use hide.svg (closed eye) when password is visible
-        passwordInput.setAttribute('type', 'text');
-        passwordToggle.innerHTML = '<img src="/static/assets/hide.svg" alt="Hide password" style="width:18px;height:18px;filter:invert(1);" />';
-        
-        // auto-hide after 1 second
-        passwordHideTimeout = setTimeout(() => {
-          passwordInput.setAttribute('type', 'password');
-          passwordToggle.innerHTML = '<img src="/static/assets/vision.svg" alt="Show password" style="width:18px;height:18px;filter:invert(1);" />';
-          passwordHideTimeout = null;
-        }, 1000);
-      };
-      
-      passwordToggle.addEventListener('click', () => {
-        if (passwordInput.getAttribute('type') === 'password') {
-          showPassword();
-        } else {
-          // if already showing, hide immediately - use vision.svg (open eye) when password is hidden
-          if (passwordHideTimeout) {
-            clearTimeout(passwordHideTimeout);
-            passwordHideTimeout = null;
+        passwordToggle.addEventListener('click', () => {
+          if (passwordInput.getAttribute('type') === 'password') {
+            showPassword();
+          } else {
+            // if already showing, hide immediately - use hide.svg (closed eye) when password is hidden
+            if (passwordHideTimeout) {
+              clearTimeout(passwordHideTimeout);
+              passwordHideTimeout = null;
+            }
+            passwordInput.setAttribute('type', 'password');
+            passwordToggle.innerHTML = '<img src="/static/assets/hide.svg" alt="Show password" style="width:18px;height:18px;filter:invert(1);" />';
           }
-          passwordInput.setAttribute('type', 'password');
-          passwordToggle.innerHTML = '<img src="/static/assets/vision.svg" alt="Show password" style="width:18px;height:18px;filter:invert(1);" />';
-        }
-      });
+        });
+      }
     }
+    
+    // set up password toggles for both password fields
+    setupPasswordToggle('password', 'passwordToggle');
+    setupPasswordToggle('confirmPassword', 'confirmPasswordToggle');
     
     // client-side validation
     function validateUsername(username) {
@@ -251,6 +314,7 @@
       const data = Object.fromEntries(formData);
       const username = (data.username || '').trim();
       const password = data.password || '';
+      const confirmPassword = data.confirmPassword || '';
       
       // client-side validation
       const usernameError = validateUsername(username);
@@ -265,14 +329,26 @@
         return;
       }
       
+      // check if passwords match
+      if (password !== confirmPassword) {
+        showError('Passwords do not match. Please make sure both password fields are identical.');
+        return;
+      }
+      
       submitBtn.disabled = true;
       submitBtn.textContent = 'Creating account...';
       
       try {
+        // only send password, not confirmPassword, to server
+        const submitData = {
+          username: data.username,
+          password: data.password,
+          csrf_token: data.csrf_token
+        };
         const res = await fetch('/auth/signup', {
           method: 'POST',
           headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify(data)
+          body: JSON.stringify(submitData)
         });
         
         const result = await res.json();
@@ -292,5 +368,6 @@
       }
     });
   </script>
+  </div>
 </body>
 </html>

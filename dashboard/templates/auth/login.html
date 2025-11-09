@@ -10,6 +10,8 @@
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <link rel="icon" href="/static/assets/favicon.ico?v=2">
   <link rel="prefetch" href="/preview" />
+  <link rel="preconnect" href="/preview" />
+  <link rel="dns-prefetch" href="/preview" />
   <style>
     :root {
       --bg:#0b0f14; --panel:#141a22; --text:#e7eef7; --muted:#9ab;
@@ -33,13 +35,24 @@
       position:fixed; top:0; left:0; width:100%; height:100%;
       z-index:0; filter:blur(8px) brightness(0.3); pointer-events:none;
       border:none; transform:scale(1.1);
+      opacity:0; transition:opacity 0.4s ease-in-out;
+      will-change:opacity;
+    }
+    .dashboard-background.loaded {
+      opacity:1;
     }
     .auth-overlay {
       position:relative; z-index:1; width:100%; max-width:400px;
+      opacity:0; animation:fadeIn 0.3s ease-in-out 0.2s forwards;
+    }
+    @keyframes fadeIn {
+      from { opacity:0; transform:translateY(10px); }
+      to { opacity:1; transform:translateY(0); }
     }
     .auth-container {
       background:var(--panel); border:1px solid var(--border); border-radius:12px;
       padding:32px; max-width:400px; width:100%; box-shadow:0 6px 20px rgba(0,0,0,0.15);
+      will-change:transform, opacity;
     }
     .auth-title {
       font-size:24px; font-weight:700; margin:0 0 8px; text-align:center;
@@ -131,7 +144,7 @@
         <div class="password-wrapper">
           <input type="password" id="password" name="password" class="form-input" required autocomplete="current-password" />
           <button type="button" class="password-toggle" id="passwordToggle" aria-label="Toggle password visibility">
-            <img src="/static/assets/vision.svg" alt="Show password" style="width:18px;height:18px;filter:invert(1);" />
+            <img src="/static/assets/hide.svg" alt="Show password" style="width:18px;height:18px;filter:invert(1);" />
           </button>
         </div>
       </div>
@@ -162,6 +175,19 @@
   </div>
   
   <script>
+    // handle iframe loading for smooth background transition
+    const dashboardPreview = document.getElementById('dashboardPreview');
+    if (dashboardPreview) {
+      // fade in iframe when loaded to prevent freeze/lag feeling
+      dashboardPreview.addEventListener('load', function() {
+        this.classList.add('loaded');
+      });
+      // if iframe is already loaded (cached), show it immediately
+      if (dashboardPreview.complete || dashboardPreview.readyState === 'complete') {
+        dashboardPreview.classList.add('loaded');
+      }
+    }
+    
     const form = document.getElementById('loginForm');
     const errorDiv = document.getElementById('error');
     const successDiv = document.getElementById('success');
@@ -200,7 +226,7 @@
           // reset to password type and hide icon when empty
           if (passwordInput.getAttribute('type') === 'text') {
             passwordInput.setAttribute('type', 'password');
-            passwordToggle.innerHTML = '<img src="/static/assets/vision.svg" alt="Show password" style="width:18px;height:18px;filter:invert(1);" />';
+            passwordToggle.innerHTML = '<img src="/static/assets/hide.svg" alt="Show password" style="width:18px;height:18px;filter:invert(1);" />';
           }
           if (passwordHideTimeout) {
             clearTimeout(passwordHideTimeout);
@@ -220,14 +246,14 @@
           clearTimeout(passwordHideTimeout);
         }
         
-        // show password - use hide.svg (closed eye) when password is visible
+        // show password - use vision.svg (open eye) when password is visible
         passwordInput.setAttribute('type', 'text');
-        passwordToggle.innerHTML = '<img src="/static/assets/hide.svg" alt="Hide password" style="width:18px;height:18px;filter:invert(1);" />';
+        passwordToggle.innerHTML = '<img src="/static/assets/vision.svg" alt="Hide password" style="width:18px;height:18px;filter:invert(1);" />';
         
         // auto-hide after 1 second
         passwordHideTimeout = setTimeout(() => {
           passwordInput.setAttribute('type', 'password');
-          passwordToggle.innerHTML = '<img src="/static/assets/vision.svg" alt="Show password" style="width:18px;height:18px;filter:invert(1);" />';
+          passwordToggle.innerHTML = '<img src="/static/assets/hide.svg" alt="Show password" style="width:18px;height:18px;filter:invert(1);" />';
           passwordHideTimeout = null;
         }, 1000);
       };
@@ -236,13 +262,13 @@
         if (passwordInput.getAttribute('type') === 'password') {
           showPassword();
         } else {
-          // if already showing, hide immediately - use vision.svg (open eye) when password is hidden
+          // if already showing, hide immediately - use hide.svg (closed eye) when password is hidden
           if (passwordHideTimeout) {
             clearTimeout(passwordHideTimeout);
             passwordHideTimeout = null;
           }
           passwordInput.setAttribute('type', 'password');
-          passwordToggle.innerHTML = '<img src="/static/assets/vision.svg" alt="Show password" style="width:18px;height:18px;filter:invert(1);" />';
+          passwordToggle.innerHTML = '<img src="/static/assets/hide.svg" alt="Show password" style="width:18px;height:18px;filter:invert(1);" />';
         }
       });
     }

@@ -62,8 +62,8 @@ class ColoredUsernameFormatter(logging.Formatter):
             self.use_color = False
 
     def format(self, record):
-        # get the formatted message
-        msg = super().format(record)
+        # get only the message without levelname or logger name prefix
+        msg = record.getMessage()
 
         if not self.use_color:
             return msg
@@ -71,13 +71,35 @@ class ColoredUsernameFormatter(logging.Formatter):
         # ANSI color codes
         purple = "\x1b[35m"  # magenta/purple
         golden = "\x1b[33m"  # yellow/golden
+        green = "\x1b[32m"  # green
         reset = "\x1b[0m"  # reset
 
-        # find usernames, "CustosEye", and "2fa" in the message and color them
+        # find usernames, "CustosEye", "2fa", and ✓ symbol in the message and color them
         # pattern: username appears after patterns like "User ", "for user: ", "Account created: "
         import re
 
-        # match usernames that appear after common patterns
+        # handle patterns that include ✓ first (before coloring all ✓ symbols)
+        # these patterns need special handling to color both ✓ and username
+        patterns_with_checkmark = [
+            (r"(✓ User )([a-zA-Z0-9_]+)", green + r"✓ " + reset + r"User " + purple + r"\2" + reset),  # "✓ User admin"
+            (
+                r"(✓ 2FA enabled for user: )([a-zA-Z0-9_]+)",
+                green + r"✓ " + reset + r"2FA enabled for user: " + purple + r"\2" + reset,
+            ),  # "✓ 2FA enabled for user: admin"
+            (
+                r"(✓ 2FA disabled for user: )([a-zA-Z0-9_]+)",
+                green + r"✓ " + reset + r"2FA disabled for user: " + purple + r"\2" + reset,
+            ),  # "✓ 2FA disabled for user: admin"
+            (r"(✓ Account created: )([a-zA-Z0-9_]+)", green + r"✓ " + reset + r"Account created: " + purple + r"\2" + reset),  # "✓ Account created: admin"
+        ]
+
+        for pattern, replacement in patterns_with_checkmark:
+            msg = re.sub(pattern, replacement, msg)
+
+        # color any remaining ✓ symbols green (those not part of the patterns above)
+        msg = re.sub(r"(✓)", green + r"\1" + reset, msg)
+
+        # match usernames that appear after common patterns (without ✓)
         # examples: "User admin logged in" or "for user: admin" or "Account created: admin"
         patterns = [
             (r"(User )([a-zA-Z0-9_]+)", r"\1" + purple + r"\2" + reset),  # "User admin"
@@ -86,11 +108,6 @@ class ColoredUsernameFormatter(logging.Formatter):
                 r"(Account created: )([a-zA-Z0-9_]+)",
                 r"\1" + purple + r"\2" + reset,
             ),  # "Account created: admin"
-            (r"(✓ User )([a-zA-Z0-9_]+)", r"\1" + purple + r"\2" + reset),  # "✓ User admin"
-            (
-                r"(✓ 2FA enabled for user: )([a-zA-Z0-9_]+)",
-                r"\1" + purple + r"\2" + reset,
-            ),  # "✓ 2FA enabled for user: admin"
             (r"(CustosEye)", purple + r"\1" + reset),  # "CustosEye" anywhere in the message
             (r"(2fa)", golden + r"\1" + reset),  # "2fa" anywhere in the message (case-insensitive)
             (r"(2FA)", golden + r"\1" + reset),  # "2FA" anywhere in the message
@@ -103,8 +120,9 @@ class ColoredUsernameFormatter(logging.Formatter):
 
 
 # set up the custom formatter for auth logger
+# format only shows the message without levelname or logger name prefix for better UX
 handler = logging.StreamHandler()
-handler.setFormatter(ColoredUsernameFormatter("%(levelname)s:%(name)s:%(message)s"))
+handler.setFormatter(ColoredUsernameFormatter("%(message)s"))
 auth_logger.addHandler(handler)
 auth_logger.propagate = False  # prevent duplicate messages
 
@@ -131,6 +149,11 @@ FAILED_ATTEMPTS: dict[str, list[float]] = defaultdict(list)
 LOCKOUT_DURATION = 300  # 5 minutes
 MAX_ATTEMPTS = 5
 ATTEMPT_WINDOW = 600  # 10 minutes
+
+
+def _normalize_username(username: str) -> str:
+    """normalize username to lowercase for case-insensitive comparison"""
+    return username.lower() if username else ""
 
 
 def _load_users() -> dict[str, dict[str, Any]]:
@@ -207,7 +230,8 @@ def _verify_password(password: str, password_hash: str) -> bool:
 def _check_brute_force(username: str) -> tuple[bool, str | None]:
     """check if user is locked out due to brute force attempts"""
     now = time.time()
-    attempts = FAILED_ATTEMPTS[username]
+    username_normalized = _normalize_username(username)
+    attempts = FAILED_ATTEMPTS[username_normalized]
 
     # clean old attempts
     attempts[:] = [t for t in attempts if now - t < ATTEMPT_WINDOW]
@@ -228,13 +252,15 @@ def _check_brute_force(username: str) -> tuple[bool, str | None]:
 def _record_failed_attempt(username: str) -> None:
     """record a failed login attempt"""
     now = time.time()
-    FAILED_ATTEMPTS[username].append(now)
-    auth_logger.warning(f"Failed login attempt for user: {username}")
+    username_normalized = _normalize_username(username)
+    FAILED_ATTEMPTS[username_normalized].append(now)
+    auth_logger.warning(f"Failed login attempt for user: {username_normalized}")
 
 
 def _clear_failed_attempts(username: str) -> None:
     """clear failed attempts after successful login"""
-    FAILED_ATTEMPTS.pop(username, None)
+    username_normalized = _normalize_username(username)
+    FAILED_ATTEMPTS.pop(username_normalized, None)
 
 
 def create_user(username: str, password: str) -> tuple[bool, str]:
@@ -260,7 +286,10 @@ def create_user(username: str, password: str) -> tuple[bool, str]:
         )
     if " " in username:
         return False, "Username cannot contain spaces"
-    if username.lower() in {u.lower() for u in users.keys()}:
+    
+    # normalize username to lowercase for case-insensitive storage
+    username_lower = _normalize_username(username)
+    if username_lower in {_normalize_username(u) for u in users.keys()}:
         return False, "Username already exists"
 
     # validate password using shared validation function
@@ -274,9 +303,12 @@ def create_user(username: str, password: str) -> tuple[bool, str]:
     # hash password
     password_hash = _hash_password(password)
 
-    # create user record
-    users[username] = {
-        "username": username,
+    # normalize username to lowercase for case-insensitive storage and lookup
+    username_normalized = _normalize_username(username)
+    
+    # create user record - store with lowercase username as key for case-insensitive lookup
+    users[username_normalized] = {
+        "username": username_normalized,
         "password_hash": password_hash,
         "totp_secret": None,
         "totp_enabled": False,
@@ -287,39 +319,43 @@ def create_user(username: str, password: str) -> tuple[bool, str]:
 
     _save_users(users)
     admin_status = "admin" if is_admin else "user"
-    auth_logger.info(f"✓ Account created: {username} ({admin_status})")
+    auth_logger.info(f"✓ Account created: {username_normalized} ({admin_status})")
 
     return True, "User created successfully"
 
 
 def verify_user(username: str, password: str) -> tuple[bool, str | None]:
     """verify username and password"""
+    # normalize username to lowercase for case-insensitive lookup
+    username_normalized = _normalize_username(username)
+    
     # check brute force protection
-    can_login, error = _check_brute_force(username)
+    can_login, error = _check_brute_force(username_normalized)
     if not can_login:
         return False, error
 
     users = _load_users()
-    user = users.get(username)
+    user = users.get(username_normalized)
 
     if not user:
-        _record_failed_attempt(username)
+        _record_failed_attempt(username_normalized)
         return False, "Invalid username or password"
 
     if not _verify_password(password, user["password_hash"]):
-        _record_failed_attempt(username)
+        _record_failed_attempt(username_normalized)
         return False, "Invalid username or password"
 
     # successful login (without 2FA verification - that's logged separately in the route)
-    _clear_failed_attempts(username)
+    _clear_failed_attempts(username_normalized)
     # don't log here - let the route handler log with 2FA context
     return True, None
 
 
 def get_user(username: str) -> dict[str, Any] | None:
-    """get user record by username"""
+    """get user record by username (case-insensitive)"""
     users = _load_users()
-    return users.get(username)
+    username_normalized = _normalize_username(username)
+    return users.get(username_normalized)
 
 
 def is_admin(username: str) -> bool:
@@ -403,8 +439,9 @@ def verify_backup_code(user: dict[str, Any], code: str) -> bool:
 
 def enable_2fa(username: str, secret: str, token: str) -> tuple[bool, str]:
     """enable 2FA for a user after verifying the token"""
+    username_normalized = _normalize_username(username)
     users = _load_users()
-    user = users.get(username)
+    user = users.get(username_normalized)
 
     if not user:
         return False, "User not found"
@@ -422,15 +459,16 @@ def enable_2fa(username: str, secret: str, token: str) -> tuple[bool, str]:
     user["backup_codes"] = backup_codes
 
     _save_users(users)
-    auth_logger.info(f"✓ 2FA enabled for user: {username}")
+    auth_logger.info(f"✓ 2FA enabled for user: {username_normalized}")
 
     return True, "2FA enabled successfully"
 
 
 def disable_2fa(username: str, token: str) -> tuple[bool, str]:
     """disable 2FA for a user after verifying the token one last time"""
+    username_normalized = _normalize_username(username)
     users = _load_users()
-    user = users.get(username)
+    user = users.get(username_normalized)
 
     if not user:
         return False, "User not found"
@@ -456,7 +494,7 @@ def disable_2fa(username: str, token: str) -> tuple[bool, str]:
     user["totp_secret"] = None
     user["backup_codes"] = []  # clear backup codes when disabling
     _save_users(users)
-    auth_logger.info(f"✓ 2FA disabled for user: {username}")
+    auth_logger.info(f"✓ 2FA disabled for user: {username_normalized}")
 
     return True, "2FA disabled successfully"
 
@@ -537,8 +575,10 @@ def verify_2fa(username: str, token: str) -> tuple[bool, str | None]:
 
 def reset_password_with_2fa(username: str, new_password: str, token: str) -> tuple[bool, str]:
     """reset password after verifying 2FA"""
+    username_normalized = _normalize_username(username)
+    
     # verify 2FA first
-    valid, error = verify_2fa(username, token)
+    valid, error = verify_2fa(username_normalized, token)
     if not valid:
         return False, error or "2FA verification failed"
 
@@ -548,7 +588,7 @@ def reset_password_with_2fa(username: str, new_password: str, token: str) -> tup
         return False, error
 
     users = _load_users()
-    user = users.get(username)
+    user = users.get(username_normalized)
 
     if not user:
         return False, "User not found"
@@ -561,7 +601,7 @@ def reset_password_with_2fa(username: str, new_password: str, token: str) -> tup
     # update password
     user["password_hash"] = _hash_password(new_password)
     _save_users(users)
-    auth_logger.info(f"Password reset for user: {username}")
+    auth_logger.info(f"Password reset for user: {username_normalized}")
 
     return True, "Password reset successfully"
 
@@ -592,8 +632,10 @@ def _validate_password(password: str) -> tuple[bool, str]:
 
 def change_password(username: str, old_password: str, new_password: str) -> tuple[bool, str]:
     """change password (requires old password)"""
+    username_normalized = _normalize_username(username)
+    
     # verify old password
-    valid, error = verify_user(username, old_password)
+    valid, error = verify_user(username_normalized, old_password)
     if not valid:
         return False, error or "Invalid current password"
 
@@ -607,7 +649,7 @@ def change_password(username: str, old_password: str, new_password: str) -> tupl
         return False, "New password must be different from your current password"
 
     users = _load_users()
-    user = users.get(username)
+    user = users.get(username_normalized)
 
     if not user:
         return False, "User not found"
@@ -620,6 +662,6 @@ def change_password(username: str, old_password: str, new_password: str) -> tupl
     # update password
     user["password_hash"] = _hash_password(new_password)
     _save_users(users)
-    auth_logger.info(f"Password changed for user: {username}")
+    auth_logger.info(f"Password changed for user: {username_normalized}")
 
     return True, "Password changed successfully"

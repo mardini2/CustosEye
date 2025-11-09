@@ -117,30 +117,35 @@ def register_auth_routes(app: Flask) -> None:
         if not username or not password:
             return jsonify({"error": "Username and password required"}), 400
 
+        # normalize username to lowercase for case-insensitive authentication
+        from dashboard.auth import _normalize_username
+        username_normalized = _normalize_username(username)
+
         # verify user
-        valid, error = verify_user(username, password)
+        valid, error = verify_user(username_normalized, password)
         if not valid:
             return jsonify({"error": error or "Invalid credentials"}), 401
 
         # check if 2FA is enabled
-        user = get_user(username)
+        user = get_user(username_normalized)
         used_2fa = False
         if user and user.get("totp_enabled"):
             # require 2FA token
             token = data.get("totp_token") or ""
             if not token:
-                return jsonify({"requires_2fa": True, "username": username}), 200
+                return jsonify({"requires_2fa": True, "username": username_normalized}), 200
 
             # verify 2FA
-            valid_2fa, error_2fa = verify_2fa(username, token)
+            valid_2fa, error_2fa = verify_2fa(username_normalized, token)
             if not valid_2fa:
                 return jsonify({"error": error_2fa or "Invalid 2FA code"}), 401
 
             used_2fa = True
 
         # successful login (non-persistent session - expires when browser closes)
-        session["username"] = username
-        session["is_admin"] = is_admin(username)
+        # store normalized username in session for consistency
+        session["username"] = username_normalized
+        session["is_admin"] = is_admin(username_normalized)
         # do not set session.permanent = True - we want session-only cookies
         # this makes sure users must login again when they restart the program
 
@@ -148,9 +153,9 @@ def register_auth_routes(app: Flask) -> None:
         from dashboard.auth import auth_logger
 
         if used_2fa:
-            auth_logger.info(f"✓ User {username} logged in successfully including 2fa")
+            auth_logger.info(f"✓ User {username_normalized} logged in successfully including 2FA")
         else:
-            auth_logger.info(f"✓ User {username} logged in successfully")
+            auth_logger.info(f"✓ User {username_normalized} logged in successfully")
 
         return jsonify({"success": True, "redirect": url_for("index")})
 
@@ -174,6 +179,7 @@ def register_auth_routes(app: Flask) -> None:
         data = request.get_json() if request.is_json else request.form
         username = (data.get("username") or "").strip()
         password = data.get("password") or ""
+        confirm_password = data.get("confirmPassword") or ""
         csrf_token = data.get("csrf_token") or ""
 
         # verify CSRF
@@ -183,14 +189,23 @@ def register_auth_routes(app: Flask) -> None:
         if not username or not password:
             return jsonify({"error": "Username and password required"}), 400
 
-        # create user
+        # check if passwords match (if confirmPassword was provided)
+        if confirm_password and password != confirm_password:
+            return jsonify({"error": "Passwords do not match"}), 400
+
+        # create user (create_user will normalize username to lowercase)
         success, message = create_user(username, password)
         if not success:
             return jsonify({"error": message}), 400
 
+        # normalize username for session storage
+        from dashboard.auth import _normalize_username
+        username_normalized = _normalize_username(username)
+
         # auto-login after signup (non-persistent session)
-        session["username"] = username
-        session["is_admin"] = is_admin(username)
+        # store normalized username in session for consistency
+        session["username"] = username_normalized
+        session["is_admin"] = is_admin(username_normalized)
         # do not set session.permanent = True - we want session-only cookies
 
         return jsonify({"success": True, "redirect": url_for("index")})
@@ -214,7 +229,7 @@ def register_auth_routes(app: Flask) -> None:
             from dashboard.auth import auth_logger
 
             if shutdown:
-                auth_logger.info(f"✓ User {username} logged out - shutting down CustosEye")
+                auth_logger.info(f"✓ User {username} logged out\n\nShutting down CustosEye...\n")
             else:
                 auth_logger.info(f"✓ User {username} logged out")
 
@@ -241,7 +256,7 @@ def register_auth_routes(app: Flask) -> None:
         """shutdown handler - shuts down the server without requiring authentication"""
         from dashboard.auth import auth_logger
 
-        auth_logger.info("Shutting down CustosEye from login page")
+        auth_logger.info("\nShutting down CustosEye...\n")
         # schedule shutdown in a separate thread to allow response to be sent
         import os
         import threading
@@ -299,12 +314,16 @@ def register_auth_routes(app: Flask) -> None:
 
         # POST: verify and enable 2FA
         data = request.get_json() if request.is_json else request.form
-        token = data.get("token") or ""
+        token = (data.get("token") or "").strip()
         csrf_token = data.get("csrf_token") or ""
 
         # verify CSRF
         if not _verify_csrf_token(csrf_token):
             return jsonify({"error": "Invalid CSRF token"}), 400
+
+        # check if token is empty before processing
+        if not token:
+            return jsonify({"error": "Verification code is required. Please enter the 6-digit code from your authenticator app."}), 400
 
         # get secret from session (where we stored it during GET request)
         secret = session.get("pending_totp_secret")
@@ -473,7 +492,10 @@ def register_auth_routes(app: Flask) -> None:
         if not username:
             return jsonify({"error": "Username required"}), 400
 
-        user = get_user(username)
+        # normalize username for case-insensitive lookup
+        from dashboard.auth import _normalize_username
+        username_normalized = _normalize_username(username)
+        user = get_user(username_normalized)
         if not user:
             # don not reveal if user exists
             return jsonify(
@@ -493,9 +515,9 @@ def register_auth_routes(app: Flask) -> None:
         return jsonify(
             {
                 "success": True,
-                "username": username,
+                "username": username_normalized,
                 "requires_2fa": True,
-                "redirect": url_for("auth_reset_password", username=username),
+                "redirect": url_for("auth_reset_password", username=username_normalized),
             }
         )
 
@@ -508,14 +530,17 @@ def register_auth_routes(app: Flask) -> None:
             if not username:
                 return redirect(url_for("auth_forgot_password"))
 
-            user = get_user(username)
+            # normalize username for case-insensitive lookup
+            from dashboard.auth import _normalize_username
+            username_normalized = _normalize_username(username)
+            user = get_user(username_normalized)
             if not user or not user.get("totp_enabled"):
                 return redirect(url_for("auth_forgot_password"))
 
             return render_template(
                 "auth/reset-password.html",
                 csrf_token=_get_csrf_token(),
-                username=username,
+                username=username_normalized,
             )
 
         # POST: handle password reset
@@ -532,8 +557,12 @@ def register_auth_routes(app: Flask) -> None:
         if not username or not new_password or not token:
             return jsonify({"error": "Username, new password, and 2FA token required"}), 400
 
+        # normalize username for case-insensitive lookup
+        from dashboard.auth import _normalize_username
+        username_normalized = _normalize_username(username)
+
         # reset password with 2FA verification
-        success, message = reset_password_with_2fa(username, new_password, token)
+        success, message = reset_password_with_2fa(username_normalized, new_password, token)
         if not success:
             return jsonify({"error": message}), 400
 

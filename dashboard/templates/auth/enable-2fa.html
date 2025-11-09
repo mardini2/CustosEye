@@ -9,6 +9,8 @@
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <link rel="icon" href="/static/assets/favicon.ico?v=2">
   <link rel="prefetch" href="/preview" />
+  <link rel="preconnect" href="/preview" />
+  <link rel="dns-prefetch" href="/preview" />
   <style>
     :root {
       --bg:#0b0f14; --panel:#141a22; --text:#e7eef7; --muted:#9ab;
@@ -26,11 +28,21 @@
       margin:0; background:var(--bg); color:var(--text);
       font:14px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial;
       padding:0; position:relative; min-height:100vh; overflow-y:auto;
+      transition:opacity 0.3s ease-in-out;
+    }
+    body.fade-out {
+      opacity:0;
+      pointer-events:none;
     }
     .dashboard-background {
       position:fixed; top:0; left:0; width:100%; height:100%;
       z-index:0; filter:blur(8px) brightness(0.3); pointer-events:none;
       border:none; transform:scale(1.1);
+      opacity:0; transition:opacity 0.4s ease-in-out;
+      will-change:opacity;
+    }
+    .dashboard-background.loaded {
+      opacity:1;
     }
     .auth-overlay {
       position:relative; z-index:1; width:100%; max-width:600px;
@@ -38,10 +50,21 @@
       min-height:100vh;
       display:flex; align-items:center; justify-content:center;
       box-sizing:border-box;
+      opacity:0; animation:fadeIn 0.3s ease-in-out 0.2s forwards;
+      transition:opacity 0.3s ease-in-out, transform 0.3s ease-in-out;
+    }
+    body.fade-out .auth-overlay {
+      opacity:0;
+      transform:translateY(-10px);
+    }
+    @keyframes fadeIn {
+      from { opacity:0; transform:translateY(10px); }
+      to { opacity:1; transform:translateY(0); }
     }
     .auth-container {
       background:var(--panel); border:1px solid var(--border); border-radius:12px;
       padding:32px; max-width:500px; width:100%; box-shadow:0 6px 20px rgba(0,0,0,0.15);
+      will-change:transform, opacity;
     }
     .auth-title {
       font-size:24px; font-weight:700; margin:0 0 8px; text-align:center;
@@ -193,7 +216,7 @@
         <p class="auth-subtitle" style="margin-bottom:16px;">This will remove 2FA protection from your account</p>
         
         <div class="error" style="margin-bottom:16px;">
-          <strong>Warning:</strong> Disabling 2FA will make your account less secure.
+          <strong>Warning:</strong> Disabling 2FA will make your account less secure and unrecoverable if you lose your login details.
         </div>
         
         <form id="disable2faForm">
@@ -264,6 +287,51 @@
   </div>
   
   <script>
+    // smooth page exit transitions - fade out when navigating away
+    function fadeOutAndNavigate(url) {
+      document.body.classList.add('fade-out');
+      // wait for fade-out animation to complete before navigating
+      setTimeout(() => {
+        window.location.href = url;
+      }, 300);
+    }
+    
+    // intercept all internal link clicks to add fade-out transition
+    document.addEventListener('click', function(e) {
+      const link = e.target.closest('a[href]');
+      if (link) {
+        const href = link.getAttribute('href');
+        // only handle internal links (relative paths starting with /)
+        if (href && href.startsWith('/')) {
+          // skip javascript: links and links marked to skip fade
+          if (!href.startsWith('javascript:') && !link.hasAttribute('data-no-fade')) {
+            e.preventDefault();
+            e.stopPropagation();
+            fadeOutAndNavigate(href);
+            return false;
+          }
+        }
+      }
+    }, true);
+    
+    // create a helper function for programmatic navigation with fade-out
+    window.smoothNavigate = function(url) {
+      fadeOutAndNavigate(url);
+    };
+    
+    // handle iframe loading for smooth background transition
+    const dashboardPreview = document.getElementById('dashboardPreview');
+    if (dashboardPreview) {
+      // fade in iframe when loaded to prevent freeze/lag feeling
+      dashboardPreview.addEventListener('load', function() {
+        this.classList.add('loaded');
+      });
+      // if iframe is already loaded (cached), show it immediately
+      if (dashboardPreview.complete || dashboardPreview.readyState === 'complete') {
+        dashboardPreview.classList.add('loaded');
+      }
+    }
+    
     // check if 2FA is enabled (read from data attribute)
     const container = document.querySelector('.auth-container');
     const totpEnabled = container && container.dataset.totpEnabled === 'true';
@@ -349,11 +417,19 @@
         form.addEventListener('submit', async (e) => {
           e.preventDefault();
           hideError();
-          submitBtn.disabled = true;
-          submitBtn.textContent = 'Enabling...';
           
           const formData = new FormData(form);
           const data = Object.fromEntries(formData);
+          const token = (data.token || '').trim();
+          
+          // client-side validation: check if token is empty
+          if (!token) {
+            showError('Verification code is required. Please enter the 6-digit code from your authenticator app.');
+            return;
+          }
+          
+          submitBtn.disabled = true;
+          submitBtn.textContent = 'Enabling...';
           
           try {
             const res = await fetch('/auth/enable-2fa', {
@@ -365,8 +441,8 @@
             const result = await res.json();
             
             if (res.ok && result.success) {
-              // redirect to backup codes page
-              window.location.href = result.redirect || '/auth/backup-codes';
+              // redirect to backup codes page with smooth transition
+              fadeOutAndNavigate(result.redirect || '/auth/backup-codes');
             } else {
               showError(result.error || 'Failed to enable 2FA');
               submitBtn.disabled = false;
@@ -511,9 +587,33 @@
               const result = await res.json();
               
               if (res.ok && result.success) {
-                // success - redirect to dashboard
+                // reset button state first to remove "Disabling..." text
+                if (disableSubmitBtn) {
+                  disableSubmitBtn.disabled = false;
+                  disableSubmitBtn.textContent = 'Disable 2FA';
+                }
+                // close the disable modal completely before showing success message
+                if (disable2faModal) {
+                  disable2faModal.classList.add('hidden');
+                  disable2faModal.style.display = 'none';
+                }
+                // reset form
+                if (disable2faForm) disable2faForm.reset();
+                // clear any error messages
+                if (disableError) disableError.classList.add('hidden');
+                // ensure confirmModal is on top by temporarily increasing z-index
+                if (confirmModal) {
+                  confirmModal.style.zIndex = '1002';
+                }
+                // small delay to ensure disable modal is fully closed and DOM is updated
+                await new Promise(resolve => setTimeout(resolve, 50));
+                // show success message and redirect with smooth transition
                 await showCustomAlert('2FA has been disabled successfully. You can re-enable it anytime from the dashboard.');
-                window.location.href = '/';
+                // restore z-index after alert is shown
+                if (confirmModal) {
+                  confirmModal.style.zIndex = '1000';
+                }
+                fadeOutAndNavigate('/');
               } else {
                 if (disableError) {
                   disableError.textContent = result.error || 'Failed to disable 2FA';

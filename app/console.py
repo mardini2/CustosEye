@@ -263,18 +263,19 @@ def main() -> None:
 
         _colorama_init()
         purple = "\x1b[35m"
+        blue = "\x1b[34m"
         reset = "\x1b[0m"
     except Exception:
         purple = reset = ""
     print(f"Welcome to {purple}CustosEye{reset}!")  # print welcome message with colored CustosEye
-    print("Dashboard running at http://127.0.0.1:8765/ 𒆙")  # print dashboard URL
+    print(f"Dashboard running at {blue}http://127.0.0.1:8765/{reset} {purple}⮜{reset}\n")  # print dashboard URL
 
     # keep main alive
     try:
         while True:  # loop forever to keep the main thread alive
             time.sleep(0.5)  # sleep for half a second (prevents busy-waiting)
     except KeyboardInterrupt:  # if user presses Ctrl+C
-        print("\nShutting down CustosEye...")  # print shutdown message
+        print(f"\nShutting down {purple}CustosEye{reset}...\n")  # print shutdown message
 
 
 if __name__ == "__main__":
