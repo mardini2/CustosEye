@@ -62,12 +62,11 @@
     decline.className = 'btn btn-ghost';
     decline.textContent = 'Decline';
 
-    // optional: a link to the full settings page (opens in a new tab)
+    // optional: a link to the full settings page (opens in same tab so users can configure)
     const learn = document.createElement('a');
     learn.className = 'btn btn-ghost';
     learn.href = 'cookies.html';
-    learn.target = '_blank';  // open in new tab
-    learn.rel = 'noopener';  // security: prevent new tab from accessing opener window
+    // open in same tab so users can navigate to settings page and configure
     learn.textContent = 'Open Cookie settings';
 
     // add buttons to the row
@@ -128,8 +127,19 @@
     openModal();  // show the modal again
   };
 
+  // check if we're on the cookie settings page
+  function isCookieSettingsPage() {
+    // check if current page is cookies.html (works for both relative and absolute paths)
+    const path = window.location.pathname.toLowerCase();
+    return path.endsWith('cookies.html') || path.endsWith('/cookies');
+  }
+
   // show the gate only when no choice is stored (on page load)
+  // BUT skip showing it on the cookie settings page itself (users need to access settings)
   document.addEventListener('DOMContentLoaded', () => {
-    if (!hasChoice()) openModal();  // show modal if user hasn't made a choice yet
+    // don't show modal on cookie settings page - let users configure their settings
+    if (isCookieSettingsPage()) return;
+    // show modal on other pages if user hasn't made a choice yet
+    if (!hasChoice()) openModal();
   });
 })();

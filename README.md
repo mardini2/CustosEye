@@ -39,6 +39,11 @@ python setup_env.py
 python -m app.console
 # Console output:
 # CustosEye running at http://127.0.0.1:8765/
+
+# Website Laucnh:
+python -m http.server 8765
+# Then visit http://127.0.0.1:8765
+# it is the same as http://localhost:8765
 ```
 
 **Command-line options**
