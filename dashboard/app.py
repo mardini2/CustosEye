@@ -95,7 +95,7 @@ class RecentMeta(TypedDict, total=False):
 
 # single waitress optional block (we keep only this one, after all imports)
 try:
-    from waitress import serve as _serve
+    from waitress import serve as _serve  # type: ignore[import-untyped]
 
     HAVE_WAITRESS = True
 except Exception:
@@ -992,10 +992,10 @@ def _hex_to_color_name(hex_code: str) -> str:
     """convert hex color code to friendly color name"""
     if not hex_code:
         return ""
-    
+
     # normalize hex code (remove # if present, uppercase)
     hex_clean = hex_code.replace("#", "").upper()
-    
+
     # common color mappings
     color_map = {
         "000000": "Black",
@@ -1016,6 +1016,8 @@ def _hex_to_color_name(hex_code: str) -> str:
         "808080": "Gray",
         "FFA500": "Orange",
         "A02B93": "Purple",
+        "E97132": "Orange",
+        "156082": "Teal",
         "FFC0CB": "Pink",
         "A52A2A": "Brown",
         "DDA0DD": "Plum",
@@ -1023,20 +1025,67 @@ def _hex_to_color_name(hex_code: str) -> str:
         "8B008B": "Dark Magenta",
         "4B0082": "Indigo",
     }
-    
+
     # check exact match first
     if hex_clean in color_map:
         return color_map[hex_clean]
-    
-    # try to match common patterns
-    if hex_clean.startswith("FF"):
-        return "Red"
-    elif hex_clean.startswith("00"):
-        return "Blue"
-    elif hex_clean.startswith("80"):
-        return "Gray"
-    
-    # if no match, return empty string (will just show hex)
+
+    # try to match common patterns by analyzing RGB components
+    if len(hex_clean) == 6:
+        try:
+            r = int(hex_clean[0:2], 16)
+            g = int(hex_clean[2:4], 16)
+            b = int(hex_clean[4:6], 16)
+
+            # Determine color based on dominant component
+            max_val = max(r, g, b)
+            min_val = min(r, g, b)
+            diff = max_val - min_val
+
+            # Gray scale detection
+            if diff < 30:
+                if max_val < 128:
+                    return "Dark Gray"
+                else:
+                    return "Light Gray"
+
+            # Teal/Cyan detection (blue-green) - check before generic blue/green
+            # More lenient for colors like #156082 (r=21, g=96, b=130)
+            if g > 80 and b > 100 and r < 100:
+                return "Teal"
+
+            # Color detection based on dominant component
+            if r > g and r > b:
+                if r > 200 and g < 100 and b < 100:
+                    return "Red"
+                elif r > 150 and g > 100 and b < 100:
+                    return "Orange"
+                elif r > 150 and g < 100 and b > 100:
+                    return "Magenta"
+                elif r > 100:
+                    return "Pink"
+            elif g > r and g > b:
+                if g > 200 and r < 100 and b < 100:
+                    return "Green"
+                elif g > 150 and b > 100:
+                    return "Cyan"
+                elif g > 100:
+                    return "Green"
+            elif b > r and b > g:
+                if b > 200 and r < 100 and g < 100:
+                    return "Blue"
+                elif b > 150 and r > 100:
+                    return "Purple"
+                elif b > 100:
+                    return "Blue"
+
+            # Brown detection (low brightness, red-orange)
+            if max_val < 150 and r > g and r > b:
+                return "Brown"
+        except (ValueError, IndexError):
+            pass
+
+    # if no match, return empty string (will default to hex)
     return ""
 
 
@@ -1050,19 +1099,22 @@ def _normalize_text_for_diff(text: str) -> str:
     returns normalized string for comparison only (original text is preserved in diffs).
     """
     import re
+
     if not text:
         return ""
     # convert curly apostrophes and quotes to straight ones
-    normalized = text.replace('\u2019', "'")  # right single quotation mark → straight apostrophe
-    normalized = normalized.replace('\u2018', "'")  # left single quotation mark → straight apostrophe
-    normalized = normalized.replace('\u201C', '"')  # left double quotation mark → straight quote
-    normalized = normalized.replace('\u201D', '"')  # right double quotation mark → straight quote
+    normalized = text.replace("\u2019", "'")  # right single quotation mark → straight apostrophe
+    normalized = normalized.replace(
+        "\u2018", "'"
+    )  # left single quotation mark → straight apostrophe
+    normalized = normalized.replace("\u201C", '"')  # left double quotation mark → straight quote
+    normalized = normalized.replace("\u201D", '"')  # right double quotation mark → straight quote
     # normalize non-breaking spaces to regular spaces
-    normalized = normalized.replace('\u00A0', ' ')  # non-breaking space → space
-    normalized = normalized.replace('\u2009', ' ')  # thin space → space
-    normalized = normalized.replace('\u200A', ' ')  # hair space → space
+    normalized = normalized.replace("\u00A0", " ")  # non-breaking space → space
+    normalized = normalized.replace("\u2009", " ")  # thin space → space
+    normalized = normalized.replace("\u200A", " ")  # hair space → space
     # collapse repeated whitespace to single spaces (but preserve at least one space)
-    normalized = re.sub(r'\s+', ' ', normalized)
+    normalized = re.sub(r"\s+", " ", normalized)
     return normalized.strip()
 
 
@@ -1092,13 +1144,14 @@ def _tokenize_text(text: str) -> list[tuple[str, int, int]]:
     Uses regex word boundaries which respect Unicode word boundaries (UAX#29).
     """
     import re
+
     if not text:
         return []
     tokens: list[tuple[str, int, int]] = []
     # Use \b for word boundaries - Python's re uses Unicode-aware word boundaries
     # This handles emoji, accents, zero-width joiners correctly
     # Match words (\b\w+\b) or non-whitespace sequences (\S+)
-    for match in re.finditer(r'\b\w+\b|\S+', text):
+    for match in re.finditer(r"\b\w+\b|\S+", text):
         tokens.append((match.group(0), match.start(), match.end()))
     return tokens
 
@@ -1112,9 +1165,9 @@ def _normalize_style_value(attr_key: str, attr_val: Any) -> str:
     """
     if attr_val is None:
         return ""
-    
+
     val_str = str(attr_val).strip().lower()
-    
+
     # normalize color values - convert to uppercase hex without # prefix
     if attr_key == "color":
         # remove # if present, convert to uppercase
@@ -1128,7 +1181,7 @@ def _normalize_style_value(attr_key: str, attr_val: Any) -> str:
         if len(val_str) < 6:
             val_str = val_str.ljust(6, "0")
         return val_str.upper()
-    
+
     # normalize boolean attributes - convert to "true" or empty string
     if attr_key in ("bold", "italic", "strikethrough", "underline"):
         if val_str in ("true", "1", "yes", "on"):
@@ -1139,7 +1192,7 @@ def _normalize_style_value(attr_key: str, attr_val: Any) -> str:
         if attr_key == "strikethrough" and val_str == "double":
             return "double"
         return val_str
-    
+
     # normalize other attributes - just lowercase and strip
     return val_str
 
@@ -1190,8 +1243,12 @@ def _extract_formatting_from_office_doc(path: str) -> dict[str, dict[str, Any]]:
                         r'<w:pPr[^>]*>.*?<w:color[^>]*w:val="([^"]+)"', para, re.DOTALL
                     )
                     # bold can be <w:b/> or <w:b w:val="true"/> or <w:b w:val="1"/>
-                    para_bold = re.search(r'<w:pPr[^>]*>.*?<w:b(?:\s+w:val="(?:true|1)")?[^>]*/>', para, re.DOTALL)
-                    para_italic = re.search(r'<w:pPr[^>]*>.*?<w:i(?:\s+w:val="(?:true|1)")?[^>]*/>', para, re.DOTALL)
+                    para_bold = re.search(
+                        r'<w:pPr[^>]*>.*?<w:b(?:\s+w:val="(?:true|1)")?[^>]*/>', para, re.DOTALL
+                    )
+                    para_italic = re.search(
+                        r'<w:pPr[^>]*>.*?<w:i(?:\s+w:val="(?:true|1)")?[^>]*/>', para, re.DOTALL
+                    )
                     para_strike = re.search(r"<w:pPr[^>]*>.*?<w:strike[^>]*/>", para, re.DOTALL)
                     para_dstrike = re.search(r"<w:pPr[^>]*>.*?<w:dstrike[^>]*/>", para, re.DOTALL)
 
@@ -1215,10 +1272,10 @@ def _extract_formatting_from_office_doc(path: str) -> dict[str, dict[str, Any]]:
                         rpr_content = rpr_match.group(1) if rpr_match else ""
                         # if no rPr tag, search in the entire run
                         search_in = rpr_content if rpr_content else run
-                        
+
                         # color: can be <w:color w:val="A02B93"/> (usually in rPr)
                         run_color = re.search(r'<w:color[^>]*w:val="([^"]+)"', search_in)
-                        
+
                         # bold can be <w:b/> or <w:b w:val="true"/> or <w:b w:val="1"/>
                         # but not <w:b w:val="false"/> or <w:b w:val="0"/>
                         run_bold_match = re.search(r"<w:b([^>]*)(?:/>|>)", search_in)
@@ -1228,7 +1285,7 @@ def _extract_formatting_from_office_doc(path: str) -> dict[str, dict[str, Any]]:
                             # check if val is explicitly false or 0
                             if not re.search(r'w:val="(?:false|0)"', attrs):
                                 run_bold = True
-                        
+
                         # italic: can be <w:i/> or <w:i w:val="true"/> or <w:i w:val="1"/>
                         run_italic_match = re.search(r"<w:i([^>]*)(?:/>|>)", search_in)
                         run_italic = False
@@ -1237,10 +1294,10 @@ def _extract_formatting_from_office_doc(path: str) -> dict[str, dict[str, Any]]:
                             # check if val is explicitly false or 0
                             if not re.search(r'w:val="(?:false|0)"', attrs):
                                 run_italic = True
-                        
+
                         # underline: run-level only
                         run_underline = re.search(r'<w:u[^>]*w:val="([^"]+)"', search_in)
-                        
+
                         # strikethrough: can be <w:strike/> or <w:strike w:val="true"/>
                         # check for single strikethrough
                         run_strike_match = re.search(r"<w:strike([^>]*)(?:/>|>)", search_in)
@@ -1250,7 +1307,7 @@ def _extract_formatting_from_office_doc(path: str) -> dict[str, dict[str, Any]]:
                             # check if val is explicitly false or 0
                             if not re.search(r'w:val="(?:false|0)"', attrs):
                                 run_strike = True
-                        
+
                         # double strikethrough: can be <w:dstrike/> or <w:dstrike w:val="true"/>
                         run_dstrike_match = re.search(r"<w:dstrike([^>]*)(?:/>|>)", search_in)
                         run_dstrike = False
@@ -1284,14 +1341,14 @@ def _extract_formatting_from_office_doc(path: str) -> dict[str, dict[str, Any]]:
                         # underline: run-level only
                         if run_underline:
                             effective_styles["underline"] = run_underline.group(1)
-                        
+
                         # strikethrough: run overrides paragraph
                         # single strikethrough (<w:strike/>)
                         if run_strike:
                             effective_styles["strikethrough"] = "true"
                         elif para_strike:
                             effective_styles["strikethrough"] = "true"
-                        
+
                         # double strikethrough (<w:dstrike/>)
                         if run_dstrike:
                             effective_styles["strikethrough"] = "double"
@@ -1312,7 +1369,7 @@ def _extract_formatting_from_office_doc(path: str) -> dict[str, dict[str, Any]]:
                             # merge styles: combine all attributes from both occurrences
                             # use union of attributes - if attribute exists in either, include it
                             merged_styles = dict(existing_styles)
-                            
+
                             # add all attributes from new occurrence
                             for key, val in effective_styles.items():
                                 # if attribute already exists, keep both values (comparison will handle it)
@@ -1330,7 +1387,7 @@ def _extract_formatting_from_office_doc(path: str) -> dict[str, dict[str, Any]]:
                                 else:
                                     # new attribute - add it
                                     merged_styles[key] = val
-                            
+
                             # also preserve attributes from existing that aren't in new
                             # (this ensures we don't lose formatting when text appears with different formatting)
                             for key, val in existing_styles.items():
@@ -1342,7 +1399,7 @@ def _extract_formatting_from_office_doc(path: str) -> dict[str, dict[str, Any]]:
                                     # we might want to keep it, but actually the new occurrence should override
                                     # so we'll use the merged value from above
                                     pass
-                            
+
                             formatting_map[text_key] = {
                                 "text": text_key,
                                 "styles": merged_styles,
@@ -1558,15 +1615,15 @@ def _compute_char_diff(
 
         # create normalized word lists for matching: normalize Unicode punctuation and strip punctuation for comparison
         # this helps match words like "what's" and "whats" or "threat" and "threat," as the same word
-        import string
         import re
+
         def normalize_word_for_matching(word):
             # first normalize Unicode punctuation (curly apostrophes → straight)
-            normalized = word.replace('\u2019', "'").replace('\u2018', "'")
+            normalized = word.replace("\u2019", "'").replace("\u2018", "'")
             # strip all punctuation and whitespace for comparison, convert to lowercase
             # this allows "threat" and "threat," to be matched as the same word
             # also allows "what's" and "whats" to be matched
-            word_clean = re.sub(r'[^\w]', '', normalized.lower())
+            word_clean = re.sub(r"[^\w]", "", normalized.lower())
             return word_clean if word_clean else normalized.lower()
 
         old_word_texts = [w[0] for w in old_words]
@@ -1588,14 +1645,14 @@ def _compute_char_diff(
                     old_text = old_line[start_pos:end_pos]
                 else:
                     old_text = "".join(old_word_texts[i1:i2])
-                
+
                 if j1 < len(new_words) and j2 > 0:
                     start_pos = new_words[j1][1]
                     end_pos = new_words[j2 - 1][2]
                     new_text = new_line[start_pos:end_pos]
                 else:
                     new_text = "".join(new_word_texts[j1:j2])
-                
+
                 old_parts.append({"type": "equal", "text": old_text})
                 new_parts.append({"type": "equal", "text": new_text})
             elif tag == "delete":
@@ -1624,14 +1681,14 @@ def _compute_char_diff(
                     old_text = old_line[start_pos:end_pos]
                 else:
                     old_text = "".join(old_word_texts[i1:i2])
-                
+
                 if j1 < len(new_words) and j2 > 0:
                     start_pos = new_words[j1][1]
                     end_pos = new_words[j2 - 1][2]
                     new_text = new_line[start_pos:end_pos]
                 else:
                     new_text = "".join(new_word_texts[j1:j2])
-                
+
                 old_parts.append({"type": "removed", "text": old_text})
                 new_parts.append({"type": "added", "text": new_text})
     else:
@@ -1662,7 +1719,7 @@ def _compute_line_diff(old_lines: list[str], new_lines: list[str]) -> list[dict[
     - Stage A: line-level anchors using LCS to align unchanged lines/blocks
     - Stage B: word-level diff within changed lines, with Jaccard similarity check
       to prevent full-line replacements when only a few words differ
-    
+
     returns a list of diff segments with type: 'equal', 'added', 'removed', 'modified'
     for modified lines, includes character-level differences.
     """
@@ -1672,7 +1729,7 @@ def _compute_line_diff(old_lines: list[str], new_lines: list[str]) -> list[dict[
     # normalize lines for comparison to handle Unicode punctuation variants
     old_normalized = [_normalize_text_for_diff(line) for line in old_lines]
     new_normalized = [_normalize_text_for_diff(line) for line in new_lines]
-    
+
     matcher = SequenceMatcher(None, old_normalized, new_normalized, autojunk=False)
     diff_segments: list[dict[str, Any]] = []
 
@@ -1742,12 +1799,14 @@ def _compute_line_diff(old_lines: list[str], new_lines: list[str]) -> list[dict[
                         # lines are different - ALWAYS use word-level diff to show only changed words
                         # this ensures that adding/removing a single word only highlights that word, not the whole line
                         # compute word-level diff for all line changes (not just similar ones)
-                        old_parts, new_parts = _compute_char_diff(old_line, new_line, word_level=True)
-                        
+                        old_parts, new_parts = _compute_char_diff(
+                            old_line, new_line, word_level=True
+                        )
+
                         # determine change type for stripe color: check if it's pure addition, pure removal, or mixed
                         has_removed = any(part.get("type") == "removed" for part in old_parts)
                         has_added = any(part.get("type") == "added" for part in new_parts)
-                        
+
                         # determine change_type for stripe: "addition_only", "removal_only", or "mixed"
                         # segment type stays as "modified" since line exists in both versions
                         if has_added and not has_removed:
@@ -1777,15 +1836,17 @@ def _compute_line_diff(old_lines: list[str], new_lines: list[str]) -> list[dict[
                 # baseline: ["add", QUOTE_LINE]
                 # current: ["add", "hello", QUOTE_LINE]
                 # we want: "add" = equal, "hello" = added, QUOTE_LINE = equal
-                
+
                 # try to align lines using normalized comparison
                 # this helps when a line is inserted in the middle
                 old_normalized_section = [_normalize_text_for_diff(line) for line in old_section]
                 new_normalized_section = [_normalize_text_for_diff(line) for line in new_section]
-                
+
                 # use SequenceMatcher to align lines even when counts differ
-                section_matcher = SequenceMatcher(None, old_normalized_section, new_normalized_section, autojunk=False)
-                
+                section_matcher = SequenceMatcher(
+                    None, old_normalized_section, new_normalized_section, autojunk=False
+                )
+
                 for sect_tag, sect_i1, sect_i2, sect_j1, sect_j2 in section_matcher.get_opcodes():
                     if sect_tag == "equal":
                         # lines match - mark as equal
@@ -1816,7 +1877,7 @@ def _compute_line_diff(old_lines: list[str], new_lines: list[str]) -> list[dict[
                                     "new_lines": [],
                                 }
                             )
-                    elif sect_tag == "insert":  
+                    elif sect_tag == "insert":
                         # lines added
                         for line_idx in range(sect_j2 - sect_j1):
                             new_line = new_section[sect_j1 + line_idx]
@@ -1832,24 +1893,36 @@ def _compute_line_diff(old_lines: list[str], new_lines: list[str]) -> list[dict[
                     elif sect_tag == "replace":
                         # lines replaced - apply Jaccard similarity check
                         for line_idx in range(min(sect_i2 - sect_i1, sect_j2 - sect_j1)):
-                            old_line = old_section[sect_i1 + line_idx] if sect_i1 + line_idx < len(old_section) else None
-                            new_line = new_section[sect_j1 + line_idx] if sect_j1 + line_idx < len(new_section) else None
-                            
-                            if old_line and new_line:
+                            old_line_val: str | None = (
+                                old_section[sect_i1 + line_idx]
+                                if sect_i1 + line_idx < len(old_section)
+                                else None
+                            )
+                            new_line_val: str | None = (
+                                new_section[sect_j1 + line_idx]
+                                if sect_j1 + line_idx < len(new_section)
+                                else None
+                            )
+
+                            if old_line_val and new_line_val:
                                 # both exist - ALWAYS use word-level diff to show only changed words
                                 # this ensures that adding/removing a single word only highlights that word
-                                old_parts, new_parts = _compute_char_diff(old_line, new_line, word_level=True)
-                                
-                                has_removed = any(part.get("type") == "removed" for part in old_parts)
+                                old_parts, new_parts = _compute_char_diff(
+                                    old_line_val, new_line_val, word_level=True
+                                )
+
+                                has_removed = any(
+                                    part.get("type") == "removed" for part in old_parts
+                                )
                                 has_added = any(part.get("type") == "added" for part in new_parts)
-                                
+
                                 if has_added and not has_removed:
                                     change_type = "addition_only"
                                 elif has_removed and not has_added:
                                     change_type = "removal_only"
                                 else:
                                     change_type = "mixed"
-                                
+
                                 diff_segments.append(
                                     {
                                         "type": "modified",  # line exists in both versions - use word-level diff
@@ -1858,24 +1931,24 @@ def _compute_line_diff(old_lines: list[str], new_lines: list[str]) -> list[dict[
                                         "old_end": i1 + sect_i1 + line_idx + 1,
                                         "new_start": j1 + sect_j1 + line_idx + 1,
                                         "new_end": j1 + sect_j1 + line_idx + 1,
-                                        "old_lines": [old_line],
-                                        "new_lines": [new_line],
+                                        "old_lines": [old_line_val],
+                                        "new_lines": [new_line_val],
                                         "old_char_diffs": [old_parts],  # word-level diff parts
                                         "new_char_diffs": [new_parts],  # word-level diff parts
                                     }
                                 )
-                            elif old_line:
+                            elif old_line_val:
                                 # old line exists but new doesn't - removed
                                 diff_segments.append(
                                     {
                                         "type": "removed",
                                         "old_start": i1 + sect_i1 + line_idx + 1,
                                         "old_end": i1 + sect_i1 + line_idx + 1,
-                                        "old_lines": [old_line],
+                                        "old_lines": [old_line_val],
                                         "new_lines": [],
                                     }
                                 )
-                            elif new_line:
+                            elif new_line_val:
                                 # new line exists but old doesn't - added
                                 diff_segments.append(
                                     {
@@ -1883,7 +1956,7 @@ def _compute_line_diff(old_lines: list[str], new_lines: list[str]) -> list[dict[
                                         "new_start": j1 + sect_j1 + line_idx + 1,
                                         "new_end": j1 + sect_j1 + line_idx + 1,
                                         "old_lines": [],
-                                        "new_lines": [new_line],
+                                        "new_lines": [new_line_val],
                                     }
                                 )
 
@@ -2705,14 +2778,14 @@ def build_app(event_bus) -> Flask:
             if not path:
                 return jsonify({"ok": False, "error": "missing path"}), 400
             rows = _read_integrity_targets()
-            
+
             # Check if file was actually in the watch list before removing
             was_in_list = any(str(r.get("path") or "").lower() == path.lower() for r in rows)
-            
+
             # Remove the file from the watch list
             rows2 = [r for r in rows if str(r.get("path") or "").lower() != path.lower()]
             _write_integrity_targets(rows2)
-            
+
             # Emit a live event to notify that the file was removed from the watch list
             if was_in_list:
                 ev = {
@@ -2724,7 +2797,7 @@ def build_app(event_bus) -> Flask:
                     "name": os.path.basename(path) if path else "",
                 }
                 _publish(ev)
-            
+
             return jsonify({"ok": True})
         except Exception as e:
             return jsonify({"ok": False, "error": str(e)}), 500
@@ -3148,7 +3221,7 @@ def build_app(event_bus) -> Flask:
                         # tolerance: >1 px or >1% change (prevents false positives from rounding/rendering differences)
                         RESIZE_TOLERANCE_PX = 1  # pixel tolerance
                         RESIZE_TOLERANCE_PCT = 0.01  # 1% tolerance
-                        
+
                         common_names = set(baseline_img_by_name.keys()) & set(
                             current_img_by_name.keys()
                         )
@@ -3171,15 +3244,22 @@ def build_app(event_bus) -> Flask:
                                 # calculate absolute and percentage differences
                                 width_diff = abs(current_width - baseline_width)
                                 height_diff = abs(current_height - baseline_height)
-                                width_pct_diff = width_diff / baseline_width if baseline_width > 0 else 0
-                                height_pct_diff = height_diff / baseline_height if baseline_height > 0 else 0
-                                
+                                width_pct_diff = (
+                                    width_diff / baseline_width if baseline_width > 0 else 0
+                                )
+                                height_pct_diff = (
+                                    height_diff / baseline_height if baseline_height > 0 else 0
+                                )
+
                                 # check if change exceeds tolerance (>1 px or >1%)
                                 is_resized = (
-                                    (width_diff > RESIZE_TOLERANCE_PX or width_pct_diff > RESIZE_TOLERANCE_PCT)
-                                    or (height_diff > RESIZE_TOLERANCE_PX or height_pct_diff > RESIZE_TOLERANCE_PCT)
+                                    width_diff > RESIZE_TOLERANCE_PX
+                                    or width_pct_diff > RESIZE_TOLERANCE_PCT
+                                ) or (
+                                    height_diff > RESIZE_TOLERANCE_PX
+                                    or height_pct_diff > RESIZE_TOLERANCE_PCT
                                 )
-                                
+
                                 if is_resized:
                                     # image was resized beyond tolerance threshold
                                     image_changes.append(
@@ -3209,15 +3289,24 @@ def build_app(event_bus) -> Flask:
                                     ):
                                         width_diff = abs(current_width - baseline_width)
                                         height_diff = abs(current_height - baseline_height)
-                                        width_pct_diff = width_diff / baseline_width if baseline_width > 0 else 0
-                                        height_pct_diff = height_diff / baseline_height if baseline_height > 0 else 0
-                                        
+                                        width_pct_diff = (
+                                            width_diff / baseline_width if baseline_width > 0 else 0
+                                        )
+                                        height_pct_diff = (
+                                            height_diff / baseline_height
+                                            if baseline_height > 0
+                                            else 0
+                                        )
+
                                         # check if change exceeds tolerance
                                         is_resized = (
-                                            (width_diff > RESIZE_TOLERANCE_PX or width_pct_diff > RESIZE_TOLERANCE_PCT)
-                                            or (height_diff > RESIZE_TOLERANCE_PX or height_pct_diff > RESIZE_TOLERANCE_PCT)
+                                            width_diff > RESIZE_TOLERANCE_PX
+                                            or width_pct_diff > RESIZE_TOLERANCE_PCT
+                                        ) or (
+                                            height_diff > RESIZE_TOLERANCE_PX
+                                            or height_pct_diff > RESIZE_TOLERANCE_PCT
                                         )
-                                        
+
                                         if is_resized:
                                             image_changes.append(
                                                 {
@@ -3247,40 +3336,48 @@ def build_app(event_bus) -> Flask:
                                                     "type": "image",
                                                 }
                                             )
-                        
+
                         # add image changes to formatting_changes list so they appear in the formatting panel
                         # this ensures image changes are displayed alongside formatting changes
                         # keep the existing panel behavior (show 5, then "Show more") - don't change pagination
                         for img_change in image_changes:
                             change_type = img_change.get("change", "")
                             if change_type == "added":
-                                formatting_changes.append({
-                                    "change": "added",
-                                    "text": f"Image: {img_change.get('image', {}).get('name', 'Unknown')}",
-                                    "type": "image",
-                                    "image": img_change.get("image", {}),
-                                })
+                                formatting_changes.append(
+                                    {
+                                        "change": "added",
+                                        "text": f"Image: {img_change.get('image', {}).get('name', 'Unknown')}",
+                                        "type": "image",
+                                        "image": img_change.get("image", {}),
+                                    }
+                                )
                             elif change_type == "removed":
-                                formatting_changes.append({
-                                    "change": "removed",
-                                    "text": f"Image: {img_change.get('image', {}).get('name', 'Unknown')}",
-                                    "type": "image",
-                                    "image": img_change.get("image", {}),
-                                })
+                                formatting_changes.append(
+                                    {
+                                        "change": "removed",
+                                        "text": f"Image: {img_change.get('image', {}).get('name', 'Unknown')}",
+                                        "type": "image",
+                                        "image": img_change.get("image", {}),
+                                    }
+                                )
                             elif change_type == "resized":
                                 old_w = img_change.get("old_width")
                                 old_h = img_change.get("old_height")
                                 new_w = img_change.get("new_width")
                                 new_h = img_change.get("new_height")
-                                formatting_changes.append({
-                                    "change": "modified",
-                                    "text": f"Image: {img_change.get('image', {}).get('name', 'Unknown')}",
-                                    "type": "image",
-                                    "image": img_change.get("image", {}),
-                                    "changed_attrs": [f"size: {old_w}x{old_h} → {new_w}x{new_h}"],
-                                    "removed_attrs": [],
-                                    "added_attrs": [],
-                                })
+                                formatting_changes.append(
+                                    {
+                                        "change": "modified",
+                                        "text": f"Image: {img_change.get('image', {}).get('name', 'Unknown')}",
+                                        "type": "image",
+                                        "image": img_change.get("image", {}),
+                                        "changed_attrs": [
+                                            f"size: {old_w}x{old_h} → {new_w}x{new_h}"
+                                        ],
+                                        "removed_attrs": [],
+                                        "added_attrs": [],
+                                    }
+                                )
 
                         # extract and compare formatting, cross-reference with text diff to avoid false positives
                         # NEW IMPLEMENTATION: Proper tokenization, exact spans, no fragmentation, no unrelated entries
@@ -3299,14 +3396,16 @@ def build_app(event_bus) -> Flask:
                             # normalize whitespace but preserve word boundaries
                             normalized = " ".join(t.split()).lower().strip()
                             return normalized
-                        
+
                         # build precise map of unchanged text segments from diff
                         # ONLY collect from character-level diffs in modified segments
                         # This ensures we only detect formatting changes for text that actually appears unchanged
-                        unchanged_text_segments = {}  # normalized -> set of original text fragments (exact text only)
+                        unchanged_text_segments = (
+                            {}
+                        )  # normalized -> set of original text fragments (exact text only)
                         removed_text_segments = set()  # normalized text that was removed
                         added_text_segments = set()  # normalized text that was added
-                        
+
                         # helper to add text fragment to unchanged segments
                         # Use proper tokenization to avoid fragmentation
                         def add_unchanged_text_fragment(text_fragment: str):
@@ -3316,21 +3415,23 @@ def build_app(event_bus) -> Flask:
                             text_fragment = text_fragment.strip()
                             if not text_fragment:
                                 return
-                            
+
                             try:
                                 # Tokenize the fragment to get complete words
                                 tokens = _tokenize_text(text_fragment)
-                                
+
                                 # Add each complete word/token
                                 for token, start, end in tokens:
-                                    if token and len(token.strip()) >= 2:  # Only add meaningful tokens (>= 2 chars)
+                                    if (
+                                        token and len(token.strip()) >= 2
+                                    ):  # Only add meaningful tokens (>= 2 chars)
                                         normalized = normalize_text_for_matching(token)
                                         if normalized and len(normalized) > 0:
                                             if normalized not in unchanged_text_segments:
                                                 unchanged_text_segments[normalized] = set()
                                             # store the original token as-is (preserve case, spacing)
                                             unchanged_text_segments[normalized].add(token.strip())
-                                
+
                                 # Also add the full fragment if it's substantial (>= 3 chars) to handle exact spans
                                 if len(text_fragment) >= 3:
                                     normalized = normalize_text_for_matching(text_fragment)
@@ -3346,7 +3447,7 @@ def build_app(event_bus) -> Flask:
                                         if normalized not in unchanged_text_segments:
                                             unchanged_text_segments[normalized] = set()
                                         unchanged_text_segments[normalized].add(text_fragment)
-                        
+
                         # collect unchanged text from character-level diffs in modified segments
                         # also handle "equal" segments - they might have formatting-only changes
                         for seg in diff_segments:
@@ -3354,7 +3455,7 @@ def build_app(event_bus) -> Flask:
                                 # collect unchanged text from character-level diffs
                                 old_char_diffs = seg.get("old_char_diffs", [])
                                 new_char_diffs = seg.get("new_char_diffs", [])
-                                
+
                                 if old_char_diffs or new_char_diffs:
                                     for i in range(max(len(old_char_diffs), len(new_char_diffs))):
                                         # collect equal parts from character-level diffs
@@ -3368,27 +3469,38 @@ def build_app(event_bus) -> Flask:
                                                         # this prevents matching single characters like "e" incorrectly
                                                         if len(text) >= 2 or text.isalnum():
                                                             add_unchanged_text_fragment(text)
-                                                
+
                                                 # collect removed text to exclude
                                                 # collect both the full text and individual words/tokens
                                                 # this ensures we exclude formatting on any part of removed text
-                                                if part.get("type") == "removed" and part.get("text"):
+                                                if part.get("type") == "removed" and part.get(
+                                                    "text"
+                                                ):
                                                     text = part.get("text", "").strip()
                                                     if text:
                                                         # add the full normalized text
-                                                        normalized = normalize_text_for_matching(text)
+                                                        normalized = normalize_text_for_matching(
+                                                            text
+                                                        )
                                                         if normalized:
                                                             removed_text_segments.add(normalized)
                                                         # also add individual words/tokens from removed text
                                                         # this ensures we don't match formatting on words that were removed
                                                         import re
-                                                        words = re.findall(r'\b\w+\b', text)
+
+                                                        words = re.findall(r"\b\w+\b", text)
                                                         for word in words:
                                                             if len(word) >= 2:
-                                                                word_norm = normalize_text_for_matching(word)
+                                                                word_norm = (
+                                                                    normalize_text_for_matching(
+                                                                        word
+                                                                    )
+                                                                )
                                                                 if word_norm:
-                                                                    removed_text_segments.add(word_norm)
-                                        
+                                                                    removed_text_segments.add(
+                                                                        word_norm
+                                                                    )
+
                                         if i < len(new_char_diffs) and new_char_diffs[i]:
                                             for part in new_char_diffs[i]:
                                                 if part.get("type") == "equal" and part.get("text"):
@@ -3397,7 +3509,7 @@ def build_app(event_bus) -> Flask:
                                                         # only add if it's a meaningful fragment
                                                         if len(text) >= 2 or text.isalnum():
                                                             add_unchanged_text_fragment(text)
-                                                
+
                                                 # collect added text to exclude
                                                 # collect both the full text and individual words/tokens
                                                 # this ensures we exclude formatting on any part of added text
@@ -3405,24 +3517,37 @@ def build_app(event_bus) -> Flask:
                                                     text = part.get("text", "").strip()
                                                     if text:
                                                         # add the full normalized text
-                                                        normalized = normalize_text_for_matching(text)
+                                                        normalized = normalize_text_for_matching(
+                                                            text
+                                                        )
                                                         if normalized:
                                                             added_text_segments.add(normalized)
                                                         # also add individual words/tokens from added text
                                                         # this ensures we don't match formatting on words that were added
                                                         import re
-                                                        words = re.findall(r'\b\w+\b', text)
+
+                                                        words = re.findall(r"\b\w+\b", text)
                                                         for word in words:
                                                             if len(word) >= 2:
-                                                                word_norm = normalize_text_for_matching(word)
+                                                                word_norm = (
+                                                                    normalize_text_for_matching(
+                                                                        word
+                                                                    )
+                                                                )
                                                                 if word_norm:
-                                                                    added_text_segments.add(word_norm)
+                                                                    added_text_segments.add(
+                                                                        word_norm
+                                                                    )
                                 else:
                                     # no character-level diffs - might be formatting-only change
                                     # if lines are the same (normalized), treat as formatting change
                                     old_lines_seg = seg.get("old_lines", [])
                                     new_lines_seg = seg.get("new_lines", [])
-                                    if old_lines_seg and new_lines_seg and len(old_lines_seg) == len(new_lines_seg):
+                                    if (
+                                        old_lines_seg
+                                        and new_lines_seg
+                                        and len(old_lines_seg) == len(new_lines_seg)
+                                    ):
                                         for old_line, new_line in zip(old_lines_seg, new_lines_seg):
                                             # normalize and compare - if text is same, it's formatting change
                                             old_norm = normalize_text_for_matching(old_line)
@@ -3431,11 +3556,12 @@ def build_app(event_bus) -> Flask:
                                                 # text is the same, only formatting changed
                                                 # extract words from the line for matching
                                                 import re
-                                                words = re.findall(r'\b\w+\b', new_line)
+
+                                                words = re.findall(r"\b\w+\b", new_line)
                                                 for word in words:
                                                     if len(word) >= 2:
                                                         add_unchanged_text_fragment(word)
-                            
+
                             elif seg.get("type") == "equal":
                                 # "equal" segments might have formatting-only changes
                                 # extract words from these lines for formatting comparison
@@ -3446,11 +3572,12 @@ def build_app(event_bus) -> Flask:
                                     if line:
                                         # extract individual words for matching
                                         import re
-                                        words = re.findall(r'\b\w+\b', line)
+
+                                        words = re.findall(r"\b\w+\b", line)
                                         for word in words:
                                             if len(word) >= 2:
                                                 add_unchanged_text_fragment(word)
-                            
+
                             elif seg.get("type") == "removed":
                                 # text was removed - mark for exclusion
                                 # collect both full lines and individual words to ensure comprehensive exclusion
@@ -3464,13 +3591,14 @@ def build_app(event_bus) -> Flask:
                                         # also add individual words/tokens from removed lines
                                         # this ensures we don't match formatting on words that were removed
                                         import re
-                                        words = re.findall(r'\b\w+\b', line)
+
+                                        words = re.findall(r"\b\w+\b", line)
                                         for word in words:
                                             if len(word) >= 2:
                                                 word_norm = normalize_text_for_matching(word)
                                                 if word_norm:
                                                     removed_text_segments.add(word_norm)
-                            
+
                             elif seg.get("type") == "added":
                                 # text was added - mark for exclusion
                                 # collect both full lines and individual words to ensure comprehensive exclusion
@@ -3484,7 +3612,8 @@ def build_app(event_bus) -> Flask:
                                         # also add individual words/tokens from added lines
                                         # this ensures we don't match formatting on words that were added
                                         import re
-                                        words = re.findall(r'\b\w+\b', line)
+
+                                        words = re.findall(r"\b\w+\b", line)
                                         for word in words:
                                             if len(word) >= 2:
                                                 word_norm = normalize_text_for_matching(word)
@@ -3494,45 +3623,53 @@ def build_app(event_bus) -> Flask:
                         # match formatting entries to unchanged text segments
                         # STRICT matching: only match exact text or complete words
                         import re
-                        
+
                         # helper function to check if a formatting text fragment matches unchanged text
                         # STRICT: only exact matches or complete word matches, no fragmentation
-                        def formatting_text_matches_unchanged(fmt_text: str, unchanged_segments: dict) -> tuple[bool, str | None]:
+                        def formatting_text_matches_unchanged(
+                            fmt_text: str, unchanged_segments: dict
+                        ) -> tuple[bool, str | None]:
                             """check if formatting text fragment matches any unchanged text segment
                             returns (matches, matched_normalized_text)
                             STRICT: only exact matches or complete word matches, no fragmentation"""
                             if not fmt_text or not fmt_text.strip():
                                 return False, None
-                            
+
                             normalized_fmt = normalize_text_for_matching(fmt_text)
                             if not normalized_fmt or len(normalized_fmt) < 1:
                                 return False, None
-                            
+
                             # Tokenize the formatting text to get complete words
                             try:
                                 fmt_tokens = _tokenize_text(fmt_text)
-                                fmt_token_texts = [token for token, _, _ in fmt_tokens if token and len(token.strip()) >= 2]
+                                fmt_token_texts = [
+                                    token
+                                    for token, _, _ in fmt_tokens
+                                    if token and len(token.strip()) >= 2
+                                ]
                             except Exception:
                                 # If tokenization fails, use empty list
                                 fmt_token_texts = []
-                            
+
                             # Priority 1: exact match (after normalization) - highest priority
                             if normalized_fmt in unchanged_segments:
                                 return True, normalized_fmt
-                            
+
                             # Priority 1.5: exact match of any complete token from formatting text
                             for fmt_token in fmt_token_texts:
                                 normalized_token = normalize_text_for_matching(fmt_token)
                                 if normalized_token in unchanged_segments:
                                     return True, normalized_token
-                            
+
                             # Priority 2: check if formatting text is a complete word in any unchanged segment
                             # Only match if it appears as a complete word (word boundaries)
-                            fmt_no_space = normalized_fmt.replace(" ", "").replace("\n", "").replace("\t", "")
-                            
+                            fmt_no_space = (
+                                normalized_fmt.replace(" ", "").replace("\n", "").replace("\t", "")
+                            )
+
                             if not fmt_no_space or len(fmt_no_space) < 1:
                                 return False, None
-                            
+
                             # Check all unchanged segments for word matches
                             # This handles cases where Office splits text into runs
                             # STRICT: Only match complete words, not fragments
@@ -3540,66 +3677,83 @@ def build_app(event_bus) -> Flask:
                                 # Check if formatting text is exactly equal to unchanged text (case-insensitive)
                                 if normalized_fmt == unchanged_norm:
                                     return True, unchanged_norm
-                                
+
                                 # Check if any complete token from formatting text matches unchanged text
                                 for fmt_token in fmt_token_texts:
                                     normalized_token = normalize_text_for_matching(fmt_token)
                                     if normalized_token == unchanged_norm:
                                         return True, unchanged_norm
-                                
+
                                 # Check if formatting text appears as a complete word in any original text
                                 for orig_text in unchanged_orig_set:
                                     # Exact match (case-insensitive)
                                     if fmt_text.strip().lower() == orig_text.strip().lower():
                                         return True, unchanged_norm
-                                    
+
                                     # Word boundary match - check if formatting text is a complete word
                                     # Only match if it's a complete word, not a fragment
-                                    word_pattern = r'\b' + re.escape(fmt_text.strip()) + r'\b'
+                                    word_pattern = r"\b" + re.escape(fmt_text.strip()) + r"\b"
                                     if re.search(word_pattern, orig_text, re.IGNORECASE):
                                         return True, unchanged_norm
-                                    
+
                                     # Also check if any complete token from formatting text matches
                                     for fmt_token in fmt_token_texts:
-                                        token_pattern = r'\b' + re.escape(fmt_token.strip()) + r'\b'
+                                        token_pattern = r"\b" + re.escape(fmt_token.strip()) + r"\b"
                                         if re.search(token_pattern, orig_text, re.IGNORECASE):
-                                            normalized_token = normalize_text_for_matching(fmt_token)
-                                            return True, normalized_token if normalized_token in unchanged_segments else unchanged_norm
-                            
+                                            normalized_token = normalize_text_for_matching(
+                                                fmt_token
+                                            )
+                                            return True, (
+                                                normalized_token
+                                                if normalized_token in unchanged_segments
+                                                else unchanged_norm
+                                            )
+
                             # For very short fragments (1-2 chars like "te"), be more permissive
                             # Check if it's an exact substring match (might be part of a word that was split)
                             if len(fmt_no_space) <= 2:
                                 # For very short fragments, only match if it appears as a complete word
                                 # or if it's an exact match to unchanged text
-                                for unchanged_norm, unchanged_orig_set in unchanged_segments.items():
+                                for (
+                                    unchanged_norm,
+                                    unchanged_orig_set,
+                                ) in unchanged_segments.items():
                                     # Check exact match first
                                     if normalized_fmt == unchanged_norm:
                                         return True, unchanged_norm
-                                    
+
                                     # Check if it's a complete word in any original text
                                     for orig_text in unchanged_orig_set:
-                                        word_pattern = r'\b' + re.escape(fmt_text.strip()) + r'\b'
+                                        word_pattern = r"\b" + re.escape(fmt_text.strip()) + r"\b"
                                         if re.search(word_pattern, orig_text, re.IGNORECASE):
                                             return True, unchanged_norm
-                                    
+
                                     # For very short fragments, also check if it's an exact substring
                                     # but only if the unchanged text is also very short (likely a fragment)
-                                    unchanged_no_space = unchanged_norm.replace(" ", "").replace("\n", "").replace("\t", "")
+                                    unchanged_no_space = (
+                                        unchanged_norm.replace(" ", "")
+                                        .replace("\n", "")
+                                        .replace("\t", "")
+                                    )
                                     if fmt_no_space == unchanged_no_space:
                                         return True, unchanged_norm
-                                
+
                                 return False, None
-                            
+
                             # Priority 3: for longer fragments (>=3 chars), check if they're complete words or exact substrings
                             best_match = None
                             best_match_score = 0.0
-                            
+
                             for unchanged_norm, unchanged_orig_set in unchanged_segments.items():
-                                unchanged_no_space = unchanged_norm.replace(" ", "").replace("\n", "").replace("\t", "")
-                                
+                                unchanged_no_space = (
+                                    unchanged_norm.replace(" ", "")
+                                    .replace("\n", "")
+                                    .replace("\t", "")
+                                )
+
                                 if not unchanged_no_space:
                                     continue
-                                
+
                                 # Check if formatting text is a complete word in the unchanged text
                                 # This handles cases where Office splits "endpoint" into "end" and "point"
                                 for orig_text in unchanged_orig_set:
@@ -3607,194 +3761,250 @@ def build_app(event_bus) -> Flask:
                                     if fmt_text.strip().lower() == orig_text.strip().lower():
                                         # Exact match - always valid
                                         return True, unchanged_norm
-                                    
+
                                     # Check if formatting text appears as a complete word
-                                    word_pattern = r'\b' + re.escape(fmt_text.strip()) + r'\b'
+                                    word_pattern = r"\b" + re.escape(fmt_text.strip()) + r"\b"
                                     if re.search(word_pattern, orig_text, re.IGNORECASE):
                                         # It's a complete word match - high confidence
                                         return True, unchanged_norm
-                                
+
                                 # Check if formatting text is contained in unchanged text as exact substring
                                 # But only if it's a substantial portion (at least 50% for fragments >= 3 chars)
                                 if fmt_no_space in unchanged_no_space and len(fmt_no_space) >= 3:
-                                    overlap_ratio = len(fmt_no_space) / len(unchanged_no_space) if unchanged_no_space else 0
+                                    overlap_ratio = (
+                                        len(fmt_no_space) / len(unchanged_no_space)
+                                        if unchanged_no_space
+                                        else 0
+                                    )
                                     # Only match if it's at least 50% of the unchanged text
                                     # This prevents matching "an" to "advanced" incorrectly
                                     if overlap_ratio >= 0.5:
                                         if overlap_ratio > best_match_score:
                                             best_match = unchanged_norm
                                             best_match_score = overlap_ratio
-                                
+
                                 # Check if unchanged text is contained in formatting text (formatting is larger)
                                 # This handles cases where Office combines multiple runs
-                                elif unchanged_no_space in fmt_no_space and len(unchanged_no_space) >= 3:
-                                    overlap_ratio = len(unchanged_no_space) / len(fmt_no_space) if fmt_no_space else 0
+                                elif (
+                                    unchanged_no_space in fmt_no_space
+                                    and len(unchanged_no_space) >= 3
+                                ):
+                                    overlap_ratio = (
+                                        len(unchanged_no_space) / len(fmt_no_space)
+                                        if fmt_no_space
+                                        else 0
+                                    )
                                     # Only match if unchanged text is at least 70% of formatting text
                                     if overlap_ratio >= 0.7:
                                         if overlap_ratio > best_match_score:
                                             best_match = unchanged_norm
                                             best_match_score = overlap_ratio
-                            
+
                             # Return best match only if it meets strict criteria
                             if best_match and best_match_score >= 0.5:
                                 return True, best_match
-                            
+
                             return False, None
-                        
+
                         # build maps: normalized unchanged text -> list of formatting entries that match it
-                        unchanged_to_baseline_fmt = {}  # normalized_text -> list of (orig_text, fmt_info)
-                        unchanged_to_current_fmt = {}  # normalized_text -> list of (orig_text, fmt_info)
-                        
+                        unchanged_to_baseline_fmt = (
+                            {}
+                        )  # normalized_text -> list of (orig_text, fmt_info)
+                        unchanged_to_current_fmt = (
+                            {}
+                        )  # normalized_text -> list of (orig_text, fmt_info)
+
                         # also track which formatting entries we've matched (to avoid duplicates)
                         matched_baseline_entries = set()
                         matched_current_entries = set()
-                        
+
                         # helper function to check if formatting text contains any removed/added words
                         def formatting_contains_removed_or_added(fmt_text: str) -> bool:
                             """check if formatting text contains any words that were removed or added
-                            returns True if any word in formatting text is in removed/added segments"""
+                            returns True if any word in formatting text is in removed/added segments
+                            """
                             if not fmt_text or not fmt_text.strip():
                                 return False
-                            
+
                             # normalize the full formatting text
                             normalized_fmt = normalize_text_for_matching(fmt_text)
-                            if normalized_fmt in removed_text_segments or normalized_fmt in added_text_segments:
+                            if (
+                                normalized_fmt in removed_text_segments
+                                or normalized_fmt in added_text_segments
+                            ):
                                 return True
-                            
+
                             # check individual words in formatting text
                             import re
-                            words = re.findall(r'\b\w+\b', fmt_text)
+
+                            words = re.findall(r"\b\w+\b", fmt_text)
                             for word in words:
                                 if len(word) >= 2:
                                     word_norm = normalize_text_for_matching(word)
-                                    if word_norm and (word_norm in removed_text_segments or word_norm in added_text_segments):
+                                    if word_norm and (
+                                        word_norm in removed_text_segments
+                                        or word_norm in added_text_segments
+                                    ):
                                         return True
-                            
+
                             return False
-                        
+
                         # match baseline formatting to unchanged text
                         for fmt_text, fmt_info in formatting_baseline_map.items():
                             if not fmt_text or not fmt_text.strip():
                                 continue
-                            
+
                             # skip if we've already matched this entry
                             if fmt_text in matched_baseline_entries:
                                 continue
-                            
+
                             # CRITICAL: skip if formatting text contains any removed/added words
                             # this ensures content changes don't trigger formatting changes
                             if formatting_contains_removed_or_added(fmt_text):
                                 continue
-                            
-                            matches, matched_normalized = formatting_text_matches_unchanged(fmt_text, unchanged_text_segments)
+
+                            matches, matched_normalized = formatting_text_matches_unchanged(
+                                fmt_text, unchanged_text_segments
+                            )
                             if matches and matched_normalized:
                                 # skip if this text was removed or added
-                                if matched_normalized in removed_text_segments or matched_normalized in added_text_segments:
+                                if (
+                                    matched_normalized in removed_text_segments
+                                    or matched_normalized in added_text_segments
+                                ):
                                     continue
-                                
+
                                 if matched_normalized not in unchanged_to_baseline_fmt:
                                     unchanged_to_baseline_fmt[matched_normalized] = []
-                                unchanged_to_baseline_fmt[matched_normalized].append((fmt_text, fmt_info))
+                                unchanged_to_baseline_fmt[matched_normalized].append(
+                                    (fmt_text, fmt_info)
+                                )
                                 matched_baseline_entries.add(fmt_text)
-                        
+
                         # match current formatting to unchanged text
                         for fmt_text, fmt_info in formatting_current_map.items():
                             if not fmt_text or not fmt_text.strip():
                                 continue
-                            
+
                             # skip if we've already matched this entry
                             if fmt_text in matched_current_entries:
                                 continue
-                            
+
                             # CRITICAL: skip if formatting text contains any removed/added words
                             # this ensures content changes don't trigger formatting changes
                             if formatting_contains_removed_or_added(fmt_text):
                                 continue
-                            
-                            matches, matched_normalized = formatting_text_matches_unchanged(fmt_text, unchanged_text_segments)
+
+                            matches, matched_normalized = formatting_text_matches_unchanged(
+                                fmt_text, unchanged_text_segments
+                            )
                             if matches and matched_normalized:
                                 # skip if this text was removed or added
-                                if matched_normalized in removed_text_segments or matched_normalized in added_text_segments:
+                                if (
+                                    matched_normalized in removed_text_segments
+                                    or matched_normalized in added_text_segments
+                                ):
                                     continue
-                                
+
                                 if matched_normalized not in unchanged_to_current_fmt:
                                     unchanged_to_current_fmt[matched_normalized] = []
-                                unchanged_to_current_fmt[matched_normalized].append((fmt_text, fmt_info))
+                                unchanged_to_current_fmt[matched_normalized].append(
+                                    (fmt_text, fmt_info)
+                                )
                                 matched_current_entries.add(fmt_text)
-                        
+
                         # fallback: if formatting exists in both baseline and current for the same text,
                         # but we didn't match it to unchanged segments, try to match it anyway
                         # (this handles cases where the diff algorithm didn't capture the text correctly)
                         # CRITICAL: only match if text doesn't contain removed/added words
-                        common_formatting_texts = set(formatting_baseline_map.keys()) & set(formatting_current_map.keys())
+                        common_formatting_texts = set(formatting_baseline_map.keys()) & set(
+                            formatting_current_map.keys()
+                        )
                         for fmt_text in common_formatting_texts:
                             # skip if already matched
-                            if fmt_text in matched_baseline_entries and fmt_text in matched_current_entries:
+                            if (
+                                fmt_text in matched_baseline_entries
+                                and fmt_text in matched_current_entries
+                            ):
                                 continue
-                            
+
                             # CRITICAL: skip if formatting text contains any removed/added words
                             # this ensures content changes don't trigger formatting changes
                             if formatting_contains_removed_or_added(fmt_text):
                                 continue
-                            
+
                             normalized_fmt = normalize_text_for_matching(fmt_text)
                             if not normalized_fmt:
                                 continue
-                            
+
                             # skip if this text was removed or added
-                            if normalized_fmt in removed_text_segments or normalized_fmt in added_text_segments:
+                            if (
+                                normalized_fmt in removed_text_segments
+                                or normalized_fmt in added_text_segments
+                            ):
                                 continue
-                            
+
                             # check if this text appears in any unchanged segment (try to match it)
-                            matches, matched_normalized = formatting_text_matches_unchanged(fmt_text, unchanged_text_segments)
+                            matches, matched_normalized = formatting_text_matches_unchanged(
+                                fmt_text, unchanged_text_segments
+                            )
                             if matches and matched_normalized:
                                 # match found - add to maps
                                 if matched_normalized not in unchanged_to_baseline_fmt:
                                     unchanged_to_baseline_fmt[matched_normalized] = []
                                 if fmt_text not in matched_baseline_entries:
-                                    unchanged_to_baseline_fmt[matched_normalized].append((fmt_text, formatting_baseline_map[fmt_text]))
+                                    unchanged_to_baseline_fmt[matched_normalized].append(
+                                        (fmt_text, formatting_baseline_map[fmt_text])
+                                    )
                                     matched_baseline_entries.add(fmt_text)
-                                
+
                                 if matched_normalized not in unchanged_to_current_fmt:
                                     unchanged_to_current_fmt[matched_normalized] = []
                                 if fmt_text not in matched_current_entries:
-                                    unchanged_to_current_fmt[matched_normalized].append((fmt_text, formatting_current_map[fmt_text]))
+                                    unchanged_to_current_fmt[matched_normalized].append(
+                                        (fmt_text, formatting_current_map[fmt_text])
+                                    )
                                     matched_current_entries.add(fmt_text)
-                        
+
                         # process each unchanged text segment that has formatting
                         # only process segments where we have formatting entries that match
                         processed_segments = set()
-                        
+
                         # get all segments that have formatting matches
-                        segments_with_formatting = set(unchanged_to_baseline_fmt.keys()) | set(unchanged_to_current_fmt.keys())
-                        
+                        segments_with_formatting = set(unchanged_to_baseline_fmt.keys()) | set(
+                            unchanged_to_current_fmt.keys()
+                        )
+
                         for normalized_text in segments_with_formatting:
                             # skip if this text was removed or added
-                            if normalized_text in removed_text_segments or normalized_text in added_text_segments:
+                            if (
+                                normalized_text in removed_text_segments
+                                or normalized_text in added_text_segments
+                            ):
                                 continue
-                            
+
                             # skip if this text is not in unchanged_text_segments (shouldn't happen, but safety check)
                             if normalized_text not in unchanged_text_segments:
                                 continue
-                            
+
                             # skip if we've already processed this segment
                             if normalized_text in processed_segments:
                                 continue
-                            
+
                             original_texts = unchanged_text_segments[normalized_text]
-                            
+
                             # get formatting for this segment
                             baseline_entries = unchanged_to_baseline_fmt.get(normalized_text, [])
                             current_entries = unchanged_to_current_fmt.get(normalized_text, [])
-                            
+
                             # only process if we have formatting in at least one version
                             if baseline_entries or current_entries:
                                 processed_segments.add(normalized_text)
-                                
+
                                 # merge formatting from all matching entries
                                 baseline_merged_styles = {}
                                 current_merged_styles = {}
-                                
+
                                 # merge baseline formatting from all matching entries
                                 # collect ALL attributes from ALL occurrences to ensure we don't miss any
                                 # this aggregates contiguous tokens with the same formatting, regardless of baseline inheritance
@@ -3813,7 +4023,7 @@ def build_app(event_bus) -> Flask:
                                         baseline_merged_styles[key].add(val)
                                     # also check if there are attributes that should be present but aren't
                                     # (this handles cases where formatting was removed)
-                                
+
                                 # merge current formatting from all matching entries
                                 # collect ALL attributes from ALL occurrences to ensure we don't miss any
                                 # this aggregates contiguous tokens with the same formatting, regardless of baseline inheritance
@@ -3834,30 +4044,38 @@ def build_app(event_bus) -> Flask:
                                         # we aggregate it across all matching entries, so it covers the entire word
                                         # not just the "an" portion that had purple in baseline
                                         current_merged_styles[key].add(val)
-                                
+
                                 # compare formatting and detect changes
                                 # normalize style values before comparison to prevent phantom changes
                                 # only compare on aligned token spans (unchanged text) to avoid false positives
                                 changed_attrs = []
                                 removed_attrs = []
                                 added_attrs = []
-                                
+
                                 # get all attribute keys from both versions
-                                all_attr_keys = set(baseline_merged_styles.keys()) | set(current_merged_styles.keys())
-                                
+                                all_attr_keys = set(baseline_merged_styles.keys()) | set(
+                                    current_merged_styles.keys()
+                                )
+
                                 for attr_key in all_attr_keys:
                                     baseline_vals = baseline_merged_styles.get(attr_key, set())
                                     current_vals = current_merged_styles.get(attr_key, set())
-                                    
+
                                     # normalize values for comparison - prevents phantom changes from value format differences
                                     # e.g., "#A02B93" vs "A02B93" should be treated as the same color
-                                    baseline_normalized = {_normalize_style_value(attr_key, val) for val in baseline_vals}
-                                    current_normalized = {_normalize_style_value(attr_key, val) for val in current_vals}
-                                    
+                                    baseline_normalized = {
+                                        _normalize_style_value(attr_key, val)
+                                        for val in baseline_vals
+                                    }
+                                    current_normalized = {
+                                        _normalize_style_value(attr_key, val)
+                                        for val in current_vals
+                                    }
+
                                     # remove empty strings from normalized sets (they represent "not set")
                                     baseline_normalized = {v for v in baseline_normalized if v}
                                     current_normalized = {v for v in current_normalized if v}
-                                    
+
                                     if baseline_normalized and current_normalized:
                                         # attribute exists in both versions
                                         if baseline_normalized == current_normalized:
@@ -3868,35 +4086,50 @@ def build_app(event_bus) -> Flask:
                                             # use original values for display (before normalization)
                                             old_val = next(iter(baseline_vals))
                                             new_val = next(iter(current_vals))
-                                            # for color, show both values with names
+                                            # for color, show color names only (hex as fallback)
                                             if attr_key == "color":
                                                 old_color_name = _hex_to_color_name(old_val)
                                                 new_color_name = _hex_to_color_name(new_val)
-                                                # Format as "color #HEX (Name)" or "color #HEX"
-                                                old_hex = f"#{old_val}" if not old_val.startswith("#") else old_val
-                                                new_hex = f"#{new_val}" if not new_val.startswith("#") else new_val
-                                                if old_color_name and new_color_name:
-                                                    changed_attrs.append(f"color: {old_hex} ({old_color_name}) → {new_hex} ({new_color_name})")
-                                                elif old_color_name:
-                                                    changed_attrs.append(f"color: {old_hex} ({old_color_name}) → {new_hex}")
-                                                elif new_color_name:
-                                                    changed_attrs.append(f"color: {old_hex} → {new_hex} ({new_color_name})")
-                                                else:
-                                                    changed_attrs.append(f"color: {old_hex} → {new_hex}")
+                                                old_hex = (
+                                                    f"#{old_val}"
+                                                    if not old_val.startswith("#")
+                                                    else old_val
+                                                )
+                                                new_hex = (
+                                                    f"#{new_val}"
+                                                    if not new_val.startswith("#")
+                                                    else new_val
+                                                )
+                                                # Format as "color: purple → red" or use hex if no name found
+                                                old_display = (
+                                                    old_color_name if old_color_name else old_hex
+                                                )
+                                                new_display = (
+                                                    new_color_name if new_color_name else new_hex
+                                                )
+                                                changed_attrs.append(
+                                                    f"color: {old_display} → {new_display}"
+                                                )
                                             else:
-                                                changed_attrs.append(f"{attr_key}: {old_val} → {new_val}")
+                                                changed_attrs.append(
+                                                    f"{attr_key}: {old_val} → {new_val}"
+                                                )
                                     elif baseline_normalized and not current_normalized:
                                         # attribute removed (e.g., bold was removed)
                                         # use original value for display
                                         old_val = next(iter(baseline_vals))
-                                        # For color, show the removed color with name
+                                        # For color, show the removed color name (hex as fallback)
                                         if attr_key == "color":
                                             color_name = _hex_to_color_name(old_val)
-                                            hex_display = f"#{old_val}" if not old_val.startswith("#") else old_val
-                                            if color_name:
-                                                removed_attrs.append(f"color {hex_display} ({color_name})")
-                                            else:
-                                                removed_attrs.append(f"color {hex_display}")
+                                            hex_display = (
+                                                f"#{old_val}"
+                                                if not old_val.startswith("#")
+                                                else old_val
+                                            )
+                                            color_display = (
+                                                color_name if color_name else hex_display
+                                            )
+                                            removed_attrs.append(f"color {color_display}")
                                         else:
                                             # For boolean attributes, just show the name
                                             removed_attrs.append(attr_key)
@@ -3905,17 +4138,21 @@ def build_app(event_bus) -> Flask:
                                         # use original value for display
                                         new_val = next(iter(current_vals))
                                         if attr_key == "color":
+                                            # Format as "color name" - show color name only (hex as fallback)
                                             color_name = _hex_to_color_name(new_val)
-                                            # Format as "color #HEX (Name)" or "color #HEX"
-                                            hex_display = f"#{new_val}" if not new_val.startswith("#") else new_val
-                                            if color_name:
-                                                added_attrs.append(f"color {hex_display} ({color_name})")
-                                            else:
-                                                added_attrs.append(f"color {hex_display}")
+                                            hex_display = (
+                                                f"#{new_val}"
+                                                if not new_val.startswith("#")
+                                                else new_val
+                                            )
+                                            color_display = (
+                                                color_name if color_name else hex_display
+                                            )
+                                            added_attrs.append(f"color {color_display}")
                                         else:
                                             # For boolean attributes, just show the name (no =true)
                                             added_attrs.append(attr_key)
-                                
+
                                 # only report if there are actual formatting changes
                                 if changed_attrs or removed_attrs or added_attrs:
                                     # choose the best display text - prefer the longest, most complete fragment
@@ -3927,17 +4164,77 @@ def build_app(event_bus) -> Flask:
                                         if text_len > max_len:
                                             max_len = text_len
                                             display_text = orig_text.strip()
-                                    
+
                                     # fallback to normalized text if no original found
                                     if not display_text:
                                         display_text = normalized_text
-                                    
+
+                                    # CRITICAL: Filter out invalid/confused formatting diffs
+                                    # If the detected formatting change does not map to clean, real token boundaries
+                                    # (i.e., it looks merged, concatenated, or nonsense), discard it entirely
+                                    import re
+
+                                    # Check for common patterns that indicate invalid/confused formatting:
+                                    # 1. Very long concatenated text without spaces (likely merged tokens)
+                                    # 2. Text that contains multiple words concatenated without spaces
+                                    # 3. Text that doesn't look like clean token boundaries
+
+                                    # Remove all whitespace and check if it's too long without word boundaries
+                                    text_no_space = re.sub(r"\s+", "", display_text)
+
+                                    # Check if text looks like merged/concatenated nonsense
+                                    # Pattern examples: "transparent."-readableaddtheirpytestFastAPIapp"
+                                    # This has punctuation followed by concatenated words without spaces
+                                    is_invalid = False
+
+                                    # Check for patterns where words are concatenated without spaces
+                                    # Look for sequences of lowercase followed by uppercase (camelCase-like but without spaces)
+                                    # This catches patterns like "readableaddtheirpytestFastAPIapp"
+                                    if len(display_text) > 10:
+                                        # Check for camelCase-like patterns that suggest concatenation
+                                        # Pattern: lowercase letters followed by uppercase (word boundaries without spaces)
+                                        camel_case_matches = re.findall(
+                                            r"[a-z]+[A-Z][a-z]+", display_text
+                                        )
+                                        if len(camel_case_matches) >= 2:
+                                            # Multiple camelCase patterns - likely concatenated words
+                                            is_invalid = True
+
+                                    # Also check for very long runs of letters without spaces (likely concatenated)
+                                    # Pattern: text that has > 20 consecutive letters without spaces
+                                    if not is_invalid and len(text_no_space) > 20:
+                                        # Count word-like sequences (sequences of letters)
+                                        word_sequences = re.findall(r"[a-zA-Z]+", display_text)
+                                        if len(word_sequences) >= 3:
+                                            # Multiple word sequences - check if they're concatenated
+                                            # If there are 3+ word sequences but no spaces between them,
+                                            # it's likely concatenated nonsense
+                                            # Check if the text has punctuation that suggests merging
+                                            has_punctuation = bool(
+                                                re.search(r'[.,;:!?\-"\'()]', display_text)
+                                            )
+                                            if has_punctuation and len(word_sequences) >= 3:
+                                                # Has punctuation and multiple word sequences - likely merged text
+                                                # Check if words are directly concatenated (no spaces between word sequences)
+                                                # by checking if text length without spaces is close to sum of word lengths
+                                                total_word_length = sum(
+                                                    len(w) for w in word_sequences
+                                                )
+                                                # If text without spaces is close to word lengths, they're concatenated
+                                                if abs(len(text_no_space) - total_word_length) < 5:
+                                                    # Words are concatenated without spaces - invalid
+                                                    is_invalid = True
+
+                                    # Skip invalid formatting diffs
+                                    if is_invalid:
+                                        continue
+
                                     # build style lists for display (removed - no longer needed)
                                     # We now use changed_attrs, removed_attrs, added_attrs only
                                     # No need for old_styles/new_styles with =true/false noise
                                     old_style_list = []
                                     new_style_list = []
-                                    
+
                                     formatting_changes.append(
                                         {
                                             "change": "modified",

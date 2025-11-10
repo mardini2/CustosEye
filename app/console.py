@@ -268,7 +268,9 @@ def main() -> None:
     except Exception:
         purple = reset = ""
     print(f"Welcome to {purple}CustosEye{reset}!")  # print welcome message with colored CustosEye
-    print(f"Dashboard running at {blue}http://127.0.0.1:8765/{reset} {purple}⮜{reset}\n")  # print dashboard URL
+    print(
+        f"Dashboard running at {blue}http://127.0.0.1:8765/{reset} {purple}⮜{reset}\n"
+    )  # print dashboard URL
 
     # keep main alive
     try:

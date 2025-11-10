@@ -119,6 +119,7 @@ def register_auth_routes(app: Flask) -> None:
 
         # normalize username to lowercase for case-insensitive authentication
         from dashboard.auth import _normalize_username
+
         username_normalized = _normalize_username(username)
 
         # verify user
@@ -200,6 +201,7 @@ def register_auth_routes(app: Flask) -> None:
 
         # normalize username for session storage
         from dashboard.auth import _normalize_username
+
         username_normalized = _normalize_username(username)
 
         # auto-login after signup (non-persistent session)
@@ -247,7 +249,13 @@ def register_auth_routes(app: Flask) -> None:
                 os._exit(0)
 
             threading.Thread(target=shutdown_server, daemon=False).start()
-            return jsonify({"success": True, "shutdown": True, "message": "Shutting down CustosEye... Goodbye!"})
+            return jsonify(
+                {
+                    "success": True,
+                    "shutdown": True,
+                    "message": "Shutting down CustosEye... Goodbye!",
+                }
+            )
 
         return jsonify({"success": True, "redirect": url_for("auth_login")})
 
@@ -269,7 +277,9 @@ def register_auth_routes(app: Flask) -> None:
             os._exit(0)
 
         threading.Thread(target=shutdown_server, daemon=False).start()
-        return jsonify({"success": True, "shutdown": True, "message": "Shutting down CustosEye... Goodbye!"})
+        return jsonify(
+            {"success": True, "shutdown": True, "message": "Shutting down CustosEye... Goodbye!"}
+        )
 
     @app.route("/auth/enable-2fa", methods=["GET", "POST"])
     @require_auth
@@ -323,7 +333,14 @@ def register_auth_routes(app: Flask) -> None:
 
         # check if token is empty before processing
         if not token:
-            return jsonify({"error": "Verification code is required. Please enter the 6-digit code from your authenticator app."}), 400
+            return (
+                jsonify(
+                    {
+                        "error": "Verification code is required. Please enter the 6-digit code from your authenticator app."
+                    }
+                ),
+                400,
+            )
 
         # get secret from session (where we stored it during GET request)
         secret = session.get("pending_totp_secret")
@@ -494,6 +511,7 @@ def register_auth_routes(app: Flask) -> None:
 
         # normalize username for case-insensitive lookup
         from dashboard.auth import _normalize_username
+
         username_normalized = _normalize_username(username)
         user = get_user(username_normalized)
         if not user:
@@ -532,6 +550,7 @@ def register_auth_routes(app: Flask) -> None:
 
             # normalize username for case-insensitive lookup
             from dashboard.auth import _normalize_username
+
             username_normalized = _normalize_username(username)
             user = get_user(username_normalized)
             if not user or not user.get("totp_enabled"):
@@ -559,6 +578,7 @@ def register_auth_routes(app: Flask) -> None:
 
         # normalize username for case-insensitive lookup
         from dashboard.auth import _normalize_username
+
         username_normalized = _normalize_username(username)
 
         # reset password with 2FA verification

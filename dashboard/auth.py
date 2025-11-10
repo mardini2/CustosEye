@@ -81,7 +81,10 @@ class ColoredUsernameFormatter(logging.Formatter):
         # handle patterns that include ✓ first (before coloring all ✓ symbols)
         # these patterns need special handling to color both ✓ and username
         patterns_with_checkmark = [
-            (r"(✓ User )([a-zA-Z0-9_]+)", green + r"✓ " + reset + r"User " + purple + r"\2" + reset),  # "✓ User admin"
+            (
+                r"(✓ User )([a-zA-Z0-9_]+)",
+                green + r"✓ " + reset + r"User " + purple + r"\2" + reset,
+            ),  # "✓ User admin"
             (
                 r"(✓ 2FA enabled for user: )([a-zA-Z0-9_]+)",
                 green + r"✓ " + reset + r"2FA enabled for user: " + purple + r"\2" + reset,
@@ -90,7 +93,10 @@ class ColoredUsernameFormatter(logging.Formatter):
                 r"(✓ 2FA disabled for user: )([a-zA-Z0-9_]+)",
                 green + r"✓ " + reset + r"2FA disabled for user: " + purple + r"\2" + reset,
             ),  # "✓ 2FA disabled for user: admin"
-            (r"(✓ Account created: )([a-zA-Z0-9_]+)", green + r"✓ " + reset + r"Account created: " + purple + r"\2" + reset),  # "✓ Account created: admin"
+            (
+                r"(✓ Account created: )([a-zA-Z0-9_]+)",
+                green + r"✓ " + reset + r"Account created: " + purple + r"\2" + reset,
+            ),  # "✓ Account created: admin"
         ]
 
         for pattern, replacement in patterns_with_checkmark:
@@ -286,7 +292,7 @@ def create_user(username: str, password: str) -> tuple[bool, str]:
         )
     if " " in username:
         return False, "Username cannot contain spaces"
-    
+
     # normalize username to lowercase for case-insensitive storage
     username_lower = _normalize_username(username)
     if username_lower in {_normalize_username(u) for u in users.keys()}:
@@ -305,7 +311,7 @@ def create_user(username: str, password: str) -> tuple[bool, str]:
 
     # normalize username to lowercase for case-insensitive storage and lookup
     username_normalized = _normalize_username(username)
-    
+
     # create user record - store with lowercase username as key for case-insensitive lookup
     users[username_normalized] = {
         "username": username_normalized,
@@ -328,7 +334,7 @@ def verify_user(username: str, password: str) -> tuple[bool, str | None]:
     """verify username and password"""
     # normalize username to lowercase for case-insensitive lookup
     username_normalized = _normalize_username(username)
-    
+
     # check brute force protection
     can_login, error = _check_brute_force(username_normalized)
     if not can_login:
@@ -576,7 +582,7 @@ def verify_2fa(username: str, token: str) -> tuple[bool, str | None]:
 def reset_password_with_2fa(username: str, new_password: str, token: str) -> tuple[bool, str]:
     """reset password after verifying 2FA"""
     username_normalized = _normalize_username(username)
-    
+
     # verify 2FA first
     valid, error = verify_2fa(username_normalized, token)
     if not valid:
@@ -633,7 +639,7 @@ def _validate_password(password: str) -> tuple[bool, str]:
 def change_password(username: str, old_password: str, new_password: str) -> tuple[bool, str]:
     """change password (requires old password)"""
     username_normalized = _normalize_username(username)
-    
+
     # verify old password
     valid, error = verify_user(username_normalized, old_password)
     if not valid:

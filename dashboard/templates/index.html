@@ -13,6 +13,7 @@
   <link rel="icon" type="image/png" sizes="32x32" href="/static/assets/favicon-32x32.png?v=2">
   <link rel="icon" type="image/png" sizes="16x16" href="/static/assets/favicon-16x16.png?v=2">
   <link rel="apple-touch-icon" href="/static/assets/apple-touch-icon.png?v=2">
+  <link rel="preload" href="/static/assets/logo_warning.svg" as="image" type="image/svg+xml">
   <style>
     /* CSS styles: theme variables, layout, and component styling */
     :root {
@@ -820,10 +821,43 @@
       try {
         const includeInfo = '1';
         const res = await fetch('/api/events?include_info=' + includeInfo);
+        if (!res.ok) {
+          throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+        }
         const data = await res.json();
         window.__data = data;
         if (!state.paused && state.tab==='live') render(data);
-      } catch (e) { /* ignore */ }
+      } catch (e) {
+        // Show error message in Live Events tab if it's active
+        if (state.tab === 'live') {
+          const liveEl = document.getElementById('live');
+          if (liveEl) {
+            liveEl.innerHTML = `
+              <div style="padding:20px;">
+                <div class="panel" style="max-width:600px; margin:0 auto;">
+                  <div style="background:var(--bad); color:white; padding:12px; border-radius:8px; margin-bottom:16px;">
+                    <div style="font-weight:600; font-size:16px; margin-bottom:8px; display:flex; align-items:center; justify-content:center; gap:8px;">
+                      <img src="/static/assets/logo_warning.svg" alt="Warning" style="width:20px; height:20px; object-fit:contain;" />
+                      Error Loading Live Events
+                    </div>
+                    <div style="font-size:14px;">Failed to load events from the server.</div>
+                  </div>
+                  <div class="small muted" style="text-align:left;">
+                    <p><b>Error:</b> ${esc(e.message || 'Unknown error')}</p>
+                    <p>This could happen if:</p>
+                    <ul style="margin:8px 0; padding-left:20px;">
+                      <li>CustosEye was shut down or crashed</li>
+                      <li>There was a network error</li>
+                      <li>The API endpoint is unavailable</li>
+                    </ul>
+                    <p style="margin-top:12px;">Try refreshing the page or restarting CustosEye.</p>
+                  </div>
+                </div>
+              </div>
+            `;
+          }
+        }
+      }
     }
 
       // tooltip manager: shows helpful hints when hovering over UI elements
@@ -1264,10 +1298,22 @@
           }
         });
 
+        // Count formatting changes
+        let formattingCount = 0;
+        if (textDiff.formatting_changes && textDiff.formatting_changes.length > 0) {
+          formattingCount = textDiff.formatting_changes.filter(change => {
+            const changedAttrs = change.changed_attrs || [];
+            const removedAttrs = change.removed_attrs || [];
+            const addedAttrs = change.added_attrs || [];
+            return changedAttrs.length > 0 || removedAttrs.length > 0 || addedAttrs.length > 0;
+          }).length;
+        }
+        
         const statsHTML = `
           <div class="diff-summary-stats" style="margin-top:8px">
             ${addedCount > 0 ? `<div class="diff-stat"><span class="diff-stat-badge added">+${addedCount}</span> <span class="small muted">added</span></div>` : ''}
             ${removedCount > 0 ? `<div class="diff-stat"><span class="diff-stat-badge removed">-${removedCount}</span> <span class="small muted">removed</span></div>` : ''}
+            ${formattingCount > 0 ? `<div class="diff-stat"><span class="diff-stat-badge" style="color:var(--warn); border-color:color-mix(in oklab, var(--warn) 40%, var(--border));">+${formattingCount}</span> <span class="small muted">formatting</span></div>` : ''}
           </div>
         `;
         
@@ -1275,39 +1321,120 @@
         let imageChangesHTML = '';
         if (textDiff.image_changes && textDiff.image_changes.length > 0) {
           const imageChanges = textDiff.image_changes;
+          const IMAGE_CHANGES_LIMIT = 5;
+          const totalImageChanges = imageChanges.length;
+          const hasMoreImages = totalImageChanges > IMAGE_CHANGES_LIMIT;
+          const initialImageChanges = hasMoreImages ? imageChanges.slice(0, IMAGE_CHANGES_LIMIT) : imageChanges;
+          const remainingImageCount = totalImageChanges - IMAGE_CHANGES_LIMIT;
+          
+          // Generate unique ID for this diff's image changes panel
+          const imagePanelId = 'image-changes-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9);
+          const hiddenImagesId = imagePanelId + '-hidden';
+          const toggleImagesButtonId = imagePanelId + '-toggle';
+          
           imageChangesHTML = `
             <div style="margin:12px 0; padding:12px; background:var(--panel); border:1px solid var(--border); border-radius:8px;">
-              <div style="font-weight:600; margin-bottom:8px;">📷 Image Changes</div>
-              ${imageChanges.map(change => {
-                const img = change.image || {};
-                const changeType = change.change || '';
-                const badgeCls = changeType === 'added' ? 'added' : (changeType === 'removed' ? 'removed' : (changeType === 'resized' ? 'modified' : 'modified'));
-                
-                let changeLabel = changeType;
-                let changeDetails = '';
-                
-                if (changeType === 'resized') {
-                  const oldW = change.old_width || '?';
-                  const oldH = change.old_height || '?';
-                  const newW = change.new_width || '?';
-                  const newH = change.new_height || '?';
-                  changeLabel = 'resized';
-                  changeDetails = `<span class="small" style="color:var(--warning); margin-left:8px;">${oldW}×${oldH} → ${newW}×${newH}</span>`;
-                }
-                
-                return `
-                  <div style="margin:8px 0; padding:8px; background:var(--rowAlt); border-radius:4px;">
-                    <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
-                      <span class="diff-stat-badge ${badgeCls}">${changeType === 'added' ? '+' : (changeType === 'removed' ? '-' : '~')}</span>
-                      <span style="font-weight:500;">${esc(img.name || 'Unknown')}</span>
-                      <span class="small muted">(${bytesHuman(img.size || 0)})</span>
-                      ${changeDetails}
-                      ${img.hash ? `<span class="small mono muted">hash: ${esc(img.hash)}</span>` : ''}
-                      ${img.width && img.height ? `<span class="small muted">${img.width}×${img.height}px</span>` : ''}
+              <div style="font-weight:600; margin-bottom:8px;">📷 Image Changes ${hasMoreImages ? `(${totalImageChanges} total)` : `(${totalImageChanges})`}</div>
+              <div id="${imagePanelId}">
+                ${initialImageChanges.map(change => {
+                  const img = change.image || {};
+                  const changeType = change.change || '';
+                  const badgeCls = changeType === 'added' ? 'added' : (changeType === 'removed' ? 'removed' : (changeType === 'resized' ? 'modified' : 'modified'));
+                  
+                  let changeLabel = changeType;
+                  let changeDetails = '';
+                  
+                  if (changeType === 'resized') {
+                    const oldW = change.old_width || '?';
+                    const oldH = change.old_height || '?';
+                    const newW = change.new_width || '?';
+                    const newH = change.new_height || '?';
+                    changeLabel = 'resized';
+                    changeDetails = `<span class="small" style="color:var(--warning); margin-left:8px;">${oldW}×${oldH} → ${newW}×${newH}</span>`;
+                  }
+                  
+                  return `
+                    <div style="margin:8px 0; padding:8px; background:var(--rowAlt); border-radius:4px;">
+                      <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+                        <span class="diff-stat-badge ${badgeCls}">${changeType === 'added' ? '+' : (changeType === 'removed' ? '-' : '~')}</span>
+                        <span style="font-weight:500;">${esc(img.name || 'Unknown')}</span>
+                        <span class="small muted">(${bytesHuman(img.size || 0)})</span>
+                        ${changeDetails}
+                        ${img.hash ? `<span class="small mono muted">hash: ${esc(img.hash)}</span>` : ''}
+                        ${img.width && img.height ? `<span class="small muted">${img.width}×${img.height}px</span>` : ''}
+                      </div>
                     </div>
+                  `;
+                }).join('')}
+                ${hasMoreImages ? `
+                  <div id="${hiddenImagesId}" style="display:none;">
+                    ${imageChanges.slice(IMAGE_CHANGES_LIMIT).map(change => {
+                      const img = change.image || {};
+                      const changeType = change.change || '';
+                      const badgeCls = changeType === 'added' ? 'added' : (changeType === 'removed' ? 'removed' : (changeType === 'resized' ? 'modified' : 'modified'));
+                      
+                      let changeLabel = changeType;
+                      let changeDetails = '';
+                      
+                      if (changeType === 'resized') {
+                        const oldW = change.old_width || '?';
+                        const oldH = change.old_height || '?';
+                        const newW = change.new_width || '?';
+                        const newH = change.new_height || '?';
+                        changeLabel = 'resized';
+                        changeDetails = `<span class="small" style="color:var(--warning); margin-left:8px;">${oldW}×${oldH} → ${newW}×${newH}</span>`;
+                      }
+                      
+                      return `
+                        <div style="margin:8px 0; padding:8px; background:var(--rowAlt); border-radius:4px;">
+                          <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+                            <span class="diff-stat-badge ${badgeCls}">${changeType === 'added' ? '+' : (changeType === 'removed' ? '-' : '~')}</span>
+                            <span style="font-weight:500;">${esc(img.name || 'Unknown')}</span>
+                            <span class="small muted">(${bytesHuman(img.size || 0)})</span>
+                            ${changeDetails}
+                            ${img.hash ? `<span class="small mono muted">hash: ${esc(img.hash)}</span>` : ''}
+                            ${img.width && img.height ? `<span class="small muted">${img.width}×${img.height}px</span>` : ''}
+                          </div>
+                        </div>
+                      `;
+                    }).join('')}
                   </div>
-                `;
-              }).join('')}
+                  <div style="margin-top:8px; text-align:center;">
+                    <button id="${toggleImagesButtonId}" onclick="
+                      (function(e) {
+                        if (e) { e.stopPropagation(); e.preventDefault(); }
+                        const hidden = document.getElementById('${hiddenImagesId}');
+                        const btn = document.getElementById('${toggleImagesButtonId}');
+                        const remainingCount = ${remainingImageCount};
+                        if (!hidden || !btn) return false;
+                        // Check state using data attribute first (more reliable)
+                        const isExpanded = btn.getAttribute('data-expanded') === 'true';
+                        if (isExpanded) {
+                          // Currently expanded, so collapse it
+                          hidden.style.display = 'none';
+                          btn.textContent = 'Show more (' + remainingCount + ' more)';
+                          btn.setAttribute('data-expanded', 'false');
+                        } else {
+                          // Currently collapsed, so expand it
+                          hidden.style.display = 'block';
+                          btn.textContent = 'Show less';
+                          btn.setAttribute('data-expanded', 'true');
+                        }
+                        return false;
+                      })(event);
+                    " style="
+                      padding:6px 12px;
+                      background:var(--accent);
+                      color:var(--bg);
+                      border:none;
+                      border-radius:4px;
+                      cursor:pointer;
+                      font-size:13px;
+                      font-weight:500;
+                    " data-expanded="false">Show more (${remainingImageCount} more)</button>
+                  </div>
+                ` : ''}
+              </div>
             </div>
           `;
         }
@@ -1318,7 +1445,7 @@
           const formattingChanges = textDiff.formatting_changes;
           
           // Configurable limit for formatting changes display (default: 20)
-          const FORMATTING_CHANGES_LIMIT = 6;
+          const FORMATTING_CHANGES_LIMIT = 5;
           
           // group consecutive formatting changes that are on adjacent text segments
           const groupedChanges = [];
@@ -1443,16 +1570,27 @@
                   </div>
                   <div style="margin-top:8px; text-align:center;">
                     <button id="${toggleButtonId}" onclick="
-                      const hidden = document.getElementById('${hiddenChangesId}');
-                      const btn = document.getElementById('${toggleButtonId}');
-                      const remainingCount = ${remainingCount};
-                      if (hidden.style.display === 'none') {
-                        hidden.style.display = 'block';
-                        btn.textContent = 'Show less';
-                      } else {
-                        hidden.style.display = 'none';
-                        btn.textContent = 'Show more (' + remainingCount + ' more)';
-                      }
+                      (function(e) {
+                        if (e) { e.stopPropagation(); e.preventDefault(); }
+                        const hidden = document.getElementById('${hiddenChangesId}');
+                        const btn = document.getElementById('${toggleButtonId}');
+                        const remainingCount = ${remainingCount};
+                        if (!hidden || !btn) return false;
+                        // Check state using data attribute first (more reliable)
+                        const isExpanded = btn.getAttribute('data-expanded') === 'true';
+                        if (isExpanded) {
+                          // Currently expanded, so collapse it
+                          hidden.style.display = 'none';
+                          btn.textContent = 'Show more (' + remainingCount + ' more)';
+                          btn.setAttribute('data-expanded', 'false');
+                        } else {
+                          // Currently collapsed, so expand it
+                          hidden.style.display = 'block';
+                          btn.textContent = 'Show less';
+                          btn.setAttribute('data-expanded', 'true');
+                        }
+                        return false;
+                      })(event);
                     " style="
                       padding:6px 12px;
                       background:var(--accent);
@@ -1462,7 +1600,7 @@
                       cursor:pointer;
                       font-size:13px;
                       font-weight:500;
-                    ">Show more (${remainingCount} more)</button>
+                    " data-expanded="false">Show more (${remainingCount} more)</button>
                   </div>
                 ` : ''}
               </div>
@@ -1729,7 +1867,9 @@
     }
     if (state.tab === 'about') {
       const a = __about;
-      if (!a) return;
+      if (!a) {
+        return; // Just return if no data, don't show error
+      }
       aboutEl.innerHTML = `
         <div class="mono"><b>CustosEye</b></div>
         <div class="muted">Local-only dashboard for monitoring.</div>
@@ -1777,12 +1917,45 @@
     async function fetchTree() {
     try {
         const res = await fetch('/api/proctree');
+        if (!res.ok) {
+          throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+        }
         const data = await res.json();
         __tree = data; // update cache
         // reset last rendered tree to force re-render after manual refresh
         __lastRenderedTree = null;
         renderActive();
-    } catch (e) {}
+    } catch (e) {
+        // Show error message in Process Tree tab if it's active
+        if (state.tab === 'tree') {
+          const treeRoot = document.getElementById('treeRoot');
+          if (treeRoot) {
+            treeRoot.innerHTML = `
+              <div style="padding:20px;">
+                <div class="panel" style="max-width:600px; margin:0 auto;">
+                  <div style="background:var(--bad); color:white; padding:12px; border-radius:8px; margin-bottom:16px;">
+                    <div style="font-weight:600; font-size:16px; margin-bottom:8px; display:flex; align-items:center; justify-content:center; gap:8px;">
+                      <img src="/static/assets/logo_warning.svg" alt="Warning" style="width:20px; height:20px; object-fit:contain;" />
+                      Error Loading Process Tree
+                    </div>
+                    <div style="font-size:14px;">Failed to load process tree from the server.</div>
+                  </div>
+                  <div class="small muted" style="text-align:left;">
+                    <p><b>Error:</b> ${esc(e.message || 'Unknown error')}</p>
+                    <p>This could happen if:</p>
+                    <ul style="margin:8px 0; padding-left:20px;">
+                      <li>CustosEye was shut down or crashed</li>
+                      <li>There was a network error</li>
+                      <li>The API endpoint is unavailable</li>
+                    </ul>
+                    <p style="margin-top:12px;">Try clicking "Refresh" or restarting CustosEye.</p>
+                  </div>
+                </div>
+              </div>
+            `;
+          }
+        }
+    }
     }
 
     // filter process tree by search query: matches PID, name, verdict, class, confidence, path, cmdline
@@ -1928,6 +2101,10 @@
             return; // stale response, ignore (newer request already in flight)
           }
           
+          if (!res.ok) {
+            throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+          }
+          
           const data = await res.json();
           
           // stale-response guard: check AGAIN after parsing (race condition protection)
@@ -2002,7 +2179,36 @@
           if (requestId !== loadTargetsRequestId) {
             return;
           }
-          iTbody.innerHTML = `<tr><td colspan="5" class="small">Failed to load targets</td></tr>`;
+          // Show error message in Integrity tab if it's active
+          if (state.tab === 'integrity' && iTbody) {
+            iTbody.innerHTML = `
+              <tr>
+                <td colspan="5" style="padding:20px;">
+                  <div class="panel" style="max-width:600px; margin:0 auto;">
+                    <div style="background:var(--bad); color:white; padding:12px; border-radius:8px; margin-bottom:16px;">
+                      <div style="font-weight:600; font-size:16px; margin-bottom:8px; display:flex; align-items:center; justify-content:center; gap:8px;">
+                        <img src="/static/assets/logo_warning.svg" alt="Warning" style="width:20px; height:20px; object-fit:contain;" />
+                        Error Loading Integrity Targets
+                      </div>
+                      <div style="font-size:14px;">Failed to load monitored files from the server.</div>
+                    </div>
+                    <div class="small muted" style="text-align:left;">
+                      <p><b>Error:</b> ${esc(e.message || 'Unknown error')}</p>
+                      <p>This could happen if:</p>
+                      <ul style="margin:8px 0; padding-left:20px;">
+                        <li>CustosEye was shut down or crashed</li>
+                        <li>There was a network error</li>
+                        <li>The API endpoint is unavailable</li>
+                      </ul>
+                      <p style="margin-top:12px;">Try refreshing the page or restarting CustosEye.</p>
+                    </div>
+                  </div>
+                </td>
+              </tr>
+            `;
+          } else if (iTbody) {
+            iTbody.innerHTML = `<tr><td colspan="5" class="small">Failed to load targets</td></tr>`;
+          }
         }
       }, 200); // 200ms debounce
     }
@@ -2262,8 +2468,39 @@
               }
               
               if (modal.style.display !== 'none') {
+                // Preserve button states before re-rendering
+                // Store which panels were expanded (formatting vs images)
+                const wasFormattingExpanded = modalBody.querySelector('[id*="formatting-changes"][id*="-toggle"][data-expanded="true"]') !== null;
+                const wasImagesExpanded = modalBody.querySelector('[id*="image-changes"][id*="-toggle"][data-expanded="true"]') !== null;
+                
                 const diffHTML = renderDiff(j);
                 modalBody.innerHTML = diffHTML;
+                
+                // Restore button states after re-rendering
+                // Find the new buttons and restore their state
+                if (wasFormattingExpanded) {
+                  const formattingToggle = modalBody.querySelector('[id*="formatting-changes"][id*="-toggle"]');
+                  if (formattingToggle) {
+                    const formattingHidden = modalBody.querySelector('[id*="formatting-changes"][id*="-hidden"]');
+                    if (formattingHidden) {
+                      formattingHidden.style.display = 'block';
+                      formattingToggle.setAttribute('data-expanded', 'true');
+                      formattingToggle.textContent = 'Show less';
+                    }
+                  }
+                }
+                
+                if (wasImagesExpanded) {
+                  const imagesToggle = modalBody.querySelector('[id*="image-changes"][id*="-toggle"]');
+                  if (imagesToggle) {
+                    const imagesHidden = modalBody.querySelector('[id*="image-changes"][id*="-hidden"]');
+                    if (imagesHidden) {
+                      imagesHidden.style.display = 'block';
+                      imagesToggle.setAttribute('data-expanded', 'true');
+                      imagesToggle.textContent = 'Show less';
+                    }
+                  }
+                }
                 
                 // Wire "Change is OK" buttons after rendering
                 const acceptBtn = modalBody.querySelector('#acceptBaselineBtn');
@@ -2322,7 +2559,10 @@
                 modalBody.innerHTML = `
                   <div style="padding:20px;">
                     <div style="background:var(--bad); color:white; padding:12px; border-radius:8px; margin-bottom:16px;">
-                      <div style="font-weight:600; font-size:16px; margin-bottom:8px;">⚠️ Error Loading Diff</div>
+                      <div style="font-weight:600; font-size:16px; margin-bottom:8px; display:flex; align-items:center; gap:8px;">
+                        <img src="/static/assets/logo_warning.svg" alt="Warning" style="width:20px; height:20px; object-fit:contain;" />
+                        Error Loading Diff
+                      </div>
                       <div style="font-size:14px;">Failed to compute diff for this file.</div>
                     </div>
                     <div class="small muted">
@@ -2561,9 +2801,9 @@
 
         // in preview mode, use preview API endpoints that don't require auth
         const jobs = [
-          fetch(isPreview ? `/api/preview/events?include_info=${includeInfo}` : `/api/events?include_info=${includeInfo}`, { signal: pollCtrl?.signal }).catch(() => ({ ok: false, json: async () => [] })), // 0
-          fetch(isPreview ? `/api/preview/integrity/targets` : `/api/integrity/targets`,                 { signal: pollCtrl?.signal }).catch(() => ({ ok: false, json: async () => [] })),   // 1
-          fetch(isPreview ? `/api/preview/about` : `/api/about`,                             { signal: pollCtrl?.signal }).catch(() => ({ ok: false, json: async () => ({version: 'preview'}) })),   // 2
+          fetch(isPreview ? `/api/preview/events?include_info=${includeInfo}` : `/api/events?include_info=${includeInfo}`, { signal: pollCtrl?.signal }).catch(e => ({ ok: false, error: e, json: async () => [] })), // 0
+          fetch(isPreview ? `/api/preview/integrity/targets` : `/api/integrity/targets`,                 { signal: pollCtrl?.signal }).catch(e => ({ ok: false, error: e, json: async () => [] })),   // 1
+          fetch(isPreview ? `/api/preview/about` : `/api/about`,                             { signal: pollCtrl?.signal }).catch(e => ({ ok: false, error: e, json: async () => ({version: 'preview'}) })),   // 2
           fetch(`/api/ping`,                              { signal: pollCtrl?.signal }).catch(() => ({ ok: true })) // 3
         ];
         if (needTree) {
@@ -2571,7 +2811,7 @@
             fetch(isPreview ? `/api/preview/proctree` : `/api/proctree`, { signal: pollCtrl?.signal }).then(r => {
               lastTreeAt = now;
               return r;
-            }).catch(() => ({ ok: false, json: async () => [] })) // 4
+            }).catch(e => ({ ok: false, error: e, json: async () => [] })) // 4
           );
         }
 
@@ -2582,10 +2822,143 @@
         const aboutR = results[2];
         const treeR  = needTree ? results[4] : null;
 
-        if (evR?.status === 'fulfilled')   __events  = await evR.value.json();
+        // Handle events data
+        if (evR?.status === 'fulfilled') {
+          const evRes = evR.value;
+          if (evRes.ok !== false && evRes.ok !== undefined) {
+            // Check if it's a real Response object
+            if (evRes instanceof Response) {
+              if (evRes.ok) {
+                __events = await evRes.json();
+              } else if (state.tab === 'live') {
+                // HTTP error response
+                const liveEl = document.getElementById('live');
+                if (liveEl) {
+                  liveEl.innerHTML = `
+                    <div style="padding:20px;">
+                      <div class="panel" style="max-width:600px; margin:0 auto;">
+                        <div style="background:var(--bad); color:white; padding:12px; border-radius:8px; margin-bottom:16px;">
+                          <div style="font-weight:600; font-size:16px; margin-bottom:8px; display:flex; align-items:center; justify-content:center; gap:8px;">
+                            <img src="/static/assets/logo_warning.svg" alt="Warning" style="width:20px; height:20px; object-fit:contain;" />
+                            Error Loading Live Events
+                          </div>
+                          <div style="font-size:14px;">Failed to load events from the server.</div>
+                        </div>
+                        <div class="small muted" style="text-align:left;">
+                          <p><b>Error:</b> HTTP ${evRes.status}: ${evRes.statusText || 'Server error'}</p>
+                          <p>This could happen if:</p>
+                          <ul style="margin:8px 0; padding-left:20px;">
+                            <li>CustosEye was shut down or crashed</li>
+                            <li>There was a network error</li>
+                            <li>The API endpoint is unavailable</li>
+                          </ul>
+                          <p style="margin-top:12px;">Try refreshing the page or restarting CustosEye.</p>
+                        </div>
+                      </div>
+                    </div>
+                  `;
+                }
+              }
+            } else {
+              // Not a Response object, treat as data
+              __events = await evRes.json();
+            }
+          } else if (evRes.error && state.tab === 'live') {
+            // Show error if Live Events tab is active
+            const liveEl = document.getElementById('live');
+            if (liveEl) {
+              liveEl.innerHTML = `
+                <div style="padding:20px;">
+                  <div class="panel" style="max-width:600px; margin:0 auto;">
+                    <div style="background:var(--bad); color:white; padding:12px; border-radius:8px; margin-bottom:16px;">
+                      <div style="font-weight:600; font-size:16px; margin-bottom:8px; display:flex; align-items:center; justify-content:center; gap:8px;">
+                        <img src="/static/assets/logo_warning.svg" alt="Warning" style="width:20px; height:20px; object-fit:contain;" />
+                        Error Loading Live Events
+                      </div>
+                      <div style="font-size:14px;">Failed to load events from the server.</div>
+                    </div>
+                    <div class="small muted" style="text-align:left;">
+                      <p><b>Error:</b> ${esc(evRes.error?.message || 'Connection failed')}</p>
+                      <p>This could happen if:</p>
+                      <ul style="margin:8px 0; padding-left:20px;">
+                        <li>CustosEye was shut down or crashed</li>
+                        <li>There was a network error</li>
+                        <li>The API endpoint is unavailable</li>
+                      </ul>
+                      <p style="margin-top:12px;">Try refreshing the page or restarting CustosEye.</p>
+                    </div>
+                  </div>
+                </div>
+              `;
+            }
+          }
+        }
         // only update targets from polling if not in suppression window (after manual actions)
         if (targR?.status === 'fulfilled' && Date.now() >= suppressPollingUntil) {
-          const pollingData = await targR.value.json();
+          const targRes = targR.value;
+          // Check for errors (network errors or HTTP errors)
+          if (targRes.error && state.tab === 'integrity' && iTbody) {
+            // Show error if Integrity tab is active
+            iTbody.innerHTML = `
+              <tr>
+                <td colspan="5" style="padding:20px;">
+                  <div class="panel" style="max-width:600px; margin:0 auto;">
+                    <div style="background:var(--bad); color:white; padding:12px; border-radius:8px; margin-bottom:16px;">
+                      <div style="font-weight:600; font-size:16px; margin-bottom:8px; display:flex; align-items:center; justify-content:center; gap:8px;">
+                        <img src="/static/assets/logo_warning.svg" alt="Warning" style="width:20px; height:20px; object-fit:contain;" />
+                        Error Loading Integrity Targets
+                      </div>
+                      <div style="font-size:14px;">Failed to load monitored files from the server.</div>
+                    </div>
+                    <div class="small muted" style="text-align:left;">
+                      <p><b>Error:</b> ${esc(targRes.error?.message || 'Connection failed')}</p>
+                      <p>This could happen if:</p>
+                      <ul style="margin:8px 0; padding-left:20px;">
+                        <li>CustosEye was shut down or crashed</li>
+                        <li>There was a network error</li>
+                        <li>The API endpoint is unavailable</li>
+                      </ul>
+                      <p style="margin-top:12px;">Try refreshing the page or restarting CustosEye.</p>
+                    </div>
+                  </div>
+                </td>
+              </tr>
+            `;
+            return; // Don't process data if there was an error
+          }
+          // Check if it's a real Response object with HTTP error
+          if (targRes instanceof Response && !targRes.ok && state.tab === 'integrity' && iTbody) {
+            iTbody.innerHTML = `
+              <tr>
+                <td colspan="5" style="padding:20px;">
+                  <div class="panel" style="max-width:600px; margin:0 auto;">
+                    <div style="background:var(--bad); color:white; padding:12px; border-radius:8px; margin-bottom:16px;">
+                      <div style="font-weight:600; font-size:16px; margin-bottom:8px; display:flex; align-items:center; justify-content:center; gap:8px;">
+                        <img src="/static/assets/logo_warning.svg" alt="Warning" style="width:20px; height:20px; object-fit:contain;" />
+                        Error Loading Integrity Targets
+                      </div>
+                      <div style="font-size:14px;">Failed to load monitored files from the server.</div>
+                    </div>
+                    <div class="small muted" style="text-align:left;">
+                      <p><b>Error:</b> HTTP ${targRes.status}: ${targRes.statusText || 'Server error'}</p>
+                      <p>This could happen if:</p>
+                      <ul style="margin:8px 0; padding-left:20px;">
+                        <li>CustosEye was shut down or crashed</li>
+                        <li>There was a network error</li>
+                        <li>The API endpoint is unavailable</li>
+                      </ul>
+                      <p style="margin-top:12px;">Try refreshing the page or restarting CustosEye.</p>
+                    </div>
+                  </div>
+                </td>
+              </tr>
+            `;
+            return; // Don't process data if there was an error
+          }
+          if (!(targRes instanceof Response) || !targRes.ok) {
+            return; // Skip if not OK and not showing error (tab not active)
+          }
+          const pollingData = await targRes.json();
           // reconcile polling data with optimistic updates (same logic as loadTargets)
           // 1. Filter out optimistically removed items (CRITICAL: prevents removed items from reappearing)
           const filteredData = pollingData.filter(t => {
@@ -2615,12 +2988,87 @@
           // 4. Merge and update (filtered data + optimistic additions)
           __targets = [...filteredData, ...optimisticAdditions];
         }
-        if (aboutR?.status === 'fulfilled') __about  = await aboutR.value.json();
+        if (aboutR?.status === 'fulfilled') {
+          const aboutRes = aboutR.value;
+          // Skip error handling for About tab - just try to load data
+          if (!aboutRes.error && (aboutRes instanceof Response ? aboutRes.ok : true)) {
+            try {
+              __about = await aboutRes.json();
+              if (state.tab === 'about') {
+                renderActive();
+              }
+            } catch (e) {
+              // Silently ignore errors for About tab
+            }
+          }
+        }
 
         if (needTree && treeR && treeR.status === 'fulfilled') {
-          __tree = await treeR.value.json();
-          if (openKeys.size === 0 && Array.isArray(__tree)) {
-            for (const root of __tree) openKeys.add(String(root.pid));
+          const treeRes = treeR.value;
+          // Check if it's a real Response object
+          if (treeRes instanceof Response) {
+            if (treeRes.ok) {
+              __tree = await treeRes.json();
+              if (openKeys.size === 0 && Array.isArray(__tree)) {
+                for (const root of __tree) openKeys.add(String(root.pid));
+              }
+            } else if (state.tab === 'tree') {
+              // HTTP error response
+              const treeRoot = document.getElementById('treeRoot');
+              if (treeRoot) {
+                treeRoot.innerHTML = `
+                  <div style="padding:20px;">
+                    <div class="panel" style="max-width:600px; margin:0 auto;">
+                      <div style="background:var(--bad); color:white; padding:12px; border-radius:8px; margin-bottom:16px;">
+                        <div style="font-weight:600; font-size:16px; margin-bottom:8px; display:flex; align-items:center; justify-content:center; gap:8px;">
+                          <img src="/static/assets/logo_warning.svg" alt="Warning" style="width:20px; height:20px; object-fit:contain;" />
+                          Error Loading Process Tree
+                        </div>
+                        <div style="font-size:14px;">Failed to load process tree from the server.</div>
+                      </div>
+                      <div class="small muted" style="text-align:left;">
+                        <p><b>Error:</b> HTTP ${treeRes.status}: ${treeRes.statusText || 'Server error'}</p>
+                        <p>This could happen if:</p>
+                        <ul style="margin:8px 0; padding-left:20px;">
+                          <li>CustosEye was shut down or crashed</li>
+                          <li>There was a network error</li>
+                          <li>The API endpoint is unavailable</li>
+                        </ul>
+                        <p style="margin-top:12px;">Try clicking "Refresh" or restarting CustosEye.</p>
+                      </div>
+                    </div>
+                  </div>
+                `;
+              }
+            }
+          } else if (treeRes && (treeRes.error || treeRes.ok === false) && state.tab === 'tree') {
+            // Show error if Process Tree tab is active (network error or failed response)
+            const treeRoot = document.getElementById('treeRoot');
+            if (treeRoot) {
+              treeRoot.innerHTML = `
+                <div style="padding:20px;">
+                  <div class="panel" style="max-width:600px; margin:0 auto;">
+                    <div style="background:var(--bad); color:white; padding:12px; border-radius:8px; margin-bottom:16px;">
+                      <div style="font-weight:600; font-size:16px; margin-bottom:8px; display:flex; align-items:center; justify-content:center; gap:8px;">
+                        <img src="/static/assets/logo_warning.svg" alt="Warning" style="width:20px; height:20px; object-fit:contain;" />
+                        Error Loading Process Tree
+                      </div>
+                      <div style="font-size:14px;">Failed to load process tree from the server.</div>
+                    </div>
+                    <div class="small muted" style="text-align:left;">
+                      <p><b>Error:</b> ${esc(treeRes.error?.message || 'Connection failed')}</p>
+                      <p>This could happen if:</p>
+                      <ul style="margin:8px 0; padding-left:20px;">
+                        <li>CustosEye was shut down or crashed</li>
+                        <li>There was a network error</li>
+                        <li>The API endpoint is unavailable</li>
+                      </ul>
+                      <p style="margin-top:12px;">Try clicking "Refresh" or restarting CustosEye.</p>
+                    </div>
+                  </div>
+                </div>
+              `;
+            }
           }
         }
 
