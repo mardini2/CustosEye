@@ -141,12 +141,12 @@
     
     <div id="error" class="error hidden"></div>
     
-    <form id="signupForm">
+    <form id="signupForm" autocomplete="off">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
       
       <div class="form-group">
         <label class="form-label" for="username">Username</label>
-        <input type="text" id="username" name="username" class="form-input" required autocomplete="username" pattern="[a-zA-Z0-9]{2,25}" minlength="2" maxlength="25" />
+        <input type="text" id="username" name="username" class="form-input" required autocomplete="off" pattern="[a-zA-Z0-9]{2,25}" minlength="2" maxlength="25" />
         <span class="hint">2-25 characters, letters and numbers only (no spaces or special characters)</span>
       </div>
       

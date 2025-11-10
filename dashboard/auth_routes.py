@@ -247,7 +247,7 @@ def register_auth_routes(app: Flask) -> None:
                 os._exit(0)
 
             threading.Thread(target=shutdown_server, daemon=False).start()
-            return jsonify({"success": True, "message": "Shutting down...", "redirect": None})
+            return jsonify({"success": True, "shutdown": True, "message": "Shutting down CustosEye... Goodbye!"})
 
         return jsonify({"success": True, "redirect": url_for("auth_login")})
 
@@ -269,7 +269,7 @@ def register_auth_routes(app: Flask) -> None:
             os._exit(0)
 
         threading.Thread(target=shutdown_server, daemon=False).start()
-        return jsonify({"success": True, "message": "Shutting down..."})
+        return jsonify({"success": True, "shutdown": True, "message": "Shutting down CustosEye... Goodbye!"})
 
     @app.route("/auth/enable-2fa", methods=["GET", "POST"])
     @require_auth

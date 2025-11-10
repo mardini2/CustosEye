@@ -131,12 +131,12 @@
     {% endif %}
     <div id="success" class="success hidden"></div>
     
-    <form id="loginForm">
+    <form id="loginForm" autocomplete="off">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
       
       <div class="form-group">
         <label class="form-label" for="username">Username</label>
-        <input type="text" id="username" name="username" class="form-input" required autocomplete="username" />
+        <input type="text" id="username" name="username" class="form-input" required autocomplete="off" />
       </div>
       
       <div class="form-group">
@@ -397,6 +397,134 @@
       });
     }
     
+    // show a non-blocking shutdown message that auto-dismisses and closes the tab
+    function showShutdownMessage() {
+      // create a nice shutdown overlay
+      const shutdownOverlay = document.createElement('div');
+      shutdownOverlay.id = 'shutdownOverlay';
+      shutdownOverlay.style.cssText = `
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background: rgba(11, 15, 20, 0.95);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 99999;
+        opacity: 0;
+        transition: opacity 0.3s ease-in;
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial;
+      `;
+      
+      shutdownOverlay.innerHTML = `
+        <div style="
+          text-align: center;
+          padding: 40px;
+          max-width: 500px;
+          color: var(--text);
+        ">
+          <div style="
+            font-size: 48px;
+            margin-bottom: 24px;
+            animation: fadeInScale 0.4s ease-out;
+          ">👋</div>
+          <h1 style="
+            font-size: 28px;
+            font-weight: 600;
+            margin: 0 0 12px 0;
+            color: var(--text);
+            animation: fadeInUp 0.5s ease-out 0.1s both;
+          ">Thank you for using CustosEye</h1>
+          <p style="
+            font-size: 16px;
+            color: var(--muted);
+            margin: 0;
+            line-height: 1.6;
+            animation: fadeInUp 0.5s ease-out 0.2s both;
+          ">Shutting down safely...</p>
+        </div>
+      `;
+      
+      // add keyframe animations
+      const style = document.createElement('style');
+      style.textContent = `
+        @keyframes fadeInScale {
+          from {
+            opacity: 0;
+            transform: scale(0.8);
+          }
+          to {
+            opacity: 1;
+            transform: scale(1);
+          }
+        }
+        @keyframes fadeInUp {
+          from {
+            opacity: 0;
+            transform: translateY(10px);
+          }
+          to {
+            opacity: 1;
+            transform: translateY(0);
+          }
+        }
+      `;
+      document.head.appendChild(style);
+      
+      document.body.appendChild(shutdownOverlay);
+      
+      // fade in
+      requestAnimationFrame(() => {
+        shutdownOverlay.style.opacity = '1';
+      });
+      
+      // after 2 seconds, close the tab
+      setTimeout(() => {
+        // try to close the window/tab (only closes the current tab/window, not other tabs)
+        // window.close() is safe - it only closes the current window/tab, never other tabs
+        window.close();
+        
+        // if window.close() does not work (browser blocked it), show fallback message
+        setTimeout(() => {
+          // change background to plain color (no dashboard visible)
+          shutdownOverlay.style.background = 'var(--bg)';
+          shutdownOverlay.innerHTML = `
+            <div style="
+              text-align: center;
+              padding: 40px;
+              max-width: 500px;
+              color: var(--text);
+            ">
+              <div style="
+                font-size: 48px;
+                margin-bottom: 24px;
+              ">✓</div>
+              <h1 style="
+                font-size: 24px;
+                font-weight: 600;
+                margin: 0 0 12px 0;
+                color: var(--text);
+              ">CustosEye has been shut down</h1>
+              <p style="
+                font-size: 14px;
+                color: var(--muted);
+                margin: 0 0 8px 0;
+                line-height: 1.6;
+              ">You can safely close this tab now.</p>
+              <p style="
+                font-size: 20px;
+                color: var(--muted);
+                margin: 96px 0 0 0;
+                line-height: 1.6;
+              ">:･ﾟ✧:･.☽˚｡ ⋆｡˚✧</p>
+            </div>
+          `;
+        }, 300);
+      }, 2000);
+    }
+    
     // shutdown button
     const shutdownBtn = document.getElementById('shutdownBtn');
     if (shutdownBtn) {
@@ -412,16 +540,12 @@
           });
           
           if (res.ok) {
-            // show another custom message instead of alert
-            await showCustomAlert('Shutting down CustosEye... Goodbye ✌︎︎');
-            // give server time to shutdown
-            setTimeout(() => {
-              window.location.reload();
-            }, 1000);
+            // show nice shutdown message that auto-dismisses and closes tab
+            showShutdownMessage();
           }
         } catch (err) {
-          // server might already be shutting down
-          console.log('Shutdown initiated');
+          // server might already be shutting down, show message and close anyway
+          showShutdownMessage();
         }
       });
     }

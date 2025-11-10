@@ -325,14 +325,18 @@
       border-left: 3px solid var(--warn);
     }
     .diff-char-removed {
-      background: color-mix(in oklab, var(--bad) 25%, transparent);
+      background: color-mix(in oklab, var(--bad) 30%, transparent);
       text-decoration: line-through;
       color: var(--bad);
+      padding: 1px 2px;
+      border-radius: 2px;
     }
     .diff-char-added {
-      background: color-mix(in oklab, var(--good) 25%, transparent);
+      background: color-mix(in oklab, var(--good) 30%, transparent);
       color: var(--good);
       font-weight: 500;
+      padding: 1px 2px;
+      border-radius: 2px;
     }
     .diff-char-equal {
       background: transparent;
@@ -1014,12 +1018,80 @@
       // Text-based diff (preferred for readable files)
       if (textDiff && textDiff.type === 'text' && textDiff.diff_segments && textDiff.diff_segments.length > 0) {
         const segments = textDiff.diff_segments;
-        let addedCount = 0, removedCount = 0, modifiedCount = 0;
+        let addedCount = 0, removedCount = 0;
         
+        // count actual additions and removals from character-level diffs, not just line counts
         segments.forEach(seg => {
-          if (seg.type === 'added') addedCount += seg.new_lines.length;
-          else if (seg.type === 'removed') removedCount += seg.old_lines.length;
-          else if (seg.type === 'modified') modifiedCount += Math.max(seg.old_lines.length, seg.new_lines.length);
+          if (seg.type === 'added') {
+            // count added lines
+            addedCount += seg.new_lines.length;
+          } else if (seg.type === 'removed') {
+            // count removed lines
+            removedCount += seg.old_lines.length;
+          } else if (seg.type === 'modified') {
+            // for modified segments, count actual character/word additions and removals
+            const oldCharDiffs = seg.old_char_diffs || [];
+            const newCharDiffs = seg.new_char_diffs || [];
+            
+            if (oldCharDiffs.length > 0 && newCharDiffs.length > 0) {
+              // count additions and removals from character-level diffs
+              for (let i = 0; i < Math.max(oldCharDiffs.length, newCharDiffs.length); i++) {
+                if (oldCharDiffs[i] && Array.isArray(oldCharDiffs[i])) {
+                  oldCharDiffs[i].forEach(part => {
+                    if (part && part.type === 'removed' && part.text) {
+                      // count words or characters removed (prefer word count for readability)
+                      const words = part.text.trim().split(/\s+/).filter(w => w.length > 0);
+                      removedCount += words.length > 0 ? words.length : 1;
+                    }
+                  });
+                }
+                if (newCharDiffs[i] && Array.isArray(newCharDiffs[i])) {
+                  newCharDiffs[i].forEach(part => {
+                    if (part && part.type === 'added' && part.text) {
+                      // count words or characters added (prefer word count for readability)
+                      const words = part.text.trim().split(/\s+/).filter(w => w.length > 0);
+                      addedCount += words.length > 0 ? words.length : 1;
+                    }
+                  });
+                }
+              }
+            } else {
+              // fallback: if no character-level diffs, count as line modifications
+              // but try to estimate additions/removals based on line content
+              const oldLines = seg.old_lines || [];
+              const newLines = seg.new_lines || [];
+              const maxLines = Math.max(oldLines.length, newLines.length);
+              
+              for (let i = 0; i < maxLines; i++) {
+                const oldLine = oldLines[i] || '';
+                const newLine = newLines[i] || '';
+                
+                if (oldLine && !newLine) {
+                  // line was removed
+                  const words = oldLine.trim().split(/\s+/).filter(w => w.length > 0);
+                  removedCount += words.length > 0 ? words.length : 1;
+                } else if (!oldLine && newLine) {
+                  // line was added
+                  const words = newLine.trim().split(/\s+/).filter(w => w.length > 0);
+                  addedCount += words.length > 0 ? words.length : 1;
+                } else if (oldLine && newLine && oldLine !== newLine) {
+                  // line was modified - estimate changes
+                  const oldWords = oldLine.trim().split(/\s+/).filter(w => w.length > 0);
+                  const newWords = newLine.trim().split(/\s+/).filter(w => w.length > 0);
+                  const diff = newWords.length - oldWords.length;
+                  if (diff > 0) {
+                    addedCount += diff;
+                  } else if (diff < 0) {
+                    removedCount += Math.abs(diff);
+                  } else {
+                    // same word count, but content changed - count as 1 modification
+                    removedCount += 1;
+                    addedCount += 1;
+                  }
+                }
+              }
+            }
+          }
         });
 
         // Build side-by-side diff with proper alignment
@@ -1074,10 +1146,27 @@
               `;
             }
           } else if (type === 'added') {
-            // Added lines - blank on left, show on right
+            // Added lines - blank on left, show on right with highlighting
             for (let i = 0; i < newLines.length; i++) {
               const newLine = newLines[i];
               const newNum = seg.new_start + i;
+              
+              // check if we have character-level diffs for added lines (from modified segments that became added)
+              const newCharDiffs = seg.new_char_diffs;
+              let newContent = '';
+              
+              if (newCharDiffs && newCharDiffs[i] && Array.isArray(newCharDiffs[i]) && newCharDiffs[i].length > 0) {
+                // use character-level diffs if available
+                newCharDiffs[i].forEach(part => {
+                  if (part && part.text !== undefined && part.text !== null) {
+                    const cls = part.type === 'added' ? 'diff-char-added' : 'diff-char-equal';
+                    newContent += `<span class="${cls}">${esc(String(part.text))}</span>`;
+                  }
+                });
+              } else {
+                // no character-level diffs, highlight entire line as added
+                newContent = `<span class="diff-char-added">${esc(newLine)}</span>`;
+              }
               
               oldLinesHTML += `
                 <div class="diff-line equal">
@@ -1089,7 +1178,7 @@
               newLinesHTML += `
                 <div class="diff-line added">
                   <span class="diff-line-number">${newNum}</span>
-                  <span class="diff-line-content">${esc(newLine)}</span>
+                  <span class="diff-line-content">${newContent}</span>
                 </div>
               `;
             }
@@ -1105,46 +1194,64 @@
               const oldNum = i < oldLines.length ? seg.old_start + i : '';
               const newNum = i < newLines.length ? seg.new_start + i : '';
               
+              // determine stripe class based on change_type for accurate coloring
+              // change_type can be: "addition_only" (green), "removal_only" (red), or "mixed" (warning)
+              const changeType = seg.change_type || 'mixed';
+              let stripeClass = 'modified'; // default to warning color
+              if (changeType === 'addition_only') {
+                stripeClass = 'added'; // green stripe for pure additions
+              } else if (changeType === 'removal_only') {
+                stripeClass = 'removed'; // red stripe for pure removals
+              }
+              // else: keep 'modified' for mixed changes (warning color)
+              
               // Check if we have character-level diffs for this line
-              if (oldCharDiffs[i] && newCharDiffs[i]) {
+              if (oldCharDiffs[i] && newCharDiffs[i] && Array.isArray(oldCharDiffs[i]) && Array.isArray(newCharDiffs[i]) && oldCharDiffs[i].length > 0 && newCharDiffs[i].length > 0) {
                 // Render character-level diff
                 let oldContent = '';
                 let newContent = '';
                 
                 oldCharDiffs[i].forEach(part => {
-                  const cls = part.type === 'removed' ? 'diff-char-removed' : 'diff-char-equal';
-                  oldContent += `<span class="${cls}">${esc(part.text)}</span>`;
+                  if (part && part.text !== undefined && part.text !== null) {
+                    // render all text, including empty strings (spaces, etc.)
+                    const cls = part.type === 'removed' ? 'diff-char-removed' : 'diff-char-equal';
+                    oldContent += `<span class="${cls}">${esc(String(part.text))}</span>`;
+                  }
                 });
                 
                 newCharDiffs[i].forEach(part => {
-                  const cls = part.type === 'added' ? 'diff-char-added' : 'diff-char-equal';
-                  newContent += `<span class="${cls}">${esc(part.text)}</span>`;
+                  if (part && part.text !== undefined && part.text !== null) {
+                    // render all text, including empty strings (spaces, etc.)
+                    const cls = part.type === 'added' ? 'diff-char-added' : 'diff-char-equal';
+                    newContent += `<span class="${cls}">${esc(String(part.text))}</span>`;
+                  }
                 });
                 
+                // use the stripe class from segment type for accurate coloring
                 oldLinesHTML += `
-                  <div class="diff-line modified">
+                  <div class="diff-line ${stripeClass}">
                     <span class="diff-line-number">${oldNum}</span>
-                    <span class="diff-line-content">${oldContent}</span>
+                    <span class="diff-line-content">${oldContent || esc(oldLine)}</span>
                   </div>
                 `;
                 
                 newLinesHTML += `
-                  <div class="diff-line modified">
+                  <div class="diff-line ${stripeClass}">
                     <span class="diff-line-number">${newNum}</span>
-                    <span class="diff-line-content">${newContent}</span>
+                    <span class="diff-line-content">${newContent || esc(newLine)}</span>
                   </div>
                 `;
               } else {
-                // Fallback: show full line as modified
+                // Fallback: show full line with appropriate stripe type
                 oldLinesHTML += `
-                  <div class="diff-line removed">
+                  <div class="diff-line ${stripeClass}">
                     <span class="diff-line-number">${oldNum}</span>
                     <span class="diff-line-content">${esc(oldLine)}</span>
                   </div>
                 `;
                 
                 newLinesHTML += `
-                  <div class="diff-line added">
+                  <div class="diff-line ${stripeClass}">
                     <span class="diff-line-number">${newNum}</span>
                     <span class="diff-line-content">${esc(newLine)}</span>
                   </div>
@@ -1158,7 +1265,6 @@
           <div class="diff-summary-stats" style="margin-top:8px">
             ${addedCount > 0 ? `<div class="diff-stat"><span class="diff-stat-badge added">+${addedCount}</span> <span class="small muted">added</span></div>` : ''}
             ${removedCount > 0 ? `<div class="diff-stat"><span class="diff-stat-badge removed">-${removedCount}</span> <span class="small muted">removed</span></div>` : ''}
-            ${modifiedCount > 0 ? `<div class="diff-stat"><span class="diff-stat-badge modified">~${modifiedCount}</span> <span class="small muted">modified</span></div>` : ''}
           </div>
         `;
         
@@ -1203,41 +1309,160 @@
           `;
         }
         
-        // Formatting changes display - only show actual changes
+        // Formatting changes display - group consecutive changes on adjacent text
         let formattingChangesHTML = '';
         if (textDiff.formatting_changes && textDiff.formatting_changes.length > 0) {
           const formattingChanges = textDiff.formatting_changes;
+          
+          // Configurable limit for formatting changes display (default: 20)
+          const FORMATTING_CHANGES_LIMIT = 6;
+          
+          // group consecutive formatting changes that are on adjacent text segments
+          const groupedChanges = [];
+          let currentGroup = null;
+          
+          formattingChanges.forEach((change, index) => {
+            const changedAttrs = change.changed_attrs || [];
+            const removedAttrs = change.removed_attrs || [];
+            const addedAttrs = change.added_attrs || [];
+            
+            // skip if no actual changes
+            if (changedAttrs.length === 0 && removedAttrs.length === 0 && addedAttrs.length === 0) {
+              return;
+            }
+            
+            // check if this change can be grouped with the previous one
+            // group if they have the same attributes and are likely adjacent text
+            const canGroup = currentGroup && 
+              JSON.stringify(changedAttrs.sort()) === JSON.stringify(currentGroup.changedAttrs.sort()) &&
+              JSON.stringify(removedAttrs.sort()) === JSON.stringify(currentGroup.removedAttrs.sort()) &&
+              JSON.stringify(addedAttrs.sort()) === JSON.stringify(currentGroup.addedAttrs.sort());
+            
+            if (canGroup) {
+              // merge text segments
+              currentGroup.texts.push(change.text || '');
+            } else {
+              // start a new group
+              if (currentGroup) {
+                groupedChanges.push(currentGroup);
+              }
+              currentGroup = {
+                texts: [change.text || ''],
+                changedAttrs: changedAttrs,
+                removedAttrs: removedAttrs,
+                addedAttrs: addedAttrs
+              };
+            }
+          });
+          
+          // add the last group
+          if (currentGroup) {
+            groupedChanges.push(currentGroup);
+          }
+          
+          // Check if we need to show more/less functionality
+          const totalChanges = groupedChanges.length;
+          const hasMore = totalChanges > FORMATTING_CHANGES_LIMIT;
+          const initialChanges = hasMore ? groupedChanges.slice(0, FORMATTING_CHANGES_LIMIT) : groupedChanges;
+          const remainingCount = totalChanges - FORMATTING_CHANGES_LIMIT;
+          
+          // Generate unique ID for this diff's formatting changes panel
+          const formattingPanelId = 'formatting-changes-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9);
+          const hiddenChangesId = formattingPanelId + '-hidden';
+          const toggleButtonId = formattingPanelId + '-toggle';
+          
           formattingChangesHTML = `
             <div style="margin:12px 0; padding:12px; background:var(--panel); border:1px solid var(--border); border-radius:8px;">
-              <div style="font-weight:600; margin-bottom:8px;">🎨 Formatting Changes</div>
-              ${formattingChanges.map(change => {
-                const changedAttrs = change.changed_attrs || [];
-                const removedAttrs = change.removed_attrs || [];
-                const addedAttrs = change.added_attrs || [];
-                
-                // Only show attributes that actually changed
-                const changes = [];
-                if (changedAttrs.length > 0) {
-                  changes.push(...changedAttrs.map(attr => `<span style="color:var(--warning);">${esc(attr)}</span>`));
-                }
-                if (removedAttrs.length > 0) {
-                  changes.push(...removedAttrs.map(attr => `<span style="color:var(--bad);">Removed: ${esc(attr)}</span>`));
-                }
-                if (addedAttrs.length > 0) {
-                  changes.push(...addedAttrs.map(attr => `<span style="color:var(--good);">Added: ${esc(attr)}</span>`));
-                }
-                
-                if (changes.length === 0) return ''; // Skip if no actual changes
-                
-                return `
-                  <div style="margin:8px 0; padding:8px; background:var(--rowAlt); border-radius:4px;">
-                    <div style="font-weight:500; margin-bottom:4px;">Text: "${esc(change.text || '').substring(0, 50)}${(change.text || '').length > 50 ? '...' : ''}"</div>
-                    <div class="small" style="margin-top:4px;">
-                      ${changes.join(' | ')}
+              <div style="font-weight:600; margin-bottom:8px;">🎨 Formatting Changes ${hasMore ? `(${totalChanges} total)` : `(${totalChanges})`}</div>
+              <div id="${formattingPanelId}">
+                ${initialChanges.map((group, idx) => {
+                  // combine all text segments in the group
+                  const combinedText = group.texts.join('');
+                  const changedAttrs = group.changedAttrs || [];
+                  const removedAttrs = group.removedAttrs || [];
+                  const addedAttrs = group.addedAttrs || [];
+                  
+                  // build change descriptions
+                  const changes = [];
+                  if (changedAttrs.length > 0) {
+                    changes.push(...changedAttrs.map(attr => `<span style="color:var(--warn);">${esc(attr)}</span>`));
+                  }
+                  if (removedAttrs.length > 0) {
+                    changes.push(...removedAttrs.map(attr => `<span style="color:var(--bad);">Removed: ${esc(attr)}</span>`));
+                  }
+                  if (addedAttrs.length > 0) {
+                    changes.push(...addedAttrs.map(attr => `<span style="color:var(--good);">Added: ${esc(attr)}</span>`));
+                  }
+                  
+                  if (changes.length === 0) return ''; // Skip if no actual changes
+                  
+                  return `
+                    <div style="margin:8px 0; padding:8px; background:var(--rowAlt); border-radius:4px;">
+                      <div style="font-weight:500; margin-bottom:4px;">Text: "${esc(combinedText).substring(0, 100)}${combinedText.length > 100 ? '...' : ''}"</div>
+                      <div class="small" style="margin-top:4px;">
+                        ${changes.join(' | ')}
+                      </div>
                     </div>
+                  `;
+                }).filter(html => html && html !== '').join('')}
+                ${hasMore ? `
+                  <div id="${hiddenChangesId}" style="display:none;">
+                    ${groupedChanges.slice(FORMATTING_CHANGES_LIMIT).map((group, idx) => {
+                      // combine all text segments in the group
+                      const combinedText = group.texts.join('');
+                      const changedAttrs = group.changedAttrs || [];
+                      const removedAttrs = group.removedAttrs || [];
+                      const addedAttrs = group.addedAttrs || [];
+                      
+                      // build change descriptions
+                      const changes = [];
+                      if (changedAttrs.length > 0) {
+                        changes.push(...changedAttrs.map(attr => `<span style="color:var(--warn);">${esc(attr)}</span>`));
+                      }
+                      if (removedAttrs.length > 0) {
+                        changes.push(...removedAttrs.map(attr => `<span style="color:var(--bad);">Removed: ${esc(attr)}</span>`));
+                      }
+                      if (addedAttrs.length > 0) {
+                        changes.push(...addedAttrs.map(attr => `<span style="color:var(--good);">Added: ${esc(attr)}</span>`));
+                      }
+                      
+                      if (changes.length === 0) return ''; // Skip if no actual changes
+                      
+                      return `
+                        <div style="margin:8px 0; padding:8px; background:var(--rowAlt); border-radius:4px;">
+                          <div style="font-weight:500; margin-bottom:4px;">Text: "${esc(combinedText).substring(0, 100)}${combinedText.length > 100 ? '...' : ''}"</div>
+                          <div class="small" style="margin-top:4px;">
+                            ${changes.join(' | ')}
+                          </div>
+                        </div>
+                      `;
+                    }).filter(html => html && html !== '').join('')}
                   </div>
-                `;
-              }).filter(html => html && html !== '').join('')}
+                  <div style="margin-top:8px; text-align:center;">
+                    <button id="${toggleButtonId}" onclick="
+                      const hidden = document.getElementById('${hiddenChangesId}');
+                      const btn = document.getElementById('${toggleButtonId}');
+                      const remainingCount = ${remainingCount};
+                      if (hidden.style.display === 'none') {
+                        hidden.style.display = 'block';
+                        btn.textContent = 'Show less';
+                      } else {
+                        hidden.style.display = 'none';
+                        btn.textContent = 'Show more (' + remainingCount + ' more)';
+                      }
+                    " style="
+                      padding:6px 12px;
+                      background:var(--accent);
+                      color:var(--bg);
+                      border:none;
+                      border-radius:4px;
+                      cursor:pointer;
+                      font-size:13px;
+                      font-weight:500;
+                    ">Show more (${remainingCount} more)</button>
+                  </div>
+                ` : ''}
+              </div>
             </div>
           `;
         }
@@ -2344,6 +2569,134 @@
       });
     }
     
+    // show a non-blocking shutdown message that auto-dismisses and closes the tab
+    function showShutdownMessage() {
+      // create a nice shutdown overlay
+      const shutdownOverlay = document.createElement('div');
+      shutdownOverlay.id = 'shutdownOverlay';
+      shutdownOverlay.style.cssText = `
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background: rgba(11, 15, 20, 0.95);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 99999;
+        opacity: 0;
+        transition: opacity 0.3s ease-in;
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial;
+      `;
+      
+      shutdownOverlay.innerHTML = `
+        <div style="
+          text-align: center;
+          padding: 40px;
+          max-width: 500px;
+          color: var(--text);
+        ">
+          <div style="
+            font-size: 48px;
+            margin-bottom: 24px;
+            animation: fadeInScale 0.4s ease-out;
+          ">👋</div>
+          <h1 style="
+            font-size: 28px;
+            font-weight: 600;
+            margin: 0 0 12px 0;
+            color: var(--text);
+            animation: fadeInUp 0.5s ease-out 0.1s both;
+          ">Thank you for using CustosEye</h1>
+          <p style="
+            font-size: 16px;
+            color: var(--muted);
+            margin: 0;
+            line-height: 1.6;
+            animation: fadeInUp 0.5s ease-out 0.2s both;
+          ">Shutting down safely...</p>
+        </div>
+      `;
+      
+      // add keyframe animations
+      const style = document.createElement('style');
+      style.textContent = `
+        @keyframes fadeInScale {
+          from {
+            opacity: 0;
+            transform: scale(0.8);
+          }
+          to {
+            opacity: 1;
+            transform: scale(1);
+          }
+        }
+        @keyframes fadeInUp {
+          from {
+            opacity: 0;
+            transform: translateY(10px);
+          }
+          to {
+            opacity: 1;
+            transform: translateY(0);
+          }
+        }
+      `;
+      document.head.appendChild(style);
+      
+      document.body.appendChild(shutdownOverlay);
+      
+      // fade in
+      requestAnimationFrame(() => {
+        shutdownOverlay.style.opacity = '1';
+      });
+      
+      // after 2 seconds, close the tab
+      setTimeout(() => {
+        // try to close the window/tab (only closes the current tab/window, not other tabs)
+        // window.close() is safe - it only closes the current window/tab, never other tabs
+        window.close();
+        
+        // if window.close() does not work (browser blocked it), show fallback message
+        setTimeout(() => {
+          // change background to plain color (no dashboard visible)
+          shutdownOverlay.style.background = 'var(--bg)';
+          shutdownOverlay.innerHTML = `
+            <div style="
+              text-align: center;
+              padding: 40px;
+              max-width: 500px;
+              color: var(--text);
+            ">
+              <div style="
+                font-size: 48px;
+                margin-bottom: 24px;
+              ">✓</div>
+              <h1 style="
+                font-size: 24px;
+                font-weight: 600;
+                margin: 0 0 12px 0;
+                color: var(--text);
+              ">CustosEye has been shut down</h1>
+              <p style="
+                font-size: 14px;
+                color: var(--muted);
+                margin: 0 0 8px 0;
+                line-height: 1.6;
+              ">You can safely close this tab now.</p>
+              <p style="
+                font-size: 20px;
+                color: var(--muted);
+                margin: 96px 0 0 0;
+                line-height: 1.6;
+              ">:･ﾟ✧:･.☽˚｡ ⋆｡˚✧</p>
+            </div>
+          `;
+        }, 300);
+      }, 2000);
+    }
+    
     // logout button: sign out and optionally shutdown the program
     document.getElementById('logoutBtn')?.addEventListener('click', async () => {
       const action = await showLogoutDialog('What would you like to do?');
@@ -2361,13 +2714,9 @@
         });
         const result = await res.json();
         if (result.success) {
-          if (action === 'shutdown' || (result.message && result.message.includes('Shutting down'))) {
-            // show shutdown message
-            await showCustomAlert('Shutting down CustosEye...');
-            // give server time to shutdown
-            setTimeout(() => {
-              window.location.href = '/auth/login';
-            }, 1000);
+          if (action === 'shutdown' || result.shutdown) {
+            // show nice shutdown message that auto-dismisses and closes tab
+            showShutdownMessage();
           } else if (result.redirect) {
             window.location.href = result.redirect;
           } else {
@@ -2375,9 +2724,14 @@
           }
         }
       } catch (err) {
-        console.error('Logout error:', err);
-        // if logout fails, just redirect anyway
-        window.location.href = '/auth/login';
+        // if logout fails but it was a shutdown, show message and close
+        if (action === 'shutdown') {
+          showShutdownMessage();
+        } else {
+          console.error('Logout error:', err);
+          // if logout fails, just redirect anyway
+          window.location.href = '/auth/login';
+        }
       }
     });
   </script>
