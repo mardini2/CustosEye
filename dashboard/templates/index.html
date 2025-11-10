@@ -53,7 +53,7 @@
     .btn { background:var(--accent); color:white; border:0; padding:8px 12px; border-radius:8px; cursor:pointer; }
     .list { margin-top:12px; border-top:1px dashed var(--border); transition:opacity 0.2s ease-in-out; }
     .list.updating { opacity:0.7; }
-    .row { display:grid; grid-template-columns:108px 100px 1fr; gap:14px; padding:10px 4px; border-bottom:1px solid var(--border); background:var(--row); }
+    .row { display:grid; grid-template-columns:108px 100px 1fr; gap:14px; padding:10px 4px; border-bottom:1px solid var(--border); background:var(--row); align-items:start; }
     .row:nth-child(odd) { background:var(--rowAlt); }
     .row.new-row { animation:fadeInRow 0.2s ease-in; }
     @keyframes fadeInRow {
@@ -80,6 +80,8 @@
     .muted { color:var(--muted); }
     .count { font-weight:600; }
     .nowrap { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    /* event content: allows wrapping with proper line spacing and word breaking for long text */
+    .event-content { overflow-wrap: anywhere; word-break: break-word; white-space: normal; line-height: 1.5; }
 
     /* process tree */
     .tree { margin-top:12px; }
@@ -408,7 +410,7 @@
     <div class="wrap">
       <div class="title" style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
         <div style="display:flex; align-items:center; gap:10px;">
-          <img src="/favicon.ico" alt="" style="width:30px;height:30px;border-radius:4px;opacity:.9" />
+          <img src="/favicon.ico" alt="" style="width:35px;height:35px;border-radius:4px;opacity:.9" />
           CustosEye <span class="subtitle">local dashboard</span>
         </div>
         <div style="display:flex; align-items:center; gap:8px;">
@@ -761,7 +763,7 @@
         <div class="row">
           <div class="nowrap"><span class="lvl ${lvl}" title="${lvl === 'critical' ? 'Critical' : lvl === 'warning' ? 'Warning' : 'Info'}">${lvl.toUpperCase()}</span>${seenBadge}</div>
           <div class="mono muted nowrap">${ts}</div>
-          <div class="mono nowrap">${displayReason.includes('✔ Hash verified') ? '<span style="color:var(--good);" title="Hash verified">' + displayReason + '</span>' : displayReason}${acceptanceText ? ' — <span style="color:var(--good);" title="Change marked as safe">' + acceptanceText + '</span>' : ''} | source=${src} ${ident}${trust}</div>
+          <div class="mono event-content">${displayReason.includes('✔ Hash verified') ? '<span style="color:var(--good);" title="Hash verified">' + displayReason + '</span>' : displayReason}${acceptanceText ? ' — <span style="color:var(--good);" title="Change marked as safe">' + acceptanceText + '</span>' : ''} | source=${src} ${ident}${trust}</div>
         </div>`;
     }
 
@@ -778,7 +780,8 @@
     const byLevel = data.filter(ev => state.levels[(ev.level || 'info').toLowerCase()]);
     const q = state.q;
     const byQuery = q ? byLevel.filter(ev => {
-        const s = (ev.reason||'')+' '+(ev.source||'')+' '+(ev.name||'')+' '+(ev.pid||'')+' '+(ev.path||'')+' '+(ev.cmdline||'');
+        // include CSC fields (csc_verdict, csc_class, csc_confidence) in search
+        const s = (ev.reason||'')+' '+(ev.source||'')+' '+(ev.name||'')+' '+(ev.pid||'')+' '+(ev.path||'')+' '+(ev.cmdline||'')+' '+(ev.csc_verdict||'')+' '+(ev.csc_class||'')+' '+(ev.csc_confidence||'');
         return s.toLowerCase().includes(q);
     }) : byLevel;
 
@@ -1816,11 +1819,12 @@
     } catch (e) {}
     }
 
-    // filter process tree by search query: matches PID, name, verdict, or class
+    // filter process tree by search query: matches PID, name, verdict, class, confidence, path, cmdline
     function filterTreeList(list, q) {
       if (!q) return list;
       function match(n) {
-        const s = `${n.pid} ${n.name} ${n.csc_verdict||''} ${n.csc_class||''}`.toLowerCase();
+        // include all searchable fields: PID, name, CSC verdict/class/confidence, path, cmdline
+        const s = `${n.pid} ${n.name || ''} ${n.csc_verdict || ''} ${n.csc_class || ''} ${n.csc_confidence || ''} ${n.path || ''} ${n.cmdline || ''}`.toLowerCase();
         return s.includes(q);
       }
       function filterNode(n) {

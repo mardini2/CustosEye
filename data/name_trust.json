@@ -7,6 +7,7 @@
   "csrss.exe": ["trusted", "system", 0.98],
   "lsass.exe": ["trusted", "system", 0.98],
   "svchost.exe": ["trusted", "system", 0.95],
+  "svchost.exe (DcomLaunch)": ["trusted", "system", 1.0],
   "smss.exe": ["trusted", "system", 0.95],
   "fontdrvhost.exe": ["trusted", "system", 0.95],
   "dwm.exe": ["trusted", "system", 0.95],
@@ -18,6 +19,57 @@
   "applicationframehost.exe": ["trusted", "system", 0.90],
   "lockapp.exe": ["trusted", "system", 0.90],
   "startmenuexperiencehost.exe": ["trusted", "system", 0.95],
+  "SearchFilterHost.exe": ["trusted", "system", 0.90],
+  "perfhost.exe": ["trusted", "system", 0.90],
+  "LogonUI.exe": ["trusted", "system", 0.95],
+  "werfault.exe": ["trusted", "system", 0.90],
+  "werfaultsecure.exe": ["trusted", "system", 0.90],
+  "taskhostex.exe": ["trusted", "system", 0.92],
+  "perfmon.exe": ["trusted", "system", 0.90],
+  "NgcCtnrSvc.exe": ["trusted", "system", 0.92],
+  "NgcSvc.exe": ["trusted", "system", 0.92],
+  "SecurityHealthHost.exe": ["trusted", "system", 0.95],
+  "AssignedAccessLockApp.exe": ["trusted", "system", 0.85],
+  "CredentialUIBroker.exe": ["trusted", "system", 0.92],
+  "SystemSettingsBroker.exe": ["trusted", "system", 0.90],
+  "UserOOBEBroker.exe": ["trusted", "system", 0.90],
+  "SearchApp.exe": ["trusted", "system", 0.90],
+  "Widgets.exe": ["trusted", "system", 0.88],
+  "WidgetService.exe": ["trusted", "system", 0.88],
+  
+
+  "svchost.exe (AudioEndpointBuilder)": ["trusted", "system", 1.0],
+  "svchost.exe (AudioSrv)": ["trusted", "system", 1.0],
+  "conhost.exe": ["trusted", "system", 0.95],
+  "spoolsv.exe": ["trusted", "system", 0.90],
+  "audiodg.exe": ["trusted", "system", 0.90],
+  "shellexperiencehost.exe": ["trusted", "system", 0.95],
+  "securityhealthservice.exe": ["trusted", "system", 0.95],
+  "securityhealthsystray.exe": ["trusted", "system", 0.95],
+  "textinputhost.exe": ["trusted", "system", 0.90],
+  "wlanext.exe": ["trusted", "system", 0.90],
+  "aggregatorhost.exe": ["trusted", "system", 0.90],
+  "appinfo.exe": ["trusted", "system", 0.95],
+  "wslservice.exe": ["trusted", "dev_tool", 0.90],
+  "runSW.exe": ["trusted", "utility", 0.85],
+  "SwUSB.exe": ["trusted", "utility", 0.85],
+
+
+  "msiexec.exe": ["trusted", "utility", 0.85],
+  "OfficeClickToRun.exe": ["trusted", "popular_app", 0.90],
+  "GoogleUpdate.exe": ["trusted", "utility", 0.85],
+  "GoogleCrashHandler.exe": ["trusted", "utility", 0.80],
+  "MicrosoftEdgeUpdate.exe": ["trusted", "utility", 0.85],
+  "wermgr.exe": ["trusted", "system", 0.88],
+  "OneDriveStandaloneUpdater.exe": ["trusted", "utility", 0.85],
+  "GoogleCrashHandler64.exe": ["trusted", "utility", 0.80],
+  "GameBarFTServer.exe": ["trusted", "popular", 0.85],
+  "mstsc.exe": ["trusted", "utility", 0.85], 
+  "MsSense.exe": ["trusted", "security", 0.92],
+  "vmms.exe": ["trusted", "dev_tool", 0.88],
+  "EdgeGameAssist.exe": ["trusted", "utility", 0.80],
+
+
 
   "searchhost.exe": ["trusted", "system", 0.90],
   "searchindexer.exe": ["trusted", "system", 0.90],
@@ -31,6 +83,25 @@
   "wudfhost.exe": ["trusted", "system", 0.90],
 
 
+  "tiworker.exe": ["trusted", "system", 0.95],
+  "trustedinstaller.exe": ["trusted", "system", 0.95],
+  "usocoreworker.exe": ["trusted", "system", 0.90],
+  "musnotification.exe": ["trusted", "system", 0.90],
+  "musnotificationux.exe": ["trusted", "system", 0.90],
+  "wsappx.exe": ["trusted", "system", 0.90],
+
+
+  "msedgewebview2.exe": ["trusted", "popular", 0.95],
+  "appmodel.exe": ["trusted", "system", 0.90],
+  "appxsvc.exe": ["trusted", "system", 0.90],
+
+
+  "wwahost.exe": ["trusted", "system", 0.85],
+  "backgroundtransferhost.exe": ["trusted", "system", 0.88],
+  "compliancecommunicationclient.exe": ["trusted", "system", 0.88],
+  "coredatastorage.exe": ["trusted", "system", 0.88],
+
+
   "igfxcuiservicen.exe": ["trusted", "utility", 0.85],
   "igfxemn.exe": ["trusted", "utility", 0.85],
   "nvcontainer.exe": ["trusted", "utility", 0.90],
@@ -38,6 +109,19 @@
   "nvidia web helper.exe": ["trusted", "utility", 0.85],
   "intelsoftwareassetmanagerservice.exe": ["trusted", "utility", 0.85],
   "windowspackagemanagerserver.exe": ["trusted", "utility", 0.85],
+
+
+  "nvdisplay.container.exe": ["trusted", "utility", 0.90],
+  "intelcphdcpsvc.exe": ["trusted", "utility", 0.88],
+  "intelcphecs.exe": ["trusted", "utility", 0.88],
+  "igcctray.exe": ["trusted", "utility", 0.85],
+  "lms.exe": ["trusted", "utility", 0.85],
+  "IntelGraphicsCommandCenter.exe": ["trusted", "utility", 0.88],
+
+
+  "winword.exe": ["trusted", "popular", 0.95],
+  "onenote.exe": ["trusted", "popular", 0.90],
+  "onenotem.exe": ["trusted", "popular", 0.90],
 
 
   "onedrive.exe": ["trusted", "popular", 0.95],
@@ -92,6 +176,7 @@
   "acrobatreader.exe": ["trusted", "popular", 0.90],
   "illustrator.exe": ["trusted", "popular", 0.90],
   "after effects.exe": ["trusted", "popular", 0.90],
+  "armsvc.exe": ["trusted", "popular_app", 0.90],
 
   
   "steam.exe": ["trusted", "popular", 0.95],
@@ -101,6 +186,13 @@
   "riotclientservices.exe": ["trusted", "popular", 0.90],
   "uplay.exe": ["trusted", "popular", 0.89],
   "xboxappservices.exe": ["trusted", "popular", 0.95],
+  "gamingservices.exe": ["trusted", "popular", 0.90],
+  "xboxpcappft.exe": ["trusted", "popular", 0.90],
+  "GameBar.exe": ["trusted", "popular", 0.85],
+  "GameBarPresenceWriter.exe": ["trusted", "popular", 0.85],
+
+
+  "PhoneExperienceHost.exe": ["trusted", "system", 0.85],
 
  
   "squirrel.exe": ["trusted", "utility", 0.90],
@@ -118,45 +210,81 @@
   "cleanmgr.exe": ["trusted", "utility", 0.85],
   "defrag.exe": ["trusted", "utility", 0.85],
 
+  "WindowsTerminal.exe": ["trusted", "dev_tool", 0.90],
+  "OpenConsole.exe": ["trusted", "dev_tool", 0.88],
+  "python.exe": ["trusted", "dev_tool", 0.80],
+  "node.exe": ["trusted", "dev_tool", 0.85],
+  "adb.exe": ["trusted", "dev_tool", 0.85],
+  "ssh.exe": ["trusted", "dev_tool", 0.85],
+  "ssh-agent.exe": ["trusted", "dev_tool", 0.85],
+  "msbuild.exe": ["trusted", "dev_tool", 0.88],
+  "dotnet.exe": ["trusted", "dev_tool", 0.88],
+
+
   "cursor.exe": ["trusted", "dev_tool", 0.93],
+
 
   "wallpaper32.exe": ["trusted", "popular_app", 0.87],
   "wallpaper64.exe": ["trusted", "popular_app", 0.87],
   "wallpaperservice32.exe": ["trusted", "utility", 0.86],
   "wallpaperservice64.exe": ["trusted", "utility", 0.86],
 
+
   "windhawk.exe": ["trusted", "utility", 0.88],
+
+
+  "vmcompute.exe": ["trusted", "dev_tool", 0.90],
+  "vmwp.exe": ["trusted", "dev_tool", 0.90],
+  "vmmem.exe": ["trusted", "dev_tool", 0.88],
+  "vmmemWSL.exe": ["trusted", "dev_tool", 0.88],
+
 
   "acrobatnotificationclient.exe": ["trusted", "popular_app", 0.90],
   "adobecollabsync.exe": ["trusted", "popular_app", 0.82],
   "adobeupdateservice.exe": ["trusted", "popular_app", 0.90],
 
+
   "applemobiledeviceservice.exe": ["trusted", "utility", 0.90],
   "mdnsresponder.exe": ["trusted", "utility", 0.75],
+
 
   "omencap.exe": ["trusted", "utility", 0.82],
   "omengaminghub.exe": ["trusted", "utility", 0.85],
   "omenkeyboardremaplauncher.exe": ["trusted", "utility", 0.82],
   "omenkeyboardremapper.exe": ["trusted", "utility", 0.82],
 
+  "Lenovo.Group": ["trusted", "oem", 0.82],
   "lenovovantageservice.exe": ["trusted", "utility", 0.82],
   "lenovoutilityservice.exe": ["trusted", "utility", 0.82],
   "lenovoservicebridgeaddin.exe": ["trusted", "utility", 0.82],
+  "Lenovo.Modern.ImController.exe": ["trusted", "utility", 0.85],
   "fnHotkeyUtility.exe": ["trusted", "system", 0.90],
+  "LenovoVantage-(SmartPanelAddin).exe": ["trusted", "utility", 0.82],
+  "LenovoVantage-(LenovoAuthenticationAddin).exe": ["trusted", "utility", 0.82],
+  "SystemNotificationPlugin.exe": ["trusted", "utility", 0.82],
+  "LenovoVantage-(LenovoGamingSystemAddin).exe": ["trusted", "utility", 0.82],
+  "LenovoVantage-(SmartDisplayAddin).exe": ["trusted", "utility", 0.82],
+  "LenovoUtilityHost.exe": ["trusted", "utility", 0.82],
+  "UDClientService.exe": ["trusted", "utility", 0.82],
+
+
 
   "chromium.exe": ["trusted", "popular", 0.90],
   "safari.exe": ["trusted", "popular", 0.95],
+
 
   "goggalaxy.exe": ["trusted", "popular", 0.82],
   "eaapp.exe": ["trusted", "popular", 0.85],
   "rockstarservice.exe": ["trusted", "popular", 0.90],
   "bethesdanetlauncher.exe": ["trusted", "popular", 0.87],
 
+
   "teamspeak.exe": ["trusted", "popular", 0.88],
   "mumble.exe": ["trusted", "popular", 0.83],
   "element.exe": ["trusted", "popular", 0.85],
   "telegram.exe": ["trusted", "popular", 0.90],
   "whatsapp.exe": ["trusted", "popular", 0.90],
+
 
   "zoomus.exe": ["trusted", "popular", 0.89],
   "anydesk.exe": ["trusted", "utility", 0.60],
@@ -172,6 +300,7 @@
   "esetservice.exe": ["trusted", "security", 0.92],
   "bdservicehost.exe": ["trusted", "security", 0.92],
 
+
   "vmware.exe": ["trusted", "dev_tool", 0.90],
   "vmware-vmx.exe": ["trusted", "dev_tool", 0.90],
   "vboxsvc.exe": ["trusted", "dev_tool", 0.90],
@@ -186,18 +315,66 @@
   "dragoncenter.exe": ["trusted", "utility", 0.86],
   "lghub.exe": ["trusted", "utility", 0.86],
 
+
   "hpscan.exe": ["trusted", "utility", 0.88],
   "hpprint.exe": ["trusted", "utility", 0.88],
   "epsonstatusmonitor.exe": ["trusted", "utility", 0.87],
   "canonij.exe": ["trusted", "utility", 0.87],
+
 
   "blender.exe": ["trusted", "popular", 0.90],
   "krita.exe": ["trusted", "popular", 0.88],
   "davinciresolve.exe": ["trusted", "popular", 0.90],
   "lightroom.exe": ["trusted", "popular", 0.90],
 
+
+  "ClipSVC.exe": ["trusted", "system", 0.88],
+  "wsreset.exe": ["trusted", "system", 0.85],
+  "cloudexperiencehostbroker.exe": ["trusted", "system", 0.85],
+  "peopleapp.exe": ["trusted", "system", 0.80],
+
+
   "riotclientanticheat.exe": ["trusted", "driver", 0.75],
   "vanguard.exe": ["trusted", "driver", 0.70],
   "battlEye.exe": ["trusted", "driver", 0.72],
-  "eaclauncher.exe": ["trusted", "driver", 0.72]
+  "eaclauncher.exe": ["trusted", "driver", 0.72],
+
+
+  "LsaIso.exe": ["trusted", "system", 0.95],
+  "MemCompression": ["trusted", "system", 0.95],
+  "MpDefenderCoreService.exe": ["trusted", "system", 0.90],
+
+
+  "lghub_updater.exe": ["trusted", "utility", 0.85],
+  "esif_uf.exe": ["trusted", "utility", 0.85],
+  "HPSIsvc.exe": ["trusted", "utility", 0.82],
+  "OneApp.IGCC.WinService.exe": ["trusted", "utility", 0.88],
+
+
+  "jhi_service.exe": ["trusted", "utility", 0.85],
+  "NahimicService.exe": ["trusted", "utility", 0.82],
+  "PresentationFontCache.exe": ["trusted", "system", 0.90],
+  "logi_lamparray_service.exe": ["trusted", "utility", 0.82],
+  "RtkAudUService64.exe": ["trusted", "utility", 0.85],
+  "TbtP2pShortcutService.exe": ["trusted", "utility", 0.82],
+  "WMIRegistrationService.exe": ["trusted", "utility", 0.82],
+
+
+  "alloy-windows-amd64.exe": ["trusted", "utility", 0.90],
+  "alloy-service-windows-amd64.exe": ["trusted", "utility", 0.88],
+  "grafana-agent.exe": ["trusted", "utility", 0.88],
+  "promtail.exe": ["trusted", "utility", 0.85],
+
+
+  "AppActions.exe": ["trusted", "system", 0.90],
+  "Locator.exe": ["trusted", "system", 0.85],
+  "gamingservicesnet.exe": ["trusted", "popular", 0.90],
+  "Tobii.Service.exe": ["trusted", "utility", 0.85],
+  "NgcIso.exe": ["trusted", "system", 0.92],
+  "CrossDeviceResume.exe": ["trusted", "system", 0.90],
+  "LSB.exe": ["trusted", "utility", 0.90],
+
+
+  "lovelace.exe": ["caution", "unknown", 0.60],
+  "(unknown)": ["caution", "unknown", 0.50]
 }
