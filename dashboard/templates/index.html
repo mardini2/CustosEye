@@ -1470,39 +1470,6 @@
           `;
         }
         
-        // Images display (baseline and current)
-        let imagesDisplayHTML = '';
-        if (textDiff.is_office && (textDiff.images_baseline?.length > 0 || textDiff.images_current?.length > 0)) {
-          const baselineImages = textDiff.images_baseline || [];
-          const currentImages = textDiff.images_current || [];
-          imagesDisplayHTML = `
-            <div style="margin:12px 0; padding:12px; background:var(--panel); border:1px solid var(--border); border-radius:8px;">
-              <div style="font-weight:600; margin-bottom:8px;">📷 Images in Document</div>
-              <div style="display:grid; grid-template-columns: 1fr 1fr; gap:12px;">
-                <div>
-                  <div class="small muted" style="margin-bottom:8px;"><b>Original (Baseline):</b> ${baselineImages.length} image(s)</div>
-                  ${baselineImages.map(img => `
-                    <div style="margin:8px 0; padding:8px; background:var(--rowAlt); border-radius:4px; border:1px solid var(--border);">
-                      <div class="small mono" style="font-weight:500;">${esc(img.name || 'Unknown')}</div>
-                      <div class="small muted">Size: ${bytesHuman(img.size || 0)}</div>
-                      ${img.hash ? `<div class="small mono muted">Hash: ${esc(img.hash)}</div>` : ''}
-                    </div>
-                  `).join('')}
-                </div>
-                <div>
-                  <div class="small muted" style="margin-bottom:8px;"><b>Current (Changed):</b> ${currentImages.length} image(s)</div>
-                  ${currentImages.map(img => `
-                    <div style="margin:8px 0; padding:8px; background:var(--rowAlt); border-radius:4px; border:1px solid var(--border);">
-                      <div class="small mono" style="font-weight:500;">${esc(img.name || 'Unknown')}</div>
-                      <div class="small muted">Size: ${bytesHuman(img.size || 0)}</div>
-                      ${img.hash ? `<div class="small mono muted">Hash: ${esc(img.hash)}</div>` : ''}
-                    </div>
-                  `).join('')}
-                </div>
-              </div>
-            </div>
-          `;
-        }
 
         // Add "Change is OK" button
         const changeIsOKButton = `
@@ -1531,7 +1498,6 @@
             ${statsHTML}
             ${imageChangesHTML}
             ${formattingChangesHTML}
-            ${imagesDisplayHTML}
             ${changeIsOKButton}
             <div class="diff-container">
               <div class="diff-side">

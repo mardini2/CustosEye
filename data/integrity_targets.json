@@ -2,25 +2,25 @@
   {
     "path": "C:/Users/alimm/Desktop/College/Concept Overview.docx",
     "rule": "sha256",
-    "sha256": "4CA96448E5BE2381757270CB3DAD88E6AB8D787ABF0849736C8B35C0E57BD4B7",
+    "sha256": "5F4E09647D62474455759AD22F1EF3DE33607908D97C410490A0359FC3B3943E",
     "last_result": "CHANGED",
     "baseline_blob": {
-      "sha256": "4CA96448E5BE2381757270CB3DAD88E6AB8D787ABF0849736C8B35C0E57BD4B7",
-      "size": 24507,
-      "stored_path": "C:\\Users\\alimm\\source\\repos\\CustosEye\\data\\baselines\\4C\\A9\\4CA96448E5BE2381757270CB3DAD88E6AB8D787ABF0849736C8B35C0E57BD4B7\\Concept Overview.docx",
-      "created_at": 1762806078
+      "sha256": "5F4E09647D62474455759AD22F1EF3DE33607908D97C410490A0359FC3B3943E",
+      "size": 24303,
+      "stored_path": "C:\\Users\\alimm\\source\\repos\\CustosEye\\data\\baselines\\5F\\4E\\5F4E09647D62474455759AD22F1EF3DE33607908D97C410490A0359FC3B3943E\\Concept Overview.docx",
+      "created_at": 1762807402
     },
     "chunks": {
       "algo": "sha256",
       "chunk_size": 4096,
-      "size": 24507,
+      "size": 24303,
       "hashes": [
-        "22FD58D440719A5166143953AE764AEAF664A799AB7CF9B78CDE99AFEC58366D",
-        "E2160604DFDE0F57ECDEB95301549C3D4E099D36ADCA827B7C672A5CC8C046B5",
-        "76812D03EB42B6171A2CC97C25FFE55C1DE45C9056C08F487935DFD10C060229",
-        "B08F3AB0027934BDE13288498777DAAFD4986289776B8D357C92FABAB3411D00",
-        "75837A779DE734194488E169A2E68714653EEDDC8C942AB39C5932448E1AD764",
-        "B360DC1ACDA0275E8D8D3DE691BFAC9239EC784813150D57829098EFCBEEB468"
+        "81A44F74DF74BE76FF74A70291E643709959ED0D5632F899D9A60FC22C6691FD",
+        "166D2EB4CB2A180D45E492128A7208361DD8838BB169B7227CF8C4CFCD7310BF",
+        "E9A33064F3E94AF54960B8A22CFEF1A1C7D31A63A8ED849E5E2D42D4A3DAF2EA",
+        "41A535399CDD5933944F98EFEF80E0CF231C7DE4101E156333CA1951B817C077",
+        "3F1F275E4AF62EEDF1FA7AFBE8AC2D69A965403FF2FF8B05C38314384584BE92",
+        "1373BB3714A4A873A28AF13DD04FC4FE18F7C531A149779AC5B098E5F8C36C54"
       ]
     },
     "zip_manifest": {
@@ -35,8 +35,8 @@
         "date": 19800101
       },
       "word/document.xml": {
-        "size": 63998,
-        "crc": 4125006065,
+        "size": 59503,
+        "crc": 915886630,
         "date": 19800101
       },
       "word/_rels/document.xml.rels": {
@@ -50,8 +50,8 @@
         "date": 19800101
       },
       "word/settings.xml": {
-        "size": 11431,
-        "crc": 4119310689,
+        "size": 11795,
+        "crc": 816113507,
         "date": 19800101
       },
       "word/numbering.xml": {
@@ -76,12 +76,12 @@
       },
       "docProps/core.xml": {
         "size": 751,
-        "crc": 391842791,
+        "crc": 395597656,
         "date": 19800101
       },
       "docProps/app.xml": {
         "size": 995,
-        "crc": 3654049486,
+        "crc": 3697245368,
         "date": 19800101
       }
     }
