@@ -408,7 +408,7 @@
     <div class="wrap">
       <div class="title" style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
         <div style="display:flex; align-items:center; gap:10px;">
-          <img src="/favicon.ico" alt="" style="width:20px;height:20px;border-radius:4px;opacity:.9" />
+          <img src="/favicon.ico" alt="" style="width:30px;height:30px;border-radius:4px;opacity:.9" />
           CustosEye <span class="subtitle">local dashboard</span>
         </div>
         <div style="display:flex; align-items:center; gap:8px;">
@@ -1902,33 +1902,206 @@
     }
 
     // integrity tab logic: load and display monitored file targets
-    async function loadTargets() {
-    try {
-        const res = await fetch('/api/integrity/targets');
-        const data = await res.json();
-        __targets = data; // update cache
-        // reset last rendered targets to force re-render after manual refresh
-        __lastRenderedTargets = null;
-        if (state.tab === 'integrity') {
-          renderTargets(data);
-        }
-    } catch (e) {
-        iTbody.innerHTML = `<tr><td colspan="5" class="small">Failed to load targets</td></tr>`;
-    }
-    }
-
-    // render integrity targets table with status, actions, and baseline info
-    function renderTargets(list) {
-      // create a hash of the targets data to detect changes
-      // we hash based on path, status, and baseline since those are what matter for display
-      const targetsHash = JSON.stringify(list.map(t => ({
+    // single-flight request tracking with stale-response guard
+    let loadTargetsRequestId = 0;
+    let loadTargetsAbortController = null;
+    let loadTargetsTimer = null;
+    let suppressPollingUntil = 0; // timestamp to suppress polling updates after manual actions
+    let optimisticRemoves = new Set(); // track paths that were optimistically removed
+    
+    // stable hash function: sorted by path, excludes volatile fields
+    function stableTargetsHash(list) {
+      if (!Array.isArray(list)) return '';
+      // sort by path for deterministic ordering
+      const sorted = [...list].sort((a, b) => {
+        const pathA = (a.path || '').toLowerCase();
+        const pathB = (b.path || '').toLowerCase();
+        return pathA.localeCompare(pathB);
+      });
+      // hash only stable fields (path, rule, baseline, status)
+      return JSON.stringify(sorted.map(t => ({
         path: t.path || '',
-        last_result: t.last_result || '',
+        rule: t.rule || 'sha256',
         sha256: t.sha256 || '',
         mtime: t.mtime || '',
         size: t.size || '',
-        rule: t.rule || ''
+        last_result: t.last_result || '',
+        note: t.note || ''
       })));
+    }
+    
+    async function loadTargets(suppressPolling = false) {
+      // cancel any in-flight request
+      if (loadTargetsAbortController) {
+        loadTargetsAbortController.abort();
+      }
+      
+      // create new request with unique ID
+      const requestId = ++loadTargetsRequestId;
+      loadTargetsAbortController = new AbortController();
+      const signal = loadTargetsAbortController.signal;
+      
+      // clear debounce timer
+      if (loadTargetsTimer) {
+        clearTimeout(loadTargetsTimer);
+        loadTargetsTimer = null;
+      }
+      
+      // debounce: wait 200ms to batch rapid calls
+      loadTargetsTimer = setTimeout(async () => {
+        loadTargetsTimer = null;
+        try {
+          const res = await fetch('/api/integrity/targets', { signal });
+          
+          // stale-response guard: check BEFORE parsing JSON (saves work if stale)
+          if (requestId !== loadTargetsRequestId) {
+            return; // stale response, ignore (newer request already in flight)
+          }
+          
+          const data = await res.json();
+          
+          // stale-response guard: check AGAIN after parsing (race condition protection)
+          if (requestId !== loadTargetsRequestId) {
+            return; // stale response, ignore (newer request completed while we were parsing)
+          }
+          
+          // reconcile: merge server data with optimistic updates
+          // 1. Filter out optimistically removed items (even if server still has them)
+          const filteredData = data.filter(t => {
+            const pathLower = (t.path || '').toLowerCase();
+            return !optimisticRemoves.has(pathLower);
+          });
+          
+          // 2. Preserve optimistic additions that aren't yet in server response
+          // IMPORTANT: read __targets BEFORE we update it, to capture current optimistic additions
+          const currentTargets = __targets || [];
+          const serverPaths = new Set(filteredData.map(t => (t.path || '').toLowerCase()));
+          const optimisticAdditions = currentTargets.filter(t => {
+            const pathLower = (t.path || '').toLowerCase();
+            // keep if it's not in server response and looks like an optimistic add (empty fields)
+            // also check it's not optimistically removed (safety check)
+            return pathLower && !serverPaths.has(pathLower) && 
+                   !optimisticRemoves.has(pathLower) &&
+                   (!t.last_result && !t.sha256 && !t.mtime && !t.size);
+          });
+          
+          // 3. Clear optimistic removes if server confirms removal (item not in response)
+          const serverPathsSet = new Set(data.map(t => (t.path || '').toLowerCase()));
+          optimisticRemoves.forEach(pathLower => {
+            if (!serverPathsSet.has(pathLower)) {
+              // server confirms removal, clear from tracking
+              optimisticRemoves.delete(pathLower);
+            }
+          });
+          
+          // 4. Merge server data with optimistic additions
+          // CRITICAL: mergedTargets already has optimistic removes filtered out
+          const mergedTargets = [...filteredData, ...optimisticAdditions];
+          __targets = mergedTargets;
+          
+          // 5. Get visible targets (double-check filtering - safety measure)
+          const visibleTargets = getVisibleTargets(mergedTargets);
+          
+          // check if data actually changed using stable hash (on visible targets)
+          const newHash = stableTargetsHash(visibleTargets);
+          if (newHash !== __lastRenderedTargets) {
+            // data changed - renderTargets will filter again and update __lastRenderedTargets
+            if (state.tab === 'integrity') {
+              renderTargets(mergedTargets); // renderTargets will apply getVisibleTargets internally
+            }
+          }
+          
+          // if this was a manual action, suppress polling
+          // use longer suppression for removes to ensure server confirms before polling updates
+          if (suppressPolling) {
+            // check if we have optimistic removes - if so, use longer suppression (300ms for testing)
+            // check BEFORE reconciliation, as reconciliation might clear some removes
+            const hasOptimisticRemoves = optimisticRemoves.size > 0;
+            const suppressionMs = hasOptimisticRemoves ? 300 : 200;
+            // only extend suppression if not already set (optimisticRemoveTarget sets it immediately)
+            if (Date.now() + suppressionMs > suppressPollingUntil) {
+              suppressPollingUntil = Date.now() + suppressionMs;
+            }
+          }
+        } catch (e) {
+          // ignore aborted requests
+          if (e.name === 'AbortError') {
+            return;
+          }
+          // stale response check
+          if (requestId !== loadTargetsRequestId) {
+            return;
+          }
+          iTbody.innerHTML = `<tr><td colspan="5" class="small">Failed to load targets</td></tr>`;
+        }
+      }, 200); // 200ms debounce
+    }
+    
+    // optimistic UI update: add item immediately
+    function optimisticAddTarget(target) {
+      if (!Array.isArray(__targets)) {
+        __targets = [];
+      }
+      const pathLower = (target.path || '').toLowerCase();
+      // clear optimistic remove tracking if this path was previously removed
+      optimisticRemoves.delete(pathLower);
+      // immediately suppress polling to prevent interference (250ms window)
+      suppressPollingUntil = Date.now() + 250;
+      // check if already exists
+      const exists = __targets.some(t => (t.path || '').toLowerCase() === pathLower);
+      if (!exists) {
+        __targets = [...__targets, target];
+        // update hash immediately with visible targets
+        const visibleTargets = getVisibleTargets(__targets);
+        __lastRenderedTargets = stableTargetsHash(visibleTargets);
+        if (state.tab === 'integrity') {
+          renderTargets(__targets);
+        }
+      }
+    }
+    
+    // optimistic UI update: remove item immediately
+    function optimisticRemoveTarget(path) {
+      if (!Array.isArray(__targets)) {
+        return;
+      }
+      const pathLower = (path || '').toLowerCase();
+      // track this removal
+      optimisticRemoves.add(pathLower);
+      // immediately suppress polling to prevent interference (1 second window)
+      suppressPollingUntil = Date.now() + 1000;
+      // filter out the removed item
+      __targets = __targets.filter(t => (t.path || '').toLowerCase() !== pathLower);
+      // update hash immediately with filtered data
+      const visibleTargets = getVisibleTargets(__targets);
+      // force update by clearing the last rendered hash so renderTargets will update
+      __lastRenderedTargets = null;
+      if (state.tab === 'integrity') {
+        renderTargets(__targets);
+      }
+    }
+
+    // get visible targets: always filter out optimistically removed items
+    // this is the single source of truth for what should be displayed
+    function getVisibleTargets(sourceList) {
+      if (!Array.isArray(sourceList)) {
+        return [];
+      }
+      // filter out any optimistically removed items
+      return sourceList.filter(t => {
+        const pathLower = (t.path || '').toLowerCase();
+        return pathLower && !optimisticRemoves.has(pathLower);
+      });
+    }
+    
+    // render integrity targets table with status, actions, and baseline info
+    function renderTargets(list) {
+      // CRITICAL: always filter out optimistically removed items before rendering
+      // This ensures removed items can never reappear until server confirms removal
+      const visibleList = getVisibleTargets(list);
+      
+      // use stable hash for change detection (sorted, deterministic)
+      const targetsHash = stableTargetsHash(visibleList);
       
       // only render if data has changed
       if (targetsHash === __lastRenderedTargets && __lastRenderedTargets !== null) {
@@ -1936,15 +2109,22 @@
       }
       __lastRenderedTargets = targetsHash;
       
-      if (!Array.isArray(list) || list.length === 0) {
+      if (visibleList.length === 0) {
         requestAnimationFrame(() => {
           iTbody.innerHTML = `<tr><td colspan="5" class="small">No files being watched yet.</td></tr>`;
         });
         return;
       }
 
+      // sort list by path to match stable hash ordering (prevents flicker from reordering)
+      const sortedList = [...visibleList].sort((a, b) => {
+        const pathA = (a.path || '').toLowerCase();
+        const pathB = (b.path || '').toLowerCase();
+        return pathA.localeCompare(pathB);
+      });
+
       // use requestAnimationFrame for smoother updates
-      const html = list.map(row => {
+      const html = sortedList.map(row => {
         const note = (row.note || '').trim();
         const pathCell = `
           <td class="baseline-cell">
@@ -2067,6 +2247,11 @@
                   if (acceptDeletionBtn) {
                     acceptDeletionBtn.addEventListener('click', async () => {
                       const btnPath = decodeURIComponent(acceptDeletionBtn.getAttribute('data-path') || path);
+                      
+                      // Show confirmation dialog before accepting
+                      const confirmed = await showMarkIntentionalConfirmation(btnPath, true);
+                      if (!confirmed) return;
+                      
                       acceptDeletionBtn.disabled = true;
                       acceptDeletionBtn.textContent = 'Removing...';
                       
@@ -2082,8 +2267,8 @@
                           acceptDeletionBtn.textContent = 'Removed ✓';
                           acceptDeletionBtn.style.background = 'var(--good)';
                           
-                          // Reload targets to update status
-                          loadTargets();
+                          // Reload targets to update status (with suppression)
+                          loadTargets(true);
                           
                           // Refresh Live Events to show updated status
                           fetchData();
@@ -2118,6 +2303,11 @@
                   if (!btn) return;
                   btn.addEventListener('click', async () => {
                     const buttonPath = btnPath || decodeURIComponent(btn.getAttribute('data-path') || path);
+                    
+                    // Show confirmation dialog before accepting
+                    const confirmed = await showMarkIntentionalConfirmation(buttonPath);
+                    if (!confirmed) return;
+                    
                     btn.disabled = true;
                     btn.textContent = 'Updating...';
                     
@@ -2133,8 +2323,8 @@
                         btn.textContent = 'Baseline Updated ✓';
                         btn.style.background = 'var(--good)';
                         
-                        // Reload targets to update status
-                        loadTargets();
+                        // Reload targets to update status (with suppression)
+                        loadTargets(true);
                         
                         // Refresh Live Events to show updated status
                         fetchData();
@@ -2209,29 +2399,29 @@
               });
               const j = await r.json();
               
-              // Show status result instead of just hash
+              // Show status result with proper color coding
               if (j.last_result) {
                 const status = j.last_result;
                 if (status.toUpperCase().startsWith('OK')) {
-                  alert(`File status: ${status}\n\nBaseline confirmed, no changes detected.`);
+                  await showIntegrityResult(status, 'Baseline confirmed, no changes detected.', 'The file matches its baseline hash.');
                 } else if (status.toUpperCase().startsWith('CHANGED')) {
-                  alert(`File status: ${status}\n\nChanges detected. Click "View changes" to review.`);
+                  await showIntegrityResult(status, 'Changes detected in the file.', 'Click "View changes" to review the differences.');
                 } else if (j.error) {
-                  alert(`Error: ${j.error}`);
+                  await showIntegrityResult('ERR', `Error: ${j.error}`, 'The file could not be checked.');
                 } else {
-                  alert(`Status: ${status}`);
+                  await showIntegrityResult(status, 'File check completed.', '');
                 }
               } else if (j.error) {
-                alert(`Error: ${j.error}`);
+                await showIntegrityResult('ERR', `Error: ${j.error}`, 'The file could not be checked.');
               } else {
                 // Fallback to hash display
-                alert((j.sha256 ? `SHA-256:\n${j.sha256}` : 'No hash'));
+                await showIntegrityResult('OK', `SHA-256: ${j.sha256 || 'No hash'}`, 'Hash computed successfully.');
               }
               
-              // Reload targets to refresh status
-              loadTargets();
+              // Reload targets to refresh status (with suppression)
+              loadTargets(true);
             } catch (e) {
-              alert(`Error: ${e.message}`);
+              await showIntegrityResult('ERR', `Error: ${e.message}`, 'An error occurred while checking the file.');
             } finally {
               btn.disabled = false;
               btn.textContent = originalText;
@@ -2243,13 +2433,32 @@
         iTbody.querySelectorAll('button[data-act="remove"]').forEach(btn => {
           btn.addEventListener('click', async () => {
             const path = decodeURIComponent(btn.getAttribute('data-path'));
-            if (!confirm('Remove from watch list?')) return;
-            await fetch('/api/integrity/targets', {
-              method:'DELETE',
-              headers:{'Content-Type':'application/json'},
-              body: JSON.stringify({ path })
-            });
-            loadTargets();
+            const confirmed = await showRemoveConfirmation(path);
+            if (!confirmed) return;
+            
+            // optimistic UI update: remove item immediately
+            optimisticRemoveTarget(path);
+            
+            try {
+              const response = await fetch('/api/integrity/targets', {
+                method:'DELETE',
+                headers:{'Content-Type':'application/json'},
+                body: JSON.stringify({ path })
+              });
+              const result = await response.json();
+              if (result.ok) {
+                // reload with suppression to prevent polling interference (1s for removes)
+                loadTargets(true);
+              } else {
+                // error - revert optimistic update
+                optimisticRemoves.delete((path || '').toLowerCase());
+                loadTargets(true);
+              }
+            } catch (e) {
+              // error - revert optimistic update
+              optimisticRemoves.delete((path || '').toLowerCase());
+              loadTargets(true);
+            }
           });
         });
       });
@@ -2303,22 +2512,46 @@
       const rule = iRule.value;
       const note = iNote.value.trim();
       iHint.textContent = 'Saving...';
-      const r = await fetch('/api/integrity/targets', {
-        method:'POST',
-        headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({path, rule, note})
-      });
-      const j = await r.json();
-      if (j.ok) {
-        iHint.textContent = 'Saved';
-        iPreview.textContent = '';
-        iNote.value = '';
-        iPath.value = '';                 // clear so placeholder shows again
-        iPath.dispatchEvent(new Event('input'));
-        iPath.blur();
-        loadTargets();
-      } else {
-        iHint.textContent = j.error || 'Failed to save';
+      
+      // optimistic UI update: add item immediately
+      const optimisticTarget = {
+        path: path,
+        rule: rule,
+        note: note,
+        last_result: '',
+        sha256: '',
+        mtime: '',
+        size: ''
+      };
+      optimisticAddTarget(optimisticTarget);
+      
+      try {
+        const r = await fetch('/api/integrity/targets', {
+          method:'POST',
+          headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({path, rule, note})
+        });
+        const j = await r.json();
+        if (j.ok) {
+          iHint.textContent = 'Saved';
+          iPreview.textContent = '';
+          iNote.value = '';
+          iPath.value = '';                 // clear so placeholder shows again
+          iPath.dispatchEvent(new Event('input'));
+          iPath.blur();
+          // reload with suppression to prevent polling interference
+          loadTargets(true);
+        } else {
+          iHint.textContent = j.error || 'Failed to save';
+          // revert optimistic update on error
+          optimisticRemoveTarget(path);
+          loadTargets(true);
+        }
+      } catch (e) {
+        iHint.textContent = 'Failed to save: ' + e.message;
+        // revert optimistic update on error
+        optimisticRemoveTarget(path);
+        loadTargets(true);
       }
     }));
 
@@ -2380,7 +2613,38 @@
         const treeR  = needTree ? results[4] : null;
 
         if (evR?.status === 'fulfilled')   __events  = await evR.value.json();
-        if (targR?.status === 'fulfilled') __targets = await targR.value.json();
+        // only update targets from polling if not in suppression window (after manual actions)
+        if (targR?.status === 'fulfilled' && Date.now() >= suppressPollingUntil) {
+          const pollingData = await targR.value.json();
+          // reconcile polling data with optimistic updates (same logic as loadTargets)
+          // 1. Filter out optimistically removed items (CRITICAL: prevents removed items from reappearing)
+          const filteredData = pollingData.filter(t => {
+            const pathLower = (t.path || '').toLowerCase();
+            return !optimisticRemoves.has(pathLower);
+          });
+          // 2. Preserve optimistic additions that aren't yet in server response
+          // IMPORTANT: read __targets BEFORE we update it, to capture current optimistic additions
+          const currentTargets = __targets || [];
+          const serverPaths = new Set(filteredData.map(t => (t.path || '').toLowerCase()));
+          const optimisticAdditions = currentTargets.filter(t => {
+            const pathLower = (t.path || '').toLowerCase();
+            // keep if it's not in server response and looks like an optimistic add (empty fields)
+            // also check it's not optimistically removed (safety check)
+            return pathLower && !serverPaths.has(pathLower) && 
+                   !optimisticRemoves.has(pathLower) &&
+                   (!t.last_result && !t.sha256 && !t.mtime && !t.size);
+          });
+          // 3. Clear optimistic removes if server confirms removal (item not in response)
+          const serverPathsSet = new Set(pollingData.map(t => (t.path || '').toLowerCase()));
+          optimisticRemoves.forEach(pathLower => {
+            if (!serverPathsSet.has(pathLower)) {
+              // server confirms removal, clear from tracking
+              optimisticRemoves.delete(pathLower);
+            }
+          });
+          // 4. Merge and update (filtered data + optimistic additions)
+          __targets = [...filteredData, ...optimisticAdditions];
+        }
         if (aboutR?.status === 'fulfilled') __about  = await aboutR.value.json();
 
         if (needTree && treeR && treeR.status === 'fulfilled') {
@@ -2504,11 +2768,11 @@
     confirmModal.className = 'hidden';
     confirmModal.style.cssText = 'position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.7); display:none; align-items:center; justify-content:center; z-index:10000;';
     confirmModal.innerHTML = `
-      <div class="panel" style="max-width:400px; position:relative; padding:24px;">
-        <div id="confirmMessage" style="color:var(--text); margin-bottom:20px; font-size:14px; line-height:1.6; white-space:pre-line;"></div>
-        <div style="display:flex; gap:8px; justify-content:flex-end;">
-          <button id="confirmCancel" class="btn" style="padding:8px 16px; width:auto; background:transparent; color:var(--muted); border:1px solid var(--border);">Cancel</button>
-          <button id="confirmOk" class="btn" style="padding:8px 16px; width:auto;">OK</button>
+      <div class="panel" style="max-width:520px; position:relative; padding:0; box-shadow:0 16px 48px rgba(0,0,0,0.5); overflow:hidden;">
+        <div id="confirmMessage" style="color:var(--text); padding:0; font-size:14px; line-height:1.6; white-space:pre-line;"></div>
+        <div style="display:flex; gap:10px; justify-content:flex-end; padding:16px 24px; border-top:1px solid var(--border); background:color-mix(in oklab, var(--panel) 95%, transparent);">
+          <button id="confirmCancel" class="btn" style="padding:10px 20px; width:auto; background:transparent; color:var(--muted); border:1px solid var(--border); font-weight:500; transition:all 0.2s ease;">Cancel</button>
+          <button id="confirmOk" class="btn" style="padding:10px 24px; width:auto; font-weight:500; transition:all 0.2s ease;">OK</button>
         </div>
       </div>
     `;
@@ -2522,9 +2786,29 @@
     let currentModalType = 'confirm';
     
     if (confirmOk && confirmCancel) {
+      const closeModal = () => {
+        const panel = confirmModal.querySelector('.panel');
+        if (panel) {
+          panel.style.opacity = '0';
+          panel.style.transform = 'scale(0.96) translateY(-4px)';
+          setTimeout(() => {
+            confirmModal.style.display = 'none';
+            confirmModal.classList.add('hidden');
+            // Reset animation for next time
+            if (panel) {
+              panel.style.opacity = '';
+              panel.style.transform = '';
+              panel.style.transition = '';
+            }
+          }, 150);
+        } else {
+          confirmModal.style.display = 'none';
+          confirmModal.classList.add('hidden');
+        }
+      };
+      
       confirmOk.addEventListener('click', () => {
-        confirmModal.style.display = 'none';
-        confirmModal.classList.add('hidden');
+        closeModal();
         if (confirmCancel) confirmCancel.style.display = 'flex';
         if (confirmResolve) {
           confirmResolve(true);
@@ -2533,8 +2817,7 @@
       });
       
       confirmCancel.addEventListener('click', () => {
-        confirmModal.style.display = 'none';
-        confirmModal.classList.add('hidden');
+        closeModal();
         if (confirmCancel) confirmCancel.style.display = 'flex';
         if (confirmResolve) {
           confirmResolve(currentModalType === 'alert' ? true : false);
@@ -2566,6 +2849,253 @@
         if (confirmCancel) confirmCancel.style.display = 'none';
         confirmModal.style.display = 'flex';
         confirmModal.classList.remove('hidden');
+      });
+    }
+    
+    // show styled integrity check result with elegant design
+    function showIntegrityResult(status, message, details) {
+      return new Promise((resolve) => {
+        confirmResolve = resolve;
+        currentModalType = 'alert';
+        
+        // Determine styling based on status
+        let statusConfig = {
+          logo: '',
+          text: status,
+          themeColor: 'var(--text)',
+          modalBg: 'var(--panel)',
+          modalBorder: 'var(--border)',
+          buttonBg: 'var(--accent)',
+          buttonAreaBg: 'var(--panel)'
+        };
+        
+        if (status.toUpperCase().startsWith('OK')) {
+          statusConfig = {
+            logo: '/static/assets/logo_confirm.svg',
+            text: 'Verified',
+            themeColor: 'var(--good)',
+            modalBg: 'color-mix(in oklab, var(--good) 20%, var(--panel))',
+            modalBorder: 'color-mix(in oklab, var(--good) 60%, var(--border))',
+            buttonBg: 'var(--good)',
+            buttonAreaBg: 'color-mix(in oklab, var(--good) 18%, var(--panel))'
+          };
+        } else if (status.toUpperCase().startsWith('CHANGED') || status.toUpperCase().startsWith('ERR')) {
+          statusConfig = {
+            logo: '/static/assets/logo_warning.svg',
+            text: status.toUpperCase().startsWith('CHANGED') ? 'File Changed' : 'Error',
+            themeColor: 'var(--bad)',
+            modalBg: 'color-mix(in oklab, var(--bad) 20%, var(--panel))',
+            modalBorder: 'color-mix(in oklab, var(--bad) 60%, var(--border))',
+            buttonBg: 'var(--bad)',
+            buttonAreaBg: 'color-mix(in oklab, var(--bad) 18%, var(--panel))'
+          };
+        }
+        
+        if (confirmMessage) {
+          confirmMessage.innerHTML = `
+            <div style="padding:28px; text-align:center;">
+              ${statusConfig.logo ? `
+                <div style="margin:0 auto 20px; width:80px; height:80px; display:flex; align-items:center; justify-content:center; animation:logoPulse 0.5s ease-out;">
+                  <img src="${statusConfig.logo}" alt="${statusConfig.text}" style="width:100%; height:100%; object-fit:contain; filter:drop-shadow(0 4px 12px rgba(0,0,0,0.3));" />
+                </div>
+              ` : ''}
+              <div style="color:${statusConfig.themeColor}; font-size:22px; font-weight:700; letter-spacing:0.5px; margin-bottom:12px; text-transform:uppercase;">${statusConfig.text}</div>
+              <div style="color:var(--text); font-size:15px; line-height:1.6; margin-bottom:${details ? '16px' : '0'}; max-width:400px; margin-left:auto; margin-right:auto;">${message}</div>
+              ${details ? `<div style="color:var(--muted); font-size:13px; line-height:1.6; margin-top:16px; background:inherit !important; border:none; padding:0;">${details}</div>` : ''}
+            </div>
+            <style>
+              @keyframes logoPulse {
+                0% { transform: scale(0.85); opacity: 0; }
+                50% { transform: scale(1.08); }
+                100% { transform: scale(1); opacity: 1; }
+              }
+            </style>
+          `;
+        }
+        
+        if (confirmCancel) confirmCancel.style.display = 'none';
+        confirmModal.style.display = 'flex';
+        confirmModal.classList.remove('hidden');
+        
+        // Apply theme colors
+        const panel = confirmModal.querySelector('.panel');
+        const buttonArea = panel?.querySelector('div:last-child');
+        const okButton = document.getElementById('confirmOk');
+        
+        if (panel) {
+          panel.style.background = statusConfig.modalBg;
+          panel.style.borderColor = statusConfig.modalBorder;
+          panel.style.borderWidth = '2px';
+        }
+        
+        if (buttonArea) {
+          buttonArea.style.background = statusConfig.buttonAreaBg;
+          buttonArea.style.borderColor = statusConfig.modalBorder;
+        }
+        
+        if (okButton) {
+          okButton.style.background = statusConfig.buttonBg;
+          okButton.style.color = 'white';
+          okButton.style.border = 'none';
+        }
+        
+        // Fade-in animation
+        if (panel) {
+          panel.style.opacity = '0';
+          panel.style.transform = 'scale(0.95) translateY(-6px)';
+          panel.style.transition = 'opacity 0.25s ease, transform 0.25s ease';
+          requestAnimationFrame(() => {
+            panel.style.opacity = '1';
+            panel.style.transform = 'scale(1) translateY(0)';
+          });
+        }
+      });
+    }
+    
+    // show removal confirmation with caution logo
+    function showRemoveConfirmation(filePath) {
+      return new Promise((resolve) => {
+        confirmResolve = resolve;
+        currentModalType = 'confirm';
+        
+        if (confirmMessage) {
+          const shortPath = filePath.length > 50 ? '...' + filePath.slice(-47) : filePath;
+          confirmMessage.innerHTML = `
+            <div style="padding:28px; text-align:center;">
+              <div style="margin:0 auto 20px; width:80px; height:80px; display:flex; align-items:center; justify-content:center; animation:logoPulse 0.5s ease-out;">
+                <img src="/static/assets/logo_caution.svg" alt="Caution" style="width:100%; height:100%; object-fit:contain; filter:drop-shadow(0 4px 12px rgba(0,0,0,0.3));" />
+              </div>
+              <div style="color:var(--warn); font-size:22px; font-weight:700; letter-spacing:0.5px; margin-bottom:12px; text-transform:uppercase;">Remove File</div>
+              <div style="color:var(--text); font-size:15px; line-height:1.6; margin-bottom:16px; max-width:400px; margin-left:auto; margin-right:auto;">Are you sure you want to remove this file from the watch list?</div>
+              <div style="color:var(--muted); font-size:13px; line-height:1.6; padding:12px; background:color-mix(in oklab, var(--warn) 8%, var(--panel)); border-radius:8px; border:1px solid color-mix(in oklab, var(--warn) 20%, var(--border)); font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; word-break:break-all;">${shortPath}</div>
+            </div>
+            <style>
+              @keyframes logoPulse {
+                0% { transform: scale(0.85); opacity: 0; }
+                50% { transform: scale(1.08); }
+                100% { transform: scale(1); opacity: 1; }
+              }
+            </style>
+          `;
+        }
+        
+        if (confirmCancel) confirmCancel.style.display = 'flex';
+        confirmModal.style.display = 'flex';
+        confirmModal.classList.remove('hidden');
+        
+        // Apply caution theme
+        const panel = confirmModal.querySelector('.panel');
+        const buttonArea = panel?.querySelector('div:last-child');
+        const cancelButton = document.getElementById('confirmCancel');
+        const okButton = document.getElementById('confirmOk');
+        
+        if (panel) {
+          panel.style.background = 'color-mix(in oklab, var(--warn) 15%, var(--panel))';
+          panel.style.borderColor = 'color-mix(in oklab, var(--warn) 50%, var(--border))';
+          panel.style.borderWidth = '2px';
+        }
+        
+        if (buttonArea) {
+          buttonArea.style.background = 'color-mix(in oklab, var(--warn) 12%, var(--panel))';
+          buttonArea.style.borderColor = 'color-mix(in oklab, var(--warn) 40%, var(--border))';
+        }
+        
+        if (okButton) {
+          okButton.style.background = 'var(--warn)';
+          okButton.style.color = 'white';
+          okButton.style.border = 'none';
+        }
+        
+        if (cancelButton) {
+          cancelButton.style.borderColor = 'color-mix(in oklab, var(--warn) 30%, var(--border))';
+        }
+        
+        // Fade-in animation
+        if (panel) {
+          panel.style.opacity = '0';
+          panel.style.transform = 'scale(0.95) translateY(-6px)';
+          panel.style.transition = 'opacity 0.25s ease, transform 0.25s ease';
+          requestAnimationFrame(() => {
+            panel.style.opacity = '1';
+            panel.style.transform = 'scale(1) translateY(0)';
+          });
+        }
+      });
+    }
+    
+    // show mark intentional confirmation with caution logo
+    function showMarkIntentionalConfirmation(filePath, isDeletion = false) {
+      return new Promise((resolve) => {
+        confirmResolve = resolve;
+        currentModalType = 'confirm';
+        
+        if (confirmMessage) {
+          const shortPath = filePath.length > 50 ? '...' + filePath.slice(-47) : filePath;
+          const actionText = isDeletion ? 'Mark Deletion as Intentional' : 'Mark Change as Intentional';
+          const messageText = isDeletion 
+            ? 'Are you sure you want to mark this file deletion as intentional? This will update the baseline and stop alerts.'
+            : 'Are you sure you want to mark this change as intentional? This will update the baseline and stop alerts.';
+          
+          confirmMessage.innerHTML = `
+            <div style="padding:28px; text-align:center;">
+              <div style="margin:0 auto 20px; width:80px; height:80px; display:flex; align-items:center; justify-content:center; animation:logoPulse 0.5s ease-out;">
+                <img src="/static/assets/logo_caution.svg" alt="Caution" style="width:100%; height:100%; object-fit:contain; filter:drop-shadow(0 4px 12px rgba(0,0,0,0.3));" />
+              </div>
+              <div style="color:var(--warn); font-size:22px; font-weight:700; letter-spacing:0.5px; margin-bottom:12px; text-transform:uppercase;">${actionText}</div>
+              <div style="color:var(--text); font-size:15px; line-height:1.6; margin-bottom:16px; max-width:400px; margin-left:auto; margin-right:auto;">${messageText}</div>
+              <div style="color:var(--muted); font-size:13px; line-height:1.6; padding:12px; background:color-mix(in oklab, var(--warn) 8%, var(--panel)); border-radius:8px; border:1px solid color-mix(in oklab, var(--warn) 20%, var(--border)); font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; word-break:break-all;">${shortPath}</div>
+            </div>
+            <style>
+              @keyframes logoPulse {
+                0% { transform: scale(0.85); opacity: 0; }
+                50% { transform: scale(1.08); }
+                100% { transform: scale(1); opacity: 1; }
+              }
+            </style>
+          `;
+        }
+        
+        if (confirmCancel) confirmCancel.style.display = 'flex';
+        confirmModal.style.display = 'flex';
+        confirmModal.classList.remove('hidden');
+        
+        // Apply caution theme
+        const panel = confirmModal.querySelector('.panel');
+        const buttonArea = panel?.querySelector('div:last-child');
+        const cancelButton = document.getElementById('confirmCancel');
+        const okButton = document.getElementById('confirmOk');
+        
+        if (panel) {
+          panel.style.background = 'color-mix(in oklab, var(--warn) 15%, var(--panel))';
+          panel.style.borderColor = 'color-mix(in oklab, var(--warn) 50%, var(--border))';
+          panel.style.borderWidth = '2px';
+        }
+        
+        if (buttonArea) {
+          buttonArea.style.background = 'color-mix(in oklab, var(--warn) 12%, var(--panel))';
+          buttonArea.style.borderColor = 'color-mix(in oklab, var(--warn) 40%, var(--border))';
+        }
+        
+        if (okButton) {
+          okButton.style.background = 'var(--warn)';
+          okButton.style.color = 'white';
+          okButton.style.border = 'none';
+        }
+        
+        if (cancelButton) {
+          cancelButton.style.borderColor = 'color-mix(in oklab, var(--warn) 30%, var(--border))';
+        }
+        
+        // Fade-in animation
+        if (panel) {
+          panel.style.opacity = '0';
+          panel.style.transform = 'scale(0.95) translateY(-6px)';
+          panel.style.transition = 'opacity 0.25s ease, transform 0.25s ease';
+          requestAnimationFrame(() => {
+            panel.style.opacity = '1';
+            panel.style.transform = 'scale(1) translateY(0)';
+          });
+        }
       });
     }
     
@@ -2652,7 +3182,7 @@
         shutdownOverlay.style.opacity = '1';
       });
       
-      // after 2 seconds, close the tab
+      // after 1.5 seconds, close the tab
       setTimeout(() => {
         // try to close the window/tab (only closes the current tab/window, not other tabs)
         // window.close() is safe - it only closes the current window/tab, never other tabs
@@ -2694,7 +3224,7 @@
             </div>
           `;
         }, 300);
-      }, 2000);
+      }, 1500);
     }
     
     // logout button: sign out and optionally shutdown the program

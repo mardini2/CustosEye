@@ -2541,8 +2541,26 @@ def build_app(event_bus) -> Flask:
             if not path:
                 return jsonify({"ok": False, "error": "missing path"}), 400
             rows = _read_integrity_targets()
+            
+            # Check if file was actually in the watch list before removing
+            was_in_list = any(str(r.get("path") or "").lower() == path.lower() for r in rows)
+            
+            # Remove the file from the watch list
             rows2 = [r for r in rows if str(r.get("path") or "").lower() != path.lower()]
             _write_integrity_targets(rows2)
+            
+            # Emit a live event to notify that the file was removed from the watch list
+            if was_in_list:
+                ev = {
+                    "source": "integrity",
+                    "level": "critical",
+                    "reason": f"File removed from watch list: {path}",
+                    "path": path,
+                    "ts": time.time(),
+                    "name": os.path.basename(path) if path else "",
+                }
+                _publish(ev)
+            
             return jsonify({"ok": True})
         except Exception as e:
             return jsonify({"ok": False, "error": str(e)}), 500

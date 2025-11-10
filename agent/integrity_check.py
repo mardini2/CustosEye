@@ -106,28 +106,52 @@ class IntegrityChecker:
             self._load_targets()  # reload the JSON file so we can add/remove targets without restarting
             for entry in self.targets:  # loop through each file we're supposed to monitor
                 raw_path = entry.get("path", "")  # get the file path from the JSON entry
-                expected = entry.get(
-                    "sha256", ""
-                ).lower()  # get the expected hash (lowercase for comparison)
-
-                if not raw_path or not expected:  # skip this entry if path or hash is missing
+                
+                if not raw_path:  # skip if no path
                     continue
 
                 path = self._normalize_path(raw_path)  # expand env vars and normalize the path
 
-                # missing file
-                if not os.path.exists(path):  # check if the file actually exists
-                    self._emit_if_changed(
-                        path,
-                        "missing",  # file was deleted or doesn't exist
-                        {
+                # missing file - emit immediately when file is deleted or missing
+                # Check for missing files BEFORE checking for hash requirement
+                # This ensures deletion events are always emitted, even for files without hashes
+                file_exists = os.path.exists(path)
+                if not file_exists:  # check if the file actually exists
+                    # File is missing - check if we need to emit a deletion event
+                    # We emit if the file was previously existing (status was not "missing")
+                    # or if this is the first time we're checking this file (prev_status is None)
+                    prev_status = self._last_status.get(path)
+                    should_emit_deletion = prev_status != "missing"
+                    
+                    if should_emit_deletion:
+                        # Update status to missing and emit deletion event
+                        self._last_status[path] = "missing"
+                        self.publish({
                             "source": "integrity",
-                            "level": "critical",  # Changed to critical for deletion
+                            "level": "critical",
                             "reason": f"File deleted or missing: {path}",
                             "path": path,
-                        },
-                    )
+                            "ts": time.time(),  # include timestamp for immediate event visibility
+                        })
                     continue  # skip to next file since this one doesn't exist
+                
+                # File exists - if it was previously missing, clear that status
+                # This ensures we can detect deletion again if the file is deleted later
+                if self._last_status.get(path) == "missing":
+                    # File was missing but now exists - clear missing status
+                    # We don't emit an event here, just update status for future deletion detection
+                    self._last_status[path] = "ok"  # will be updated by hash check below
+
+                expected = entry.get(
+                    "sha256", ""
+                ).lower()  # get the expected hash (lowercase for comparison)
+
+                if not expected:  # skip this entry if hash is missing (but we already checked for missing files above)
+                    # File exists but has no hash - set status to "ok" so we can detect deletion later
+                    # This ensures files without hashes can still trigger deletion events
+                    if self._last_status.get(path) != "ok":
+                        self._last_status[path] = "ok"
+                    continue
 
                 try:
                     actual = self._sha256(path).lower()  # compute the actual hash of the file
@@ -188,6 +212,18 @@ class IntegrityChecker:
                             "path": path,
                         },
                     )
+                except (FileNotFoundError, OSError) as e:  # file was deleted or became unavailable during processing
+                    # File was deleted or storage became unavailable - emit deletion event immediately
+                    prev_status = self._last_status.get(path)
+                    if prev_status != "missing":  # only emit if not already in missing state
+                        self._last_status[path] = "missing"  # update status to missing
+                        self.publish({
+                            "source": "integrity",
+                            "level": "critical",
+                            "reason": f"File deleted or missing: {path}",
+                            "path": path,
+                            "ts": time.time(),  # include timestamp for immediate event visibility
+                        })
                 except Exception as e:  # catch any other errors (file locked, disk error, etc)
                     self._emit_if_changed(
                         path,
