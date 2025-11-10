@@ -1,0 +1,89 @@
+[
+  {
+    "path": "C:/Users/alimm/Desktop/College/Concept Overview.docx",
+    "rule": "sha256",
+    "sha256": "4CA96448E5BE2381757270CB3DAD88E6AB8D787ABF0849736C8B35C0E57BD4B7",
+    "last_result": "CHANGED",
+    "baseline_blob": {
+      "sha256": "4CA96448E5BE2381757270CB3DAD88E6AB8D787ABF0849736C8B35C0E57BD4B7",
+      "size": 24507,
+      "stored_path": "C:\\Users\\alimm\\source\\repos\\CustosEye\\data\\baselines\\4C\\A9\\4CA96448E5BE2381757270CB3DAD88E6AB8D787ABF0849736C8B35C0E57BD4B7\\Concept Overview.docx",
+      "created_at": 1762806078
+    },
+    "chunks": {
+      "algo": "sha256",
+      "chunk_size": 4096,
+      "size": 24507,
+      "hashes": [
+        "22FD58D440719A5166143953AE764AEAF664A799AB7CF9B78CDE99AFEC58366D",
+        "E2160604DFDE0F57ECDEB95301549C3D4E099D36ADCA827B7C672A5CC8C046B5",
+        "76812D03EB42B6171A2CC97C25FFE55C1DE45C9056C08F487935DFD10C060229",
+        "B08F3AB0027934BDE13288498777DAAFD4986289776B8D357C92FABAB3411D00",
+        "75837A779DE734194488E169A2E68714653EEDDC8C942AB39C5932448E1AD764",
+        "B360DC1ACDA0275E8D8D3DE691BFAC9239EC784813150D57829098EFCBEEB468"
+      ]
+    },
+    "zip_manifest": {
+      "[Content_Types].xml": {
+        "size": 1445,
+        "crc": 1466929458,
+        "date": 19800101
+      },
+      "_rels/.rels": {
+        "size": 590,
+        "crc": 3071971614,
+        "date": 19800101
+      },
+      "word/document.xml": {
+        "size": 63998,
+        "crc": 4125006065,
+        "date": 19800101
+      },
+      "word/_rels/document.xml.rels": {
+        "size": 950,
+        "crc": 495697587,
+        "date": 19800101
+      },
+      "word/theme/theme1.xml": {
+        "size": 8397,
+        "crc": 3036446823,
+        "date": 19800101
+      },
+      "word/settings.xml": {
+        "size": 11431,
+        "crc": 4119310689,
+        "date": 19800101
+      },
+      "word/numbering.xml": {
+        "size": 37273,
+        "crc": 3444515416,
+        "date": 19800101
+      },
+      "word/styles.xml": {
+        "size": 42786,
+        "crc": 3950481246,
+        "date": 19800101
+      },
+      "word/webSettings.xml": {
+        "size": 1083,
+        "crc": 1528565436,
+        "date": 19800101
+      },
+      "word/fontTable.xml": {
+        "size": 3392,
+        "crc": 3463420481,
+        "date": 19800101
+      },
+      "docProps/core.xml": {
+        "size": 751,
+        "crc": 391842791,
+        "date": 19800101
+      },
+      "docProps/app.xml": {
+        "size": 995,
+        "crc": 3654049486,
+        "date": 19800101
+      }
+    }
+  }
+]
