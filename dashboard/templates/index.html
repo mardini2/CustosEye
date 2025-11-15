@@ -2473,8 +2473,30 @@
                 const wasFormattingExpanded = modalBody.querySelector('[id*="formatting-changes"][id*="-toggle"][data-expanded="true"]') !== null;
                 const wasImagesExpanded = modalBody.querySelector('[id*="image-changes"][id*="-toggle"][data-expanded="true"]') !== null;
                 
+                // Preserve scroll positions of diff sides before re-rendering
+                const oldDiffSides = modalBody.querySelectorAll('.diff-side .diff-lines');
+                const scrollPositions = [];
+                oldDiffSides.forEach(side => {
+                  scrollPositions.push({
+                    scrollTop: side.scrollTop,
+                    scrollLeft: side.scrollLeft
+                  });
+                });
+                
                 const diffHTML = renderDiff(j);
                 modalBody.innerHTML = diffHTML;
+                
+                // Restore scroll positions after re-rendering
+                const newDiffSides = modalBody.querySelectorAll('.diff-side .diff-lines');
+                newDiffSides.forEach((side, index) => {
+                  if (scrollPositions[index]) {
+                    // Use requestAnimationFrame to ensure DOM is fully rendered
+                    requestAnimationFrame(() => {
+                      side.scrollTop = scrollPositions[index].scrollTop;
+                      side.scrollLeft = scrollPositions[index].scrollLeft;
+                    });
+                  }
+                });
                 
                 // Restore button states after re-rendering
                 // Find the new buttons and restore their state
