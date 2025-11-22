@@ -118,10 +118,10 @@ class IntegrityChecker:
                 file_exists = os.path.exists(path)
                 if not file_exists:  # check if the file actually exists
                     # File is missing - check if we need to emit a deletion event
-                    # We emit if the file was previously existing (status was not "missing")
-                    # or if this is the first time we're checking this file (prev_status is None)
+                    # We emit only if the file was previously existing (status was not "missing")
+                    # This ensures we don't emit false deletion events on initial discovery
                     prev_status = self._last_status.get(path)
-                    should_emit_deletion = prev_status != "missing"
+                    should_emit_deletion = prev_status is not None and prev_status != "missing"
 
                     if should_emit_deletion:
                         # Update status to missing and emit deletion event
@@ -137,13 +137,9 @@ class IntegrityChecker:
                         )
                     continue  # skip to next file since this one doesn't exist
 
-                # File exists - if it was previously missing, clear that status
-                # This ensures we can detect deletion again if the file is deleted later
-                if self._last_status.get(path) == "missing":
-                    # File was missing but now exists - clear missing status
-                    # We don't emit an event here, just update status for future deletion detection
-                    self._last_status[path] = "ok"  # will be updated by hash check below
-
+                # File exists - check hash to determine current status
+                # Note: We preserve the previous status (including "missing") so that
+                # _emit_if_changed can detect the transition and emit appropriate events
                 expected = entry.get(
                     "sha256", ""
                 ).lower()  # get the expected hash (lowercase for comparison)
@@ -151,10 +147,18 @@ class IntegrityChecker:
                 if (
                     not expected
                 ):  # skip this entry if hash is missing (but we already checked for missing files above)
-                    # File exists but has no hash - set status to "ok" so we can detect deletion later
-                    # This ensures files without hashes can still trigger deletion events
-                    if self._last_status.get(path) != "ok":
-                        self._last_status[path] = "ok"
+                    # File exists but has no hash - emit event if status changed (e.g., missing -> ok)
+                    # This ensures files without hashes can still trigger deletion events and reappearance notifications
+                    self._emit_if_changed(
+                        path,
+                        "ok",  # file exists but can't be verified (no hash)
+                        {
+                            "source": "integrity",
+                            "level": "info",
+                            "reason": "File present (no hash to verify)",
+                            "path": path,
+                        },
+                    )
                     continue
 
                 try:
@@ -221,8 +225,9 @@ class IntegrityChecker:
                     OSError,
                 ):  # file was deleted or became unavailable during processing
                     # File was deleted or storage became unavailable - emit deletion event immediately
+                    # Only emit if transitioning from a previously known state to missing
                     prev_status = self._last_status.get(path)
-                    if prev_status != "missing":  # only emit if not already in missing state
+                    if prev_status is not None and prev_status != "missing":  # only emit if not already in missing state and was previously tracked
                         self._last_status[path] = "missing"  # update status to missing
                         self.publish(
                             {

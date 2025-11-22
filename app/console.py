@@ -266,7 +266,7 @@ def main() -> None:
         blue = "\x1b[34m"
         reset = "\x1b[0m"
     except Exception:
-        purple = reset = ""
+        purple = blue = reset = ""
     print(f"Welcome to {purple}CustosEye{reset}!")  # print welcome message with colored CustosEye
     print(
         f"Dashboard running at {blue}http://127.0.0.1:8765/{reset} {purple}⮜{reset}\n"
