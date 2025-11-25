@@ -12,6 +12,7 @@ from __future__ import annotations
 from dashboard.app import (
     _compute_char_diff,
     _compute_line_diff,
+    _diff_docx_formatting,
     _jaccard_similarity,
     _normalize_style_value,
     _normalize_text_for_diff,
@@ -325,3 +326,155 @@ def test_word_level_diff_preserves_unchanged_text():
     assert (
         old_equal_text.lower().strip() == new_equal_text.lower().strip()
     ), "Equal parts should contain the same text"
+
+
+def _make_run(text: str, styles: dict[str, object] | None = None, paragraph_index: int = 0, run_index: int = 0) -> dict:
+    return {
+        "text": text,
+        "normalized_text": text.lower(),
+        "paragraph_index": paragraph_index,
+        "run_index": run_index,
+        "styles": styles or {},
+    }
+
+
+def test_docx_formatting_no_false_positive_with_text_only_change():
+    """Ensure formatting diffs are empty when only the text content changes."""
+    baseline = [
+        _make_run("their", {"italic": True}),
+        _make_run("AI", {"italic": True}),
+    ]
+    current = [
+        _make_run("their", {"italic": True}),
+        _make_run("ye", {"italic": True}),
+    ]
+
+    assert _diff_docx_formatting(baseline, current) == []
+
+
+def test_docx_formatting_detects_color_change():
+    """Detect actual formatting changes such as color differences."""
+    baseline = [_make_run("alert", {"color": "FF0000"})]
+    current = [_make_run("alert", {"color": "00FF00"})]
+
+    changes = _diff_docx_formatting(baseline, current)
+    assert len(changes) == 1
+    change = changes[0]
+    assert change["text"].strip() == "alert"
+    assert "color" in change["before_attrs"]
+    assert "color" in change["after_attrs"]
+    assert "#FF0000" in change["before_attrs"]["color"]
+    assert "#00FF00" in change["after_attrs"]["color"]
+
+
+def test_docx_formatting_letter_level_toggle():
+    """Letter-level formatting changes (bold removed) should be detected."""
+    baseline = [_make_run("A", {"bold": True}, run_index=0), _make_run("B", {}, run_index=1)]
+    current = [_make_run("A", {}, run_index=0), _make_run("B", {}, run_index=1)]
+
+    changes = _diff_docx_formatting(baseline, current)
+    assert len(changes) == 1
+    change = changes[0]
+    assert change["text"].strip() == "A"
+    assert change["before_attrs"].get("bold") is True
+    assert "bold" not in change["after_attrs"]
+
+
+def test_docx_formatting_multiple_runs_same_delta():
+    """Adjacent runs with identical before/after styles should merge."""
+    baseline = [
+        _make_run("system", {"color": "A02B93"}, run_index=0),
+        _make_run(" ", {"color": "A02B93"}, run_index=1),
+        _make_run("locally ", {"color": "A02B93"}, run_index=2),
+    ]
+    current = [
+        _make_run("system", {"color": "EE0000"}, run_index=0),
+        _make_run(" ", {"color": "EE0000"}, run_index=1),
+        _make_run("locally ", {"color": "EE0000"}, run_index=2),
+    ]
+
+    changes = _diff_docx_formatting(baseline, current)
+    assert len(changes) == 1
+    assert changes[0]["text"] == "system locally "
+
+
+def test_docx_formatting_single_letter_inside_word():
+    """Single-letter style change with repeated letters should be detected."""
+    baseline = [
+        _make_run("s", {"color": "000000"}, run_index=0),
+        _make_run("y", {"color": "000000"}, run_index=1),
+        _make_run("s", {"color": "000000"}, run_index=2),
+    ]
+    current = [
+        _make_run("s", {"color": "000000"}, run_index=0),
+        _make_run("y", {"color": "FF0000"}, run_index=1),
+        _make_run("s", {"color": "000000"}, run_index=2),
+    ]
+
+    changes = _diff_docx_formatting(baseline, current)
+    assert len(changes) == 1
+    assert changes[0]["text"].strip() == "y"
+
+
+def test_docx_formatting_skips_whitespace_only_entries():
+    """Whitespace-only formatting changes should be hidden."""
+    baseline = [_make_run("   ", {"color": "A02B93"}, run_index=0)]
+    current = [_make_run("   ", {"color": "EE0000"}, run_index=0)]
+
+    assert _diff_docx_formatting(baseline, current) == []
+
+
+def test_docx_formatting_color_addition_from_default():
+    """Adding a color to previously unstyled text should be detected."""
+    baseline = [_make_run("hello", {}, run_index=0)]
+    current = [_make_run("hello", {"color": "00FF00"}, run_index=0)]
+
+    changes = _diff_docx_formatting(baseline, current)
+    assert len(changes) == 1
+    change = changes[0]
+    assert change["text"] == "hello"
+    assert "color" not in change["before_attrs"]
+    assert "color" in change["after_attrs"]
+
+
+def test_docx_formatting_whole_paragraph_collapse():
+    """Full paragraph color change collapses into one entry."""
+    words = [
+        "Most ",
+        "security ",
+        "tools ",
+        "are ",
+        "black ",
+        "boxes ",
+        "— ",
+        "CustosEye ",
+        "will ",
+        "be ",
+        "transparent. ",
+    ]
+    baseline = [
+        _make_run(word, {"color": "A02B93"}, paragraph_index=0, run_index=i) for i, word in enumerate(words)
+    ]
+    current = [
+        _make_run(word, {"color": "00B0F0"}, paragraph_index=0, run_index=i) for i, word in enumerate(words)
+    ]
+
+    changes = _diff_docx_formatting(baseline, current)
+    assert len(changes) == 1
+    assert changes[0]["text"] == "".join(words)
+
+
+def test_docx_formatting_returns_newest_first():
+    """Formatting changes are ordered newest-first."""
+    baseline = [
+        _make_run("first paragraph ", {"color": "FF0000"}, paragraph_index=0, run_index=0),
+        _make_run("second paragraph", {"color": "FF0000"}, paragraph_index=1, run_index=0),
+    ]
+    current = [
+        _make_run("first paragraph ", {"color": "00FF00"}, paragraph_index=0, run_index=0),
+        _make_run("second paragraph", {"color": "00FF00"}, paragraph_index=1, run_index=0),
+    ]
+
+    changes = _diff_docx_formatting(baseline, current)
+    assert len(changes) == 2
+    assert changes[0]["text"].startswith("second")

@@ -394,6 +394,50 @@
       color: var(--muted);
       line-height: 1.6;
     }
+    .diff-color-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      padding: 1px 6px;
+      font-size: 11px;
+      line-height: 1.2;
+      background: color-mix(in oklab, var(--panel) 70%, transparent);
+    }
+    .diff-color-chip-dot {
+      width: 12px;
+      height: 12px;
+      border-radius: 999px;
+      border: 1px solid rgba(0,0,0,0.2);
+      box-shadow: 0 0 0 1px rgba(255,255,255,0.4) inset;
+    }
+    .diff-color-chip-arrow {
+      margin: 0 4px;
+      color: var(--muted);
+      font-weight: 600;
+    }
+    .diff-color-flow {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      flex-wrap: wrap;
+    }
+    .diff-formatting-sample {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-bottom: 6px;
+    }
+    .diff-formatting-text {
+      padding: 2px 6px;
+      border-radius: 4px;
+      background: var(--row);
+      min-width: 20px;
+      display: inline-flex;
+      align-items: center;
+    }
     @media (max-width: 768px) {
       .diff-container {
         flex-direction: column;
@@ -1298,29 +1342,141 @@
           }
         });
 
-        // Count formatting changes
-        let formattingCount = 0;
+        // Formatting helpers (JS inside render scope to avoid globals)
+        const computeFormattingDelta = (change) => {
+          const before = change.before_attrs || {};
+          const after = change.after_attrs || {};
+          const keys = Array.from(new Set([...Object.keys(before), ...Object.keys(after)]));
+          const delta = { added: [], removed: [], changed: [] };
+          keys.forEach((key) => {
+            const beforeVal = before[key];
+            const afterVal = after[key];
+            if (beforeVal === undefined && afterVal !== undefined) {
+              delta.added.push({ attr: key, value: afterVal });
+            } else if (beforeVal !== undefined && afterVal === undefined) {
+              delta.removed.push({ attr: key, value: beforeVal });
+            } else if (beforeVal !== afterVal) {
+              delta.changed.push({ attr: key, before: beforeVal, after: afterVal });
+            }
+          });
+          delta.hasChanges = delta.added.length > 0 || delta.removed.length > 0 || delta.changed.length > 0;
+          return delta;
+        };
+
+        const formatAttrValue = (attr, value) => {
+          if (value === undefined || value === null || value === '') {
+            return '';
+          }
+          if (value === true) {
+            return attr;
+          }
+          return String(value);
+        };
+
+        const extractHexColor = (value) => {
+          if (!value) return '';
+          const match = /#([0-9A-Fa-f]{3,6})/.exec(String(value));
+          if (!match) return '';
+          let hex = match[1];
+          if (hex.length === 3) {
+            hex = hex.split('').map((c) => c + c).join('');
+          }
+          return `#${hex.toUpperCase()}`;
+        };
+
+        const renderColorChip = (label) => {
+          const normalized = (label || '').trim() || 'color';
+          const hex = extractHexColor(label);
+          if (!hex) {
+            return `<span class="diff-color-chip">${esc(normalized)}</span>`;
+          }
+          return `
+            <span class="diff-color-chip">
+              <span class="diff-color-chip-dot" style="background:${hex};"></span>
+              <span>${esc(normalized)}</span>
+            </span>
+          `;
+        };
+
+        const describeColorFlow = (before, after) => `
+          <span class="diff-color-flow">
+            ${renderColorChip(before)}
+            <span class="diff-color-chip-arrow">→</span>
+            ${renderColorChip(after)}
+          </span>
+        `;
+
+        const describeColorSingle = (value, prefix) => `
+          <span class="diff-color-flow">
+            ${prefix ? `<span class="small muted">${esc(prefix)}</span>` : ''}
+            ${renderColorChip(value)}
+          </span>
+        `;
+
+        const attrsToStyle = (attrs) => {
+          if (!attrs) return '';
+          const style = [];
+          if (attrs.bold) {
+            style.push('font-weight:600');
+          }
+          if (attrs.italic) {
+            style.push('font-style:italic');
+          }
+          if (attrs.underline) {
+            const val = String(attrs.underline).toLowerCase();
+            style.push(`text-decoration:${val === 'double' ? 'underline double' : 'underline'}`);
+          }
+          if (attrs.strikethrough) {
+            const val = String(attrs.strikethrough).toLowerCase();
+            const type = val === 'double' ? 'line-through double' : 'line-through';
+            style.push(`text-decoration:${type}`);
+          }
+          const colorHex = extractHexColor(attrs.color);
+          if (colorHex) {
+            style.push(`color:${colorHex}`);
+          }
+          return style.join('; ');
+        };
+
+        const renderStyledText = (text, attrs) => {
+          if (!text) return '';
+          const styleAttr = attrsToStyle(attrs);
+          return `<span class="diff-formatting-text"${styleAttr ? ` style="${styleAttr}"` : ''}>${esc(text)}</span>`;
+        };
+
+        let normalizedFormattingChanges = [];
         if (textDiff.formatting_changes && textDiff.formatting_changes.length > 0) {
-          formattingCount = textDiff.formatting_changes.filter(change => {
-            const changedAttrs = change.changed_attrs || [];
-            const removedAttrs = change.removed_attrs || [];
-            const addedAttrs = change.added_attrs || [];
-            return changedAttrs.length > 0 || removedAttrs.length > 0 || addedAttrs.length > 0;
-          }).length;
+          normalizedFormattingChanges = textDiff.formatting_changes
+            .map(change => {
+              const delta = computeFormattingDelta(change);
+              if (!delta.hasChanges) return null;
+              return {
+                text: change.text || '',
+                delta,
+                beforeAttrs: change.before_attrs || {},
+                afterAttrs: change.after_attrs || {},
+                order: typeof change.order === 'number' ? change.order : 0,
+              };
+            })
+            .filter(Boolean)
+            .sort((a, b) => (b.order ?? 0) - (a.order ?? 0));
         }
+        const imageChanges = Array.isArray(textDiff.image_changes) ? textDiff.image_changes : [];
+        const formattingCount = normalizedFormattingChanges.length;
+        const imageChangeCount = imageChanges.length;
+        const totalMetaChanges = formattingCount + imageChangeCount;
         
         const statsHTML = `
           <div class="diff-summary-stats" style="margin-top:8px">
             ${addedCount > 0 ? `<div class="diff-stat"><span class="diff-stat-badge added">+${addedCount}</span> <span class="small muted">added</span></div>` : ''}
             ${removedCount > 0 ? `<div class="diff-stat"><span class="diff-stat-badge removed">-${removedCount}</span> <span class="small muted">removed</span></div>` : ''}
-            ${formattingCount > 0 ? `<div class="diff-stat"><span class="diff-stat-badge" style="color:var(--warn); border-color:color-mix(in oklab, var(--warn) 40%, var(--border));">+${formattingCount}</span> <span class="small muted">formatting</span></div>` : ''}
+            ${totalMetaChanges > 0 ? `<div class="diff-stat"><span class="diff-stat-badge" style="color:var(--warn); border-color:color-mix(in oklab, var(--warn) 40%, var(--border));">+${totalMetaChanges}</span> <span class="small muted">changes</span></div>` : ''}
           </div>
         `;
         
         // Image changes display
         let imageChangesHTML = '';
-        if (textDiff.image_changes && textDiff.image_changes.length > 0) {
-          const imageChanges = textDiff.image_changes;
+        if (imageChanges.length > 0) {
           const IMAGE_CHANGES_LIMIT = 5;
           const totalImageChanges = imageChanges.length;
           const hasMoreImages = totalImageChanges > IMAGE_CHANGES_LIMIT;
@@ -1439,134 +1595,93 @@
           `;
         }
         
-        // Formatting changes display - group consecutive changes on adjacent text
+        // Formatting changes display
         let formattingChangesHTML = '';
-        if (textDiff.formatting_changes && textDiff.formatting_changes.length > 0) {
-          const formattingChanges = textDiff.formatting_changes;
-          
-          // Configurable limit for formatting changes display (default: 20)
+        if (normalizedFormattingChanges.length > 0) {
           const FORMATTING_CHANGES_LIMIT = 5;
-          
-          // group consecutive formatting changes that are on adjacent text segments
-          const groupedChanges = [];
-          let currentGroup = null;
-          
-          formattingChanges.forEach((change, index) => {
-            const changedAttrs = change.changed_attrs || [];
-            const removedAttrs = change.removed_attrs || [];
-            const addedAttrs = change.added_attrs || [];
-            
-            // skip if no actual changes
-            if (changedAttrs.length === 0 && removedAttrs.length === 0 && addedAttrs.length === 0) {
-              return;
-            }
-            
-            // check if this change can be grouped with the previous one
-            // group if they have the same attributes and are likely adjacent text
-            const canGroup = currentGroup && 
-              JSON.stringify(changedAttrs.sort()) === JSON.stringify(currentGroup.changedAttrs.sort()) &&
-              JSON.stringify(removedAttrs.sort()) === JSON.stringify(currentGroup.removedAttrs.sort()) &&
-              JSON.stringify(addedAttrs.sort()) === JSON.stringify(currentGroup.addedAttrs.sort());
-            
-            if (canGroup) {
-              // merge text segments
-              currentGroup.texts.push(change.text || '');
-            } else {
-              // start a new group
-              if (currentGroup) {
-                groupedChanges.push(currentGroup);
-              }
-              currentGroup = {
-                texts: [change.text || ''],
-                changedAttrs: changedAttrs,
-                removedAttrs: removedAttrs,
-                addedAttrs: addedAttrs
-              };
-            }
-          });
-          
-          // add the last group
-          if (currentGroup) {
-            groupedChanges.push(currentGroup);
-          }
-          
-          // Check if we need to show more/less functionality
-          const totalChanges = groupedChanges.length;
+          const totalChanges = normalizedFormattingChanges.length;
           const hasMore = totalChanges > FORMATTING_CHANGES_LIMIT;
-          const initialChanges = hasMore ? groupedChanges.slice(0, FORMATTING_CHANGES_LIMIT) : groupedChanges;
+          const initialChanges = hasMore ? normalizedFormattingChanges.slice(0, FORMATTING_CHANGES_LIMIT) : normalizedFormattingChanges;
           const remainingCount = totalChanges - FORMATTING_CHANGES_LIMIT;
-          
-          // Generate unique ID for this diff's formatting changes panel
+
           const formattingPanelId = 'formatting-changes-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9);
           const hiddenChangesId = formattingPanelId + '-hidden';
           const toggleButtonId = formattingPanelId + '-toggle';
-          
+
+            const renderFormattingEntry = (entry) => {
+              const combinedText = entry.text || '';
+              const desc = [];
+
+              entry.delta.changed.forEach(change => {
+                if (change.attr === 'color') {
+                  desc.push(`<div>${describeColorFlow(change.before, change.after)}</div>`);
+                } else {
+                  const beforeVal = formatAttrValue(change.attr, change.before);
+                  const afterVal = formatAttrValue(change.attr, change.after);
+                  desc.push(
+                    `<div style="color:var(--warn);">${esc(change.attr)}: ${esc(beforeVal)} → ${esc(afterVal)}</div>`
+                  );
+                }
+              });
+
+              entry.delta.removed.forEach(change => {
+                if (change.attr === 'color') {
+                  desc.push(`<div>${describeColorSingle(change.value, 'removed')}</div>`);
+                } else {
+                  const removedVal = formatAttrValue(change.attr, change.value);
+                  desc.push(
+                    `<div style="color:var(--bad);">Removed: ${esc(change.attr)}${removedVal ? ` (${esc(removedVal)})` : ''}</div>`
+                  );
+                }
+              });
+
+              entry.delta.added.forEach(change => {
+                if (change.attr === 'color') {
+                  desc.push(`<div>${describeColorSingle(change.value, 'added')}</div>`);
+                } else {
+                  const addedVal = formatAttrValue(change.attr, change.value);
+                  desc.push(
+                    `<div style="color:var(--good);">Added: ${esc(change.attr)}${addedVal ? ` (${esc(addedVal)})` : ''}</div>`
+                  );
+                }
+              });
+
+              const beforeSample = renderStyledText(entry.text, entry.beforeAttrs);
+              const afterSample = renderStyledText(entry.text, entry.afterAttrs);
+              let sampleBlock = '';
+              if (beforeSample || afterSample) {
+                const beforeDisplay = beforeSample || `<span class="diff-formatting-text small muted">(none)</span>`;
+                const afterDisplay = afterSample || `<span class="diff-formatting-text small muted">(none)</span>`;
+                sampleBlock = `
+                  <div class="diff-formatting-sample">
+                    ${beforeDisplay}
+                    <span class="diff-color-chip-arrow">→</span>
+                    ${afterDisplay}
+                  </div>
+                `;
+              }
+
+              if (desc.length === 0 && !sampleBlock) return '';
+
+              return `
+                <div style="margin:8px 0; padding:8px; background:var(--rowAlt); border-radius:4px;">
+                  <div style="font-weight:500; margin-bottom:4px;">Text: "${esc(combinedText).substring(0, 100)}${combinedText.length > 100 ? '...' : ''}"</div>
+                  ${sampleBlock}
+                  ${desc.length > 0 ? `<div class="small" style="margin-top:4px; display:flex; flex-direction:column; gap:4px;">${desc.join('')}</div>` : ''}
+                </div>
+              `;
+            };
+
+          const renderList = (items) => items.map(renderFormattingEntry).filter(html => html && html !== '').join('');
+
           formattingChangesHTML = `
             <div style="margin:12px 0; padding:12px; background:var(--panel); border:1px solid var(--border); border-radius:8px;">
               <div style="font-weight:600; margin-bottom:8px;">🎨 Formatting Changes ${hasMore ? `(${totalChanges} total)` : `(${totalChanges})`}</div>
               <div id="${formattingPanelId}">
-                ${initialChanges.map((group, idx) => {
-                  // combine all text segments in the group
-                  const combinedText = group.texts.join('');
-                  const changedAttrs = group.changedAttrs || [];
-                  const removedAttrs = group.removedAttrs || [];
-                  const addedAttrs = group.addedAttrs || [];
-                  
-                  // build change descriptions
-                  const changes = [];
-                  if (changedAttrs.length > 0) {
-                    changes.push(...changedAttrs.map(attr => `<span style="color:var(--warn);">${esc(attr)}</span>`));
-                  }
-                  if (removedAttrs.length > 0) {
-                    changes.push(...removedAttrs.map(attr => `<span style="color:var(--bad);">Removed: ${esc(attr)}</span>`));
-                  }
-                  if (addedAttrs.length > 0) {
-                    changes.push(...addedAttrs.map(attr => `<span style="color:var(--good);">Added: ${esc(attr)}</span>`));
-                  }
-                  
-                  if (changes.length === 0) return ''; // Skip if no actual changes
-                  
-                  return `
-                    <div style="margin:8px 0; padding:8px; background:var(--rowAlt); border-radius:4px;">
-                      <div style="font-weight:500; margin-bottom:4px;">Text: "${esc(combinedText).substring(0, 100)}${combinedText.length > 100 ? '...' : ''}"</div>
-                      <div class="small" style="margin-top:4px;">
-                        ${changes.join(' | ')}
-                      </div>
-                    </div>
-                  `;
-                }).filter(html => html && html !== '').join('')}
+                ${renderList(initialChanges)}
                 ${hasMore ? `
                   <div id="${hiddenChangesId}" style="display:none;">
-                    ${groupedChanges.slice(FORMATTING_CHANGES_LIMIT).map((group, idx) => {
-                      // combine all text segments in the group
-                      const combinedText = group.texts.join('');
-                      const changedAttrs = group.changedAttrs || [];
-                      const removedAttrs = group.removedAttrs || [];
-                      const addedAttrs = group.addedAttrs || [];
-                      
-                      // build change descriptions
-                      const changes = [];
-                      if (changedAttrs.length > 0) {
-                        changes.push(...changedAttrs.map(attr => `<span style="color:var(--warn);">${esc(attr)}</span>`));
-                      }
-                      if (removedAttrs.length > 0) {
-                        changes.push(...removedAttrs.map(attr => `<span style="color:var(--bad);">Removed: ${esc(attr)}</span>`));
-                      }
-                      if (addedAttrs.length > 0) {
-                        changes.push(...addedAttrs.map(attr => `<span style="color:var(--good);">Added: ${esc(attr)}</span>`));
-                      }
-                      
-                      if (changes.length === 0) return ''; // Skip if no actual changes
-                      
-                      return `
-                        <div style="margin:8px 0; padding:8px; background:var(--rowAlt); border-radius:4px;">
-                          <div style="font-weight:500; margin-bottom:4px;">Text: "${esc(combinedText).substring(0, 100)}${combinedText.length > 100 ? '...' : ''}"</div>
-                          <div class="small" style="margin-top:4px;">
-                            ${changes.join(' | ')}
-                          </div>
-                        </div>
-                      `;
-                    }).filter(html => html && html !== '').join('')}
+                    ${renderList(normalizedFormattingChanges.slice(FORMATTING_CHANGES_LIMIT))}
                   </div>
                   <div style="margin-top:8px; text-align:center;">
                     <button id="${toggleButtonId}" onclick="
@@ -1576,15 +1691,12 @@
                         const btn = document.getElementById('${toggleButtonId}');
                         const remainingCount = ${remainingCount};
                         if (!hidden || !btn) return false;
-                        // Check state using data attribute first (more reliable)
                         const isExpanded = btn.getAttribute('data-expanded') === 'true';
                         if (isExpanded) {
-                          // Currently expanded, so collapse it
                           hidden.style.display = 'none';
                           btn.textContent = 'Show more (' + remainingCount + ' more)';
                           btn.setAttribute('data-expanded', 'false');
                         } else {
-                          // Currently collapsed, so expand it
                           hidden.style.display = 'block';
                           btn.textContent = 'Show less';
                           btn.setAttribute('data-expanded', 'true');
