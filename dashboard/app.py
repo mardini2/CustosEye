@@ -1272,6 +1272,7 @@ def _docx_paragraph_defaults(para_xml: str) -> dict[str, Any]:
         'underline': '',
         'strikethrough': '',
         'color': '',
+        'highlight': '',
     }
     match = re.search(r"<w:pPr[^>]*>(.*?)</w:pPr>", para_xml, re.DOTALL)
     if not match:
@@ -1285,6 +1286,9 @@ def _docx_paragraph_defaults(para_xml: str) -> dict[str, Any]:
     elif _docx_bool_from_fragment(block, 'w:strike'):
         defaults['strikethrough'] = 'single'
     defaults['color'] = _docx_color_from_fragment(block)
+    highlight = _docx_highlight_from_fragment(block)
+    if highlight:
+        defaults['highlight'] = highlight.upper()
     return defaults
 
 
@@ -1324,6 +1328,10 @@ def _resolve_docx_run_styles(run_xml: str, defaults: dict[str, Any]) -> dict[str
     if color:
         styles['color'] = color.upper()
 
+    highlight = _docx_highlight_from_fragment(fragment) or defaults.get('highlight', '')
+    if highlight:
+        styles['highlight'] = str(highlight).upper()
+
     return styles
 
 
@@ -1335,6 +1343,13 @@ def _docx_bool_from_fragment(fragment: str, tag: str) -> bool | None:
         if not match:
             return None
     attrs = match.group(1) or ''
+    val_match = re.search(r'w:val="([^"]+)"', attrs, re.IGNORECASE)
+    if val_match:
+        val = val_match.group(1).strip().lower()
+        if val in {'0', 'false', 'off', 'no'}:
+            return False
+        if val in {'1', 'true', 'on', 'yes'}:
+            return True
     if re.search(r'w:val="(?:0|false)"', attrs, re.IGNORECASE):
         return False
     return True
@@ -1360,6 +1375,70 @@ def _docx_color_from_fragment(fragment: str) -> str:
     return val.upper() if val else ''
 
 
+_DOCX_HIGHLIGHT_COLOR_MAP: dict[str, str] = {
+    'BLACK': '000000',
+    'BLUE': '0000FF',
+    'CYAN': '00FFFF',
+    'GREEN': '00FF00',
+    'MAGENTA': 'FF00FF',
+    'RED': 'FF0000',
+    'YELLOW': 'FFFF00',
+    'WHITE': 'FFFFFF',
+    'DARKBLUE': '000080',
+    'DARKCYAN': '008080',
+    'DARKGREEN': '006400',
+    'DARKMAGENTA': '800080',
+    'DARKRED': '800000',
+    'DARKYELLOW': '808000',
+    'DARKGRAY': 'A9A9A9',
+    'LIGHTGRAY': 'D3D3D3',
+    'BRIGHTGREEN': '66FF00',
+    'TURQUOISE': '30D5C8',
+    'PINK': 'FFC0CB',
+    'TEAL': '008080',
+    'ORANGE': 'FFA500',
+    'VIOLET': '8F00FF',
+}
+
+
+def _docx_highlight_from_fragment(fragment: str) -> str:
+    match = re.search(r'<w:highlight[^>]*w:val="([^"]+)"', fragment, re.IGNORECASE)
+    if match:
+        val = match.group(1).strip()
+        if val.lower() not in {'', 'none', 'auto'}:
+            return val
+        return ''
+    match = re.search(r'<w:shd[^>]*w:fill="([^"]+)"', fragment, re.IGNORECASE)
+    if match:
+        val = match.group(1).strip()
+        if val.lower() not in {'', 'none', 'auto'}:
+            return val
+    return ''
+
+
+def _highlight_hex_from_value(value: str) -> str:
+    if not value:
+        return ''
+    upper = str(value).strip().upper()
+    if not upper or upper in {'NONE', 'AUTO'}:
+        return ''
+    if re.fullmatch(r'[0-9A-F]{6}', upper):
+        return upper
+    return _DOCX_HIGHLIGHT_COLOR_MAP.get(upper, '')
+
+
+def _format_highlight_snapshot(value: str) -> str:
+    if not value:
+        return ''
+    hex_value = _highlight_hex_from_value(value)
+    readable = re.sub(r'(?<!^)(?=[A-Z])', ' ', str(value).strip()).replace('_', ' ').title()
+    readable = readable or 'Highlight'
+    if hex_value:
+        color_name = _hex_to_color_name(hex_value) or readable
+        return f"{color_name} highlight (#{hex_value})"
+    return f"{readable} highlight"
+
+
 def _style_snapshot(styles: dict[str, Any]) -> dict[str, Any]:
     snapshot: dict[str, Any] = {}
     if styles.get('bold'):
@@ -1378,6 +1457,9 @@ def _style_snapshot(styles: dict[str, Any]) -> dict[str, Any]:
         color_name = _hex_to_color_name(upper)
         display = f"{color_name} (#{upper})" if color_name else f"#{upper}"
         snapshot['color'] = display
+    highlight = styles.get('highlight')
+    if highlight:
+        snapshot['highlight'] = _format_highlight_snapshot(highlight)
     return snapshot
 
 
@@ -1623,24 +1705,27 @@ def _diff_docx_formatting(
 
     merged: list[dict[str, Any]] = []
     for change in changes:
-        text = change.get('text') or ''
+        text = change.get('text')
+        if text is None:
+            continue
+        text_value = str(text)
+        if not text_value:
+            continue
         sig = change.get('delta_signature')
         same_group = (
             merged
             and merged[-1].get('paragraph_index') == change.get('paragraph_index')
             and merged[-1].get('delta_signature') == sig
         )
-        if text.strip():
-            if same_group:
-                merged[-1]['text'] = (merged[-1].get('text') or '') + text
-                merged[-1]['order'] = max(merged[-1].get('order', 0), change.get('order', 0))
-                if change.get('word_context') and not merged[-1].get('word_context'):
-                    merged[-1]['word_context'] = change.get('word_context')
-            else:
-                merged.append(dict(change))
+        if same_group:
+            merged[-1]['text'] = (merged[-1].get('text') or '') + text_value
+            merged[-1]['order'] = max(merged[-1].get('order', 0), change.get('order', 0))
+            if change.get('word_context') and not merged[-1].get('word_context'):
+                merged[-1]['word_context'] = change.get('word_context')
         else:
-            if same_group:
-                merged[-1]['text'] = (merged[-1].get('text') or '') + text
+            new_entry = dict(change)
+            new_entry['text'] = text_value
+            merged.append(new_entry)
 
     grouped: OrderedDict[
         tuple[Any, tuple[tuple[str, Any, Any], ...]], dict[str, Any]

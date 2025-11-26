@@ -423,6 +423,43 @@
       gap: 4px;
       flex-wrap: wrap;
     }
+    .diff-highlight-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      border: 1px solid color-mix(in oklab, var(--border) 70%, transparent);
+      border-radius: 999px;
+      padding: 1px 8px;
+      font-size: 11px;
+      line-height: 1.2;
+      background: color-mix(in oklab, var(--panel) 70%, transparent);
+    }
+    .diff-style-chip {
+      display: inline-flex;
+      align-items: center;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 1px 8px;
+      font-size: 11px;
+      line-height: 1.2;
+      background: color-mix(in oklab, var(--panel) 70%, transparent);
+      color: var(--muted);
+    }
+    .diff-style-chip.active {
+      color: var(--text);
+      border-color: color-mix(in oklab, var(--accent) 35%, var(--border));
+      background: color-mix(in oklab, var(--accent) 15%, var(--panel));
+    }
+    .diff-style-chip.bold { font-weight: 600; }
+    .diff-style-chip.italic { font-style: italic; }
+    .diff-style-chip.underline { text-decoration: underline; }
+    .diff-style-chip.strikethrough { text-decoration: line-through; }
+    .diff-style-flow {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      flex-wrap: wrap;
+    }
     .diff-formatting-sample {
       display: inline-flex;
       align-items: center;
@@ -1413,6 +1450,99 @@
           </span>
         `;
 
+        const getReadableTextColor = (hex) => {
+          if (!hex) return '';
+          const clean = hex.replace('#', '');
+          if (clean.length !== 6) return '';
+          const r = parseInt(clean.slice(0, 2), 16) / 255;
+          const g = parseInt(clean.slice(2, 4), 16) / 255;
+          const b = parseInt(clean.slice(4, 6), 16) / 255;
+          const luminance = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+          return luminance > 0.6 ? '#000000' : '#FFFFFF';
+        };
+
+        const renderHighlightChip = (label) => {
+          const normalized = (label || '').trim() || 'highlight';
+          const hex = extractHexColor(label);
+          if (!hex) {
+            return `<span class="diff-highlight-chip">${esc(normalized)}</span>`;
+          }
+          const textColor = getReadableTextColor(hex) || 'var(--text)';
+          return `<span class="diff-highlight-chip" style="background:${hex}; color:${textColor};">${esc(normalized)}</span>`;
+        };
+
+        const describeHighlightFlow = (before, after) => `
+          <span class="diff-style-flow">
+            ${renderHighlightChip(before)}
+            <span class="diff-color-chip-arrow">→</span>
+            ${renderHighlightChip(after)}
+          </span>
+        `;
+
+        const describeHighlightSingle = (value, prefix) => `
+          <span class="diff-style-flow">
+            ${prefix ? `<span class="small muted">${esc(prefix)}</span>` : ''}
+            ${renderHighlightChip(value)}
+          </span>
+        `;
+
+        const STYLE_ATTR_LABELS = {
+          bold: 'Bold',
+          italic: 'Italic',
+          underline: 'Underline',
+          strikethrough: 'Strikethrough',
+        };
+
+        const isStyleAttr = (attr) =>
+          Object.prototype.hasOwnProperty.call(STYLE_ATTR_LABELS, attr);
+
+        const isStyleValueEnabled = (value) => {
+          if (value === undefined || value === null) return false;
+          if (typeof value === 'boolean') return value;
+          const normalized = String(value).trim().toLowerCase();
+          return normalized !== '' && normalized !== 'false' && normalized !== 'none' && normalized !== '0';
+        };
+
+        const getStyleVariantLabel = (attr, value) => {
+          if (value === undefined || value === null) return '';
+          const normalized = String(value).trim();
+          if (!normalized) return '';
+          const lowered = normalized.toLowerCase();
+          if (lowered === 'true' || lowered === 'false') {
+            return '';
+          }
+          if ((attr === 'underline' || attr === 'strikethrough') && lowered === 'single') {
+            return '';
+          }
+          return normalized;
+        };
+
+        const renderStyleChip = (attr, value) => {
+          const label = STYLE_ATTR_LABELS[attr] || attr;
+          const enabled = isStyleValueEnabled(value);
+          const variant = getStyleVariantLabel(attr, value);
+          const classes = ['diff-style-chip', `style-${attr}`];
+          if (enabled) {
+            classes.push('active');
+          }
+          return `<span class="${classes.join(' ')}">${esc(label)}${variant ? ` (${esc(variant)})` : ''}</span>`;
+        };
+
+        const describeStyleFlow = (attr, before, after) => `
+          <span class="diff-style-flow">
+            ${renderStyleChip(attr, before)}
+            <span class="diff-color-chip-arrow">→</span>
+            ${renderStyleChip(attr, after)}
+          </span>
+        `;
+
+        const describeStyleSingle = (attr, value, prefix) => `
+          <span class="diff-style-flow">
+            ${prefix ? `<span class="small muted">${esc(prefix)}</span>` : ''}
+            ${renderStyleChip(attr, value)}
+          </span>
+        `;
+
         const attrsToStyle = (attrs) => {
           if (!attrs) return '';
           const style = [];
@@ -1434,6 +1564,16 @@
           const colorHex = extractHexColor(attrs.color);
           if (colorHex) {
             style.push(`color:${colorHex}`);
+          }
+          const highlightHex = extractHexColor(attrs.highlight);
+          if (highlightHex) {
+            style.push(`background:${highlightHex}`);
+            if (!attrs.color) {
+              const readable = getReadableTextColor(highlightHex);
+              if (readable) {
+                style.push(`color:${readable}`);
+              }
+            }
           }
           return style.join('; ');
         };
@@ -1460,8 +1600,7 @@
               };
             })
             .filter(Boolean)
-            .sort((a, b) => (b.order ?? 0) - (a.order ?? 0))
-            .reverse();
+            .sort((a, b) => (b.order ?? 0) - (a.order ?? 0));
         }
         const imageChanges = Array.isArray(textDiff.image_changes) ? textDiff.image_changes : [];
         const formattingCount = normalizedFormattingChanges.length;
@@ -1623,6 +1762,10 @@
               entry.delta.changed.forEach(change => {
                 if (change.attr === 'color') {
                   desc.push(`<div>${describeColorFlow(change.before, change.after)}</div>`);
+                } else if (change.attr === 'highlight') {
+                  desc.push(`<div>${describeHighlightFlow(change.before, change.after)}</div>`);
+                } else if (isStyleAttr(change.attr)) {
+                  desc.push(`<div>${describeStyleFlow(change.attr, change.before, change.after)}</div>`);
                 } else {
                   const beforeVal = formatAttrValue(change.attr, change.before);
                   const afterVal = formatAttrValue(change.attr, change.after);
@@ -1635,6 +1778,10 @@
               entry.delta.removed.forEach(change => {
                 if (change.attr === 'color') {
                   desc.push(`<div>${describeColorSingle(change.value, 'removed')}</div>`);
+                } else if (change.attr === 'highlight') {
+                  desc.push(`<div>${describeHighlightSingle(change.value, 'removed')}</div>`);
+                } else if (isStyleAttr(change.attr)) {
+                  desc.push(`<div>${describeStyleSingle(change.attr, change.value, 'removed')}</div>`);
                 } else {
                   const removedVal = formatAttrValue(change.attr, change.value);
                   desc.push(
@@ -1646,6 +1793,10 @@
               entry.delta.added.forEach(change => {
                 if (change.attr === 'color') {
                   desc.push(`<div>${describeColorSingle(change.value, 'added')}</div>`);
+                } else if (change.attr === 'highlight') {
+                  desc.push(`<div>${describeHighlightSingle(change.value, 'added')}</div>`);
+                } else if (isStyleAttr(change.attr)) {
+                  desc.push(`<div>${describeStyleSingle(change.attr, change.value, 'added')}</div>`);
                 } else {
                   const addedVal = formatAttrValue(change.attr, change.value);
                   desc.push(

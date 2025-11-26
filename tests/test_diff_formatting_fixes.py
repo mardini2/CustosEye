@@ -380,6 +380,18 @@ def test_docx_formatting_letter_level_toggle():
     assert "bold" not in change["after_attrs"]
 
 
+def test_docx_formatting_detects_italic_removal():
+    """Removing italic styling should be detected like color removals."""
+    baseline = [_make_run("signal", {"italic": True}, paragraph_index=0, run_index=0)]
+    current = [_make_run("signal", {}, paragraph_index=0, run_index=0)]
+
+    changes = _diff_docx_formatting(baseline, current)
+    assert len(changes) == 1
+    change = changes[0]
+    assert "italic" in change["before_attrs"]
+    assert "italic" not in change["after_attrs"]
+
+
 def test_docx_formatting_multiple_runs_same_delta():
     """Adjacent runs with identical before/after styles should merge."""
     baseline = [
@@ -478,3 +490,35 @@ def test_docx_formatting_returns_newest_first():
     changes = _diff_docx_formatting(baseline, current)
     assert len(changes) == 2
     assert changes[0]["text"].startswith("second")
+
+
+def test_docx_formatting_returns_newest_first_for_bold():
+    """Bold diffs follow the same ordering rule as color diffs."""
+    baseline = [
+        _make_run("alpha ", {}, paragraph_index=0, run_index=0),
+        _make_run("beta", {}, paragraph_index=1, run_index=0),
+    ]
+    current = [
+        _make_run("alpha ", {"bold": True}, paragraph_index=0, run_index=0),
+        _make_run("beta", {"bold": True}, paragraph_index=1, run_index=0),
+    ]
+
+    changes = _diff_docx_formatting(baseline, current)
+    assert len(changes) == 2
+    assert changes[0]["paragraph_index"] == 1
+    assert changes[1]["paragraph_index"] == 0
+
+
+def test_docx_formatting_preserves_whitespace_in_full_paragraph():
+    """Full paragraph style changes retain spaces and punctuation."""
+    words = ["To ", "give ", "a ", "haw ", "ye ", "human-", "readable", " ", "add ", "eye ", "happening "]
+    baseline = [
+        _make_run(word, {}, paragraph_index=2, run_index=i) for i, word in enumerate(words)
+    ]
+    current = [
+        _make_run(word, {"bold": True}, paragraph_index=2, run_index=i) for i, word in enumerate(words)
+    ]
+
+    changes = _diff_docx_formatting(baseline, current)
+    assert len(changes) == 1
+    assert changes[0]["text"] == "".join(words)

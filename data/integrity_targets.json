@@ -1,1 +1,100 @@
-[]
+[
+  {
+    "path": "C:/Users/alimm/Desktop/College/test/Concept Overview.docx",
+    "rule": "sha256",
+    "sha256": "90C03587E9194BD3048376E441783C9410A6E38ABCBE443B8C272FD7271AF562",
+    "last_result": "CHANGED",
+    "baseline_blob": {
+      "sha256": "90C03587E9194BD3048376E441783C9410A6E38ABCBE443B8C272FD7271AF562",
+      "size": 47830,
+      "stored_path": "C:\\Users\\alimm\\source\\repos\\CustosEye\\data\\baselines\\90\\C0\\90C03587E9194BD3048376E441783C9410A6E38ABCBE443B8C272FD7271AF562\\Concept Overview.docx",
+      "created_at": 1764133090
+    },
+    "chunks": {
+      "algo": "sha256",
+      "chunk_size": 4096,
+      "size": 47830,
+      "hashes": [
+        "AF2A5C2AB0E1B077833074A45A1C8DC6EB8EA5616B1B88F827B011C2687A3D5C",
+        "CD9496A93BCF3269B647DC604A01929C118B7156EEE023FAE2E454B2967FCDE2",
+        "6F8E0F04B38BD1CD404B8779C519E33C72CF4272A19C796B2180E7364AF7B791",
+        "0C677B6FDD76957B84C97057D4CEDCA743DABDAEAA9B85677DDB1E9275CE326B",
+        "6F13EA6AE5083A77F2ACF9892A7855B648CC6B88A711A2A39EA26B26D9BED715",
+        "95958DDA51A116777EEF2D96554168EFC6C1766166B93AC6461E22BDA8CB8126",
+        "4B6B0D3EE57973E55016CA8A84F37B24CF71F9A34BA1E094B393CB07A94B043C",
+        "981967A0E2B670979EE3503F5A606092ACB4A2A0143A81DB609753A91FAED17A",
+        "90E176EE1CB5970ECAB0142AB68CCFF76A06D613AC75D45445D7EE430E9B066E",
+        "91A263277E15B4DB523EEF7BA84A7C5049003DC374D2ADDF95D7FFC172790C4F",
+        "046D7A620427F2696A8A7315587D3578FC2BFC9C44D0265A1748958EE1AD1C3C",
+        "CED1CD382DB2CD3C14403141098B22BAD72A38694D9BF3F92CA72227FD537D2E"
+      ]
+    },
+    "zip_manifest": {
+      "[Content_Types].xml": {
+        "size": 1495,
+        "crc": 1560748519,
+        "date": 19800101
+      },
+      "_rels/.rels": {
+        "size": 590,
+        "crc": 3071971614,
+        "date": 19800101
+      },
+      "word/document.xml": {
+        "size": 70166,
+        "crc": 119960357,
+        "date": 19800101
+      },
+      "word/_rels/document.xml.rels": {
+        "size": 1082,
+        "crc": 3089817764,
+        "date": 19800101
+      },
+      "word/media/image1.png": {
+        "size": 21361,
+        "crc": 421561776,
+        "date": 19800101
+      },
+      "word/theme/theme1.xml": {
+        "size": 8397,
+        "crc": 3036446823,
+        "date": 19800101
+      },
+      "word/settings.xml": {
+        "size": 16405,
+        "crc": 1568602415,
+        "date": 19800101
+      },
+      "word/numbering.xml": {
+        "size": 37273,
+        "crc": 3444515416,
+        "date": 19800101
+      },
+      "word/styles.xml": {
+        "size": 42786,
+        "crc": 3950481246,
+        "date": 19800101
+      },
+      "word/webSettings.xml": {
+        "size": 1083,
+        "crc": 1528565436,
+        "date": 19800101
+      },
+      "word/fontTable.xml": {
+        "size": 3392,
+        "crc": 3463420481,
+        "date": 19800101
+      },
+      "docProps/core.xml": {
+        "size": 751,
+        "crc": 355056834,
+        "date": 19800101
+      },
+      "docProps/app.xml": {
+        "size": 995,
+        "crc": 2045220786,
+        "date": 19800101
+      }
+    }
+  }
+]
