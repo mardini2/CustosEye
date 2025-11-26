@@ -1436,6 +1436,7 @@ def _style_snapshot(styles: dict[str, Any]) -> dict[str, Any]:
     snapshot: dict[str, Any] = {}
     if styles.get('bold'):
         snapshot['bold'] = True
+    # Explicitly track italic - include it in snapshot if True (removal detection works via comparison)
     if styles.get('italic'):
         snapshot['italic'] = True
     underline = styles.get('underline')
@@ -1686,11 +1687,47 @@ def _diff_docx_formatting(
             continue
 
         if tag == 'replace':
+            # Check if text content changed (not just formatting)
+            base_text = ''.join(run.get('text') or '' for run in baseline_runs[i1:i2])
+            current_text = ''.join(run.get('text') or '' for run in current_runs[j1:j2])
+            text_changed = base_text != current_text
+            
+            # Try character-level changes (only works when text is identical)
             char_changes = _char_level_changes(
                 baseline_runs[i1:i2], current_runs[j1:j2], fallback_seed=len(changes)
             )
             if char_changes:
                 changes.extend(char_changes)
+            elif text_changed:
+                # Text changed - check for formatting changes across the replaced chunk
+                # Compare formatting of baseline vs current runs
+                for base_run, curr_run in zip(baseline_runs[i1:i2], current_runs[j1:j2]):
+                    before_snapshot = _style_snapshot(base_run.get('styles', {}))
+                    after_snapshot = _style_snapshot(curr_run.get('styles', {}))
+                    if before_snapshot != after_snapshot:
+                        # Formatting changed alongside text change
+                        # Use current text and mark that text also changed
+                        para_idx = curr_run.get('paragraph_index')
+                        run_idx = curr_run.get('run_index')
+                        curr_text = curr_run.get('text') or ''
+                        if curr_text:
+                            char_len = len(curr_text)
+                            char_offset = char_len - 1 if char_len > 0 else 0
+                            # Use proper position-based ordering, same as other formatting changes
+                            order_value = _doc_position_order(
+                                para_idx, run_idx, char_offset, fallback=0
+                            )
+                            changes.append(
+                                {
+                                    'text': curr_text,
+                                    'paragraph_index': para_idx,
+                                    'before_attrs': before_snapshot,
+                                    'after_attrs': after_snapshot,
+                                    'order': order_value,
+                                    'word_context': '',
+                                    'has_text_changes': True,  # Flag indicating text also changed
+                                }
+                            )
     for change in changes:
         before_snapshot = change.get('before_attrs') or {}
         after_snapshot = change.get('after_attrs') or {}
@@ -1717,6 +1754,17 @@ def _diff_docx_formatting(
             if same_group:
                 merged[-1]['text'] = (merged[-1].get('text') or '') + text
 
+    # Helper to get full paragraph text from current runs
+    def _get_full_paragraph_text(para_idx: Any) -> str:
+        """Extract complete text from all runs in a paragraph"""
+        para_text_parts: list[str] = []
+        for run in current_runs:
+            if run.get('paragraph_index') == para_idx:
+                run_text = run.get('text') or ''
+                if run_text:
+                    para_text_parts.append(run_text)
+        return ''.join(para_text_parts)
+    
     grouped: OrderedDict[
         tuple[Any, tuple[tuple[str, Any, Any], ...]], dict[str, Any]
     ] = OrderedDict()
@@ -1725,10 +1773,28 @@ def _diff_docx_formatting(
         if key not in grouped:
             grouped[key] = dict(change)
         else:
-            grouped[key]['text'] = (grouped[key].get('text') or '') + (change.get('text') or '')
+            # Concatenate text from all changes with same formatting - ensure we preserve all text
+            existing_text = grouped[key].get('text') or ''
+            new_text = change.get('text') or ''
+            # Simple concatenation - the merging phase should have already captured all relevant text
+            grouped[key]['text'] = existing_text + new_text
+            # Use max to ensure we get the highest (newest) order value
             grouped[key]['order'] = max(grouped[key].get('order', 0), change.get('order', 0))
+            # Preserve has_text_changes flag if either change has it
+            if change.get('has_text_changes'):
+                grouped[key]['has_text_changes'] = True
             if change.get('word_context') and not grouped[key].get('word_context'):
                 grouped[key]['word_context'] = change.get('word_context')
+    
+    # For changes with text modifications, replace text with full paragraph text
+    for change in grouped.values():
+        if change.get('has_text_changes'):
+            para_idx = change.get('paragraph_index')
+            if para_idx is not None:
+                full_para_text = _get_full_paragraph_text(para_idx)
+                if full_para_text:
+                    # Use the full current paragraph text to show exactly what's in the document now
+                    change['text'] = full_para_text
 
     result = [
         {k: v for k, v in change.items() if k != 'delta_signature'}

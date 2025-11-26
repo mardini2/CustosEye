@@ -1597,11 +1597,11 @@
                 afterAttrs: change.after_attrs || {},
                 order: typeof change.order === 'number' ? change.order : 0,
                 wordContext: change.word_context || '',
+                hasTextChanges: change.has_text_changes || false,
               };
             })
             .filter(Boolean)
-            .sort((a, b) => (b.order ?? 0) - (a.order ?? 0))
-            .reverse();
+            .sort((a, b) => (b.order ?? 0) - (a.order ?? 0));
         }
         const imageChanges = Array.isArray(textDiff.image_changes) ? textDiff.image_changes : [];
         const formattingCount = normalizedFormattingChanges.length;
@@ -1823,12 +1823,19 @@
 
               if (desc.length === 0 && !sampleBlock) return '';
 
+              const textChangesNote = entry.hasTextChanges 
+                ? `<div style="margin-top:6px; padding:6px; background:var(--warn); color:var(--text); border-radius:4px; font-size:0.9em;">
+                    <strong>Note:</strong> This sentence also has text additions/removals. See the text changes section below for details.
+                   </div>`
+                : '';
+
               return `
                 <div style="margin:8px 0; padding:8px; background:var(--rowAlt); border-radius:4px;">
                   <div style="font-weight:500; margin-bottom:4px;">Text: "${esc(combinedText).substring(0, 100)}${combinedText.length > 100 ? '...' : ''}"</div>
                   ${shouldShowWordContext ? `<div class="small muted">Within word: "${esc(wordContext)}"</div>` : ''}
                   ${sampleBlock}
                   ${desc.length > 0 ? `<div class="small" style="margin-top:4px; display:flex; flex-direction:column; gap:4px;">${desc.join('')}</div>` : ''}
+                  ${textChangesNote}
                 </div>
               `;
             };
