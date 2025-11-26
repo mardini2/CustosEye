@@ -1343,13 +1343,6 @@ def _docx_bool_from_fragment(fragment: str, tag: str) -> bool | None:
         if not match:
             return None
     attrs = match.group(1) or ''
-    val_match = re.search(r'w:val="([^"]+)"', attrs, re.IGNORECASE)
-    if val_match:
-        val = val_match.group(1).strip().lower()
-        if val in {'0', 'false', 'off', 'no'}:
-            return False
-        if val in {'1', 'true', 'on', 'yes'}:
-            return True
     if re.search(r'w:val="(?:0|false)"', attrs, re.IGNORECASE):
         return False
     return True
@@ -1705,27 +1698,24 @@ def _diff_docx_formatting(
 
     merged: list[dict[str, Any]] = []
     for change in changes:
-        text = change.get('text')
-        if text is None:
-            continue
-        text_value = str(text)
-        if not text_value:
-            continue
+        text = change.get('text') or ''
         sig = change.get('delta_signature')
         same_group = (
             merged
             and merged[-1].get('paragraph_index') == change.get('paragraph_index')
             and merged[-1].get('delta_signature') == sig
         )
-        if same_group:
-            merged[-1]['text'] = (merged[-1].get('text') or '') + text_value
-            merged[-1]['order'] = max(merged[-1].get('order', 0), change.get('order', 0))
-            if change.get('word_context') and not merged[-1].get('word_context'):
-                merged[-1]['word_context'] = change.get('word_context')
+        if text.strip():
+            if same_group:
+                merged[-1]['text'] = (merged[-1].get('text') or '') + text
+                merged[-1]['order'] = max(merged[-1].get('order', 0), change.get('order', 0))
+                if change.get('word_context') and not merged[-1].get('word_context'):
+                    merged[-1]['word_context'] = change.get('word_context')
+            else:
+                merged.append(dict(change))
         else:
-            new_entry = dict(change)
-            new_entry['text'] = text_value
-            merged.append(new_entry)
+            if same_group:
+                merged[-1]['text'] = (merged[-1].get('text') or '') + text
 
     grouped: OrderedDict[
         tuple[Any, tuple[tuple[str, Any, Any], ...]], dict[str, Any]

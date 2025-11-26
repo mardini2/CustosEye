@@ -1600,7 +1600,8 @@
               };
             })
             .filter(Boolean)
-            .sort((a, b) => (b.order ?? 0) - (a.order ?? 0));
+            .sort((a, b) => (b.order ?? 0) - (a.order ?? 0))
+            .reverse();
         }
         const imageChanges = Array.isArray(textDiff.image_changes) ? textDiff.image_changes : [];
         const formattingCount = normalizedFormattingChanges.length;
