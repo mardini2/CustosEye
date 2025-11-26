@@ -1601,7 +1601,8 @@
               };
             })
             .filter(Boolean)
-            .sort((a, b) => (b.order ?? 0) - (a.order ?? 0));
+            .sort((a, b) => (b.order ?? 0) - (a.order ?? 0))
+            .reverse();
         }
         const imageChanges = Array.isArray(textDiff.image_changes) ? textDiff.image_changes : [];
         const formattingCount = normalizedFormattingChanges.length;
@@ -1752,6 +1753,9 @@
 
             const renderFormattingEntry = (entry) => {
               const combinedText = entry.text || '';
+              const displayFullText = combinedText
+                ? `<span style="white-space:pre-wrap;">${esc(combinedText)}</span>`
+                : '<span class="small muted">(blank)</span>';
               const wordContext = entry.wordContext || '';
               const normalizedWordContext = wordContext.trim();
               const normalizedCombinedText = combinedText.trim();
@@ -1831,7 +1835,10 @@
 
               return `
                 <div style="margin:8px 0; padding:8px; background:var(--rowAlt); border-radius:4px;">
-                  <div style="font-weight:500; margin-bottom:4px;">Text: "${esc(combinedText).substring(0, 100)}${combinedText.length > 100 ? '...' : ''}"</div>
+                  <div style="font-weight:500; margin-bottom:4px;">
+                    Text:
+                    ${displayFullText}
+                  </div>
                   ${shouldShowWordContext ? `<div class="small muted">Within word: "${esc(wordContext)}"</div>` : ''}
                   ${sampleBlock}
                   ${desc.length > 0 ? `<div class="small" style="margin-top:4px; display:flex; flex-direction:column; gap:4px;">${desc.join('')}</div>` : ''}

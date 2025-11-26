@@ -1754,16 +1754,30 @@ def _diff_docx_formatting(
             if same_group:
                 merged[-1]['text'] = (merged[-1].get('text') or '') + text
 
+    def _build_paragraph_text_map(runs: list[dict[str, Any]]) -> dict[Any, str]:
+        """Group consecutive run text into full paragraph strings."""
+        paragraphs: dict[Any, list[str]] = {}
+        for run in runs:
+            para_idx = run.get('paragraph_index')
+            if para_idx is None:
+                continue
+            run_text = run.get('text') or ''
+            if not run_text:
+                continue
+            if para_idx not in paragraphs:
+                paragraphs[para_idx] = []
+            paragraphs[para_idx].append(run_text)
+        return {idx: ''.join(parts) for idx, parts in paragraphs.items()}
+
+    baseline_paragraph_texts = _build_paragraph_text_map(baseline_runs)
+    current_paragraph_texts = _build_paragraph_text_map(current_runs)
+
     # Helper to get full paragraph text from current runs
     def _get_full_paragraph_text(para_idx: Any) -> str:
         """Extract complete text from all runs in a paragraph"""
-        para_text_parts: list[str] = []
-        for run in current_runs:
-            if run.get('paragraph_index') == para_idx:
-                run_text = run.get('text') or ''
-                if run_text:
-                    para_text_parts.append(run_text)
-        return ''.join(para_text_parts)
+        if para_idx is None:
+            return ''
+        return current_paragraph_texts.get(para_idx, '')
     
     grouped: OrderedDict[
         tuple[Any, tuple[tuple[str, Any, Any], ...]], dict[str, Any]
@@ -1786,15 +1800,20 @@ def _diff_docx_formatting(
             if change.get('word_context') and not grouped[key].get('word_context'):
                 grouped[key]['word_context'] = change.get('word_context')
     
-    # For changes with text modifications, replace text with full paragraph text
+    # For each change, decide if the paragraph's text actually changed and sync the sentence output.
     for change in grouped.values():
-        if change.get('has_text_changes'):
-            para_idx = change.get('paragraph_index')
-            if para_idx is not None:
-                full_para_text = _get_full_paragraph_text(para_idx)
-                if full_para_text:
-                    # Use the full current paragraph text to show exactly what's in the document now
-                    change['text'] = full_para_text
+        para_idx = change.get('paragraph_index')
+        current_para_text = _get_full_paragraph_text(para_idx)
+        baseline_para_text = (
+            baseline_paragraph_texts.get(para_idx, '') if para_idx is not None else ''
+        )
+        has_actual_text_changes = bool(current_para_text) and current_para_text != baseline_para_text
+        if has_actual_text_changes:
+            # Use the full current paragraph text to show exactly what's in the document now
+            change['text'] = current_para_text
+            change['has_text_changes'] = True
+        else:
+            change['has_text_changes'] = False
 
     result = [
         {k: v for k, v in change.items() if k != 'delta_signature'}

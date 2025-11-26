@@ -522,3 +522,55 @@ def test_docx_formatting_preserves_whitespace_in_full_paragraph():
     changes = _diff_docx_formatting(baseline, current)
     assert len(changes) == 1
     assert changes[0]["text"] == "".join(words)
+
+
+def test_docx_formatting_sentence_updates_with_text_edits():
+    """Formatting diffs should surface the complete current sentence when text also changed."""
+    baseline = [
+        _make_run(
+            "To give a haw human-readable ",
+            {"color": "FF0000"},
+            paragraph_index=0,
+            run_index=0,
+        ),
+        _make_run(
+            "add eye happening their hacker — every change, hi transparent and.",
+            {"color": "FF0000"},
+            paragraph_index=0,
+            run_index=1,
+        ),
+    ]
+    current_sentence = (
+        "To give a ye haw human-readable add eye happening their hacker — every hi change, "
+        "hi every threat — using explainable transparent and."
+    )
+    current = [
+        _make_run(
+            "To give a ye haw human-readable ",
+            {"color": "00FF00"},
+            paragraph_index=0,
+            run_index=0,
+        ),
+        _make_run(
+            "add eye happening their hacker — every hi change, hi every threat — using explainable transparent and.",
+            {"color": "00FF00"},
+            paragraph_index=0,
+            run_index=1,
+        ),
+    ]
+
+    changes = _diff_docx_formatting(baseline, current)
+    assert len(changes) == 1
+    change = changes[0]
+    assert change["text"] == current_sentence
+    assert change.get("has_text_changes") is True
+
+
+def test_docx_formatting_text_note_only_when_text_differs():
+    """The note flag should only be set when the paragraph's text actually changed."""
+    baseline = [_make_run("alpha beta ", {"bold": True}, paragraph_index=1, run_index=0)]
+    current = [_make_run("alpha beta ", {"bold": True, "color": "00FF00"}, paragraph_index=1, run_index=0)]
+
+    changes = _diff_docx_formatting(baseline, current)
+    assert len(changes) == 1
+    assert changes[0].get("has_text_changes") is False
