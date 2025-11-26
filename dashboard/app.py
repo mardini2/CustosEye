@@ -1394,6 +1394,28 @@ def _formatting_delta_signature(
     return tuple(signature)
 
 
+def _doc_position_order(
+    paragraph_index: Any,
+    run_index: Any,
+    char_offset: int = 0,
+    fallback: int = 0,
+) -> int:
+    """
+    produce a sortable integer that reflects the position of a run (or character) in the document.
+    falls back to the provided value when paragraph/run indexes are unavailable.
+    """
+    has_para = isinstance(paragraph_index, int) and paragraph_index >= 0
+    has_run = isinstance(run_index, int) and run_index >= 0
+
+    if not has_para and not has_run:
+        return fallback
+
+    para_val = (paragraph_index if has_para else -1) + 1
+    run_val = (run_index if has_run else -1) + 1
+    offset_val = max(0, char_offset)
+    return (para_val << 32) | (run_val << 16) | offset_val
+
+
 def _diff_docx_formatting(
     baseline_runs: list[dict[str, Any]], current_runs: list[dict[str, Any]]
 ) -> list[dict[str, Any]]:
@@ -1412,6 +1434,139 @@ def _diff_docx_formatting(
             keys.append(f"{base}#{idx}")
         return keys
 
+    def _runs_to_char_spans(runs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        spans: list[dict[str, Any]] = []
+        for run in runs:
+            text = run.get('text') or ''
+            if not text:
+                continue
+            paragraph_index = run.get('paragraph_index')
+            run_index = run.get('run_index')
+            snapshot = _style_snapshot(run.get('styles', {}))
+            for offset, char in enumerate(text):
+                spans.append(
+                    {
+                        'char': char,
+                        'paragraph_index': paragraph_index,
+                        'run_index': run_index,
+                        'char_offset': offset,
+                        'snapshot': snapshot,
+                    }
+                )
+        return spans
+
+    def _char_level_changes(
+        base_chunk: list[dict[str, Any]],
+        current_chunk: list[dict[str, Any]],
+        fallback_seed: int,
+    ) -> list[dict[str, Any]]:
+        base_text = ''.join(run.get('text') or '' for run in base_chunk)
+        current_text = ''.join(run.get('text') or '' for run in current_chunk)
+        if not base_text or base_text != current_text:
+            return []
+
+        base_spans = _runs_to_char_spans(base_chunk)
+        current_spans = _runs_to_char_spans(current_chunk)
+        if len(base_spans) != len(current_spans):
+            return []
+
+        char_changes: list[dict[str, Any]] = []
+        buffer_chars: list[str] = []
+        buffer_before: dict[str, Any] | None = None
+        buffer_after: dict[str, Any] | None = None
+        buffer_para: Any = None
+        buffer_order: int | None = None
+        buffer_start_idx: int | None = None
+
+        def _word_context(full_text: str, start_idx: int, length: int) -> str:
+            if not full_text:
+                return ''
+            start = max(0, min(start_idx, len(full_text)))
+            end = max(start, min(len(full_text), start_idx + max(length, 1)))
+            while start > 0 and not full_text[start - 1].isspace():
+                start -= 1
+            while end < len(full_text) and not full_text[end].isspace():
+                end += 1
+            return full_text[start:end].strip()
+
+        def _flush_buffer() -> None:
+            nonlocal buffer_chars, buffer_before, buffer_after, buffer_para, buffer_order, buffer_start_idx
+            if not buffer_chars:
+                return
+            fragment_text = ''.join(buffer_chars)
+            context_word = ''
+            if buffer_start_idx is not None:
+                context_word = _word_context(current_text, buffer_start_idx, len(buffer_chars))
+            word_context_value = ''
+            normalized_fragment = fragment_text.strip()
+            normalized_context = context_word.strip()
+            if (
+                normalized_context
+                and normalized_fragment
+                and normalized_fragment != normalized_context
+                and normalized_fragment in normalized_context
+            ):
+                word_context_value = context_word
+            char_changes.append(
+                {
+                    'text': fragment_text,
+                    'paragraph_index': buffer_para,
+                    'before_attrs': buffer_before or {},
+                    'after_attrs': buffer_after or {},
+                    'order': buffer_order
+                    if buffer_order is not None
+                    else fallback_seed + len(char_changes),
+                    'word_context': word_context_value,
+                }
+            )
+            buffer_chars = []
+            buffer_before = None
+            buffer_after = None
+            buffer_para = None
+            buffer_order = None
+            buffer_start_idx = None
+
+        for idx, (before_span, after_span) in enumerate(zip(base_spans, current_spans)):
+            if before_span['char'] != after_span['char']:
+                _flush_buffer()
+                return []
+
+            before_snapshot = before_span.get('snapshot') or {}
+            after_snapshot = after_span.get('snapshot') or {}
+
+            if before_snapshot == after_snapshot:
+                _flush_buffer()
+                continue
+
+            paragraph_index = after_span.get('paragraph_index')
+            run_index = after_span.get('run_index')
+            char_offset = after_span.get('char_offset', 0)
+            char_order = _doc_position_order(
+                paragraph_index, run_index, char_offset, fallback=fallback_seed + idx
+            )
+
+            same_group = (
+                buffer_chars
+                and buffer_before == before_snapshot
+                and buffer_after == after_snapshot
+                and buffer_para == paragraph_index
+            )
+
+            if not same_group:
+                _flush_buffer()
+                buffer_before = before_snapshot
+                buffer_after = after_snapshot
+                buffer_para = paragraph_index
+                buffer_order = char_order
+                buffer_start_idx = idx
+            else:
+                buffer_order = max(buffer_order or 0, char_order)
+
+            buffer_chars.append(after_span['char'])
+
+        _flush_buffer()
+        return char_changes
+
     base_keys = _build_run_keys(baseline_runs)
     cur_keys = _build_run_keys(current_runs)
     matcher = SequenceMatcher(None, base_keys, cur_keys, autojunk=False)
@@ -1425,24 +1580,42 @@ def _diff_docx_formatting(
             for bi, cj in zip(range(i1, i2), range(j1, j2)):
                 if (baseline_runs[bi].get('text') or '') == (current_runs[cj].get('text') or ''):
                     pairs.append((bi, cj))
-        if not pairs:
+        if pairs:
+            for bi, cj in pairs:
+                before_run = baseline_runs[bi]
+                after_run = current_runs[cj]
+                before_snapshot = _style_snapshot(before_run.get('styles', {}))
+                after_snapshot = _style_snapshot(after_run.get('styles', {}))
+                if before_snapshot != after_snapshot:
+                    text_span = after_run.get('text') or before_run.get('text') or ''
+                    current_text = after_run.get('text') or text_span or ''
+                    char_len = len(current_text)
+                    char_offset = char_len - 1 if char_len > 0 else 0
+                    word_context = ''
+                    order_value = _doc_position_order(
+                        after_run.get('paragraph_index'),
+                        after_run.get('run_index'),
+                        char_offset,
+                        fallback=len(changes),
+                    )
+                    changes.append(
+                        {
+                            'text': text_span,
+                            'paragraph_index': after_run.get('paragraph_index'),
+                            'before_attrs': before_snapshot,
+                            'after_attrs': after_snapshot,
+                            'order': order_value,
+                            'word_context': word_context,
+                        }
+                    )
             continue
-        for bi, cj in pairs:
-            before_run = baseline_runs[bi]
-            after_run = current_runs[cj]
-            before_snapshot = _style_snapshot(before_run.get('styles', {}))
-            after_snapshot = _style_snapshot(after_run.get('styles', {}))
-            if before_snapshot != after_snapshot:
-                text_span = after_run.get('text') or before_run.get('text') or ''
-                changes.append(
-                    {
-                        'text': text_span,
-                        'paragraph_index': after_run.get('paragraph_index'),
-                        'before_attrs': before_snapshot,
-                        'after_attrs': after_snapshot,
-                        'order': len(changes),
-                    }
-                )
+
+        if tag == 'replace':
+            char_changes = _char_level_changes(
+                baseline_runs[i1:i2], current_runs[j1:j2], fallback_seed=len(changes)
+            )
+            if char_changes:
+                changes.extend(char_changes)
     for change in changes:
         before_snapshot = change.get('before_attrs') or {}
         after_snapshot = change.get('after_attrs') or {}
@@ -1461,6 +1634,8 @@ def _diff_docx_formatting(
             if same_group:
                 merged[-1]['text'] = (merged[-1].get('text') or '') + text
                 merged[-1]['order'] = max(merged[-1].get('order', 0), change.get('order', 0))
+                if change.get('word_context') and not merged[-1].get('word_context'):
+                    merged[-1]['word_context'] = change.get('word_context')
             else:
                 merged.append(dict(change))
         else:
@@ -1477,6 +1652,8 @@ def _diff_docx_formatting(
         else:
             grouped[key]['text'] = (grouped[key].get('text') or '') + (change.get('text') or '')
             grouped[key]['order'] = max(grouped[key].get('order', 0), change.get('order', 0))
+            if change.get('word_context') and not grouped[key].get('word_context'):
+                grouped[key]['word_context'] = change.get('word_context')
 
     result = [
         {k: v for k, v in change.items() if k != 'delta_signature'}
