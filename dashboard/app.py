@@ -1290,50 +1290,98 @@ def _format_attr_for_display(attr_key: str, attr_val: Any) -> str:
 # extract text formatting (bold, italic, underline, strikethrough) from Office documents for diff viewing
 def _extract_formatting_from_office_doc(path: str) -> list[dict[str, Any]]:
     """
-    Extract ordered DOCX run metadata (text + effective styles).
+    Extract ordered DOCX/PPTX run metadata (text + effective styles).
     Returns a list of run dictionaries containing:
       - text / normalized_text
-      - paragraph_index / run_index
+      - paragraph_index / run_index (or slide_index for PPTX)
       - styles (bold/italic/etc.) resolved with paragraph defaults.
     """
     entries: list[dict[str, Any]] = []
     try:
-        if not path or not str(path).lower().endswith('.docx'):
+        path_lower = str(path or "").lower()
+        if not path or not (path_lower.endswith('.docx') or path_lower.endswith('.pptx')):
             return entries
         norm_path = _norm_user_path(path)
-        with zipfile.ZipFile(norm_path, 'r') as zf:
-            doc_xml = zf.read('word/document.xml').decode('utf-8', errors='replace')
+        
+        if path_lower.endswith('.docx'):
+            with zipfile.ZipFile(norm_path, 'r') as zf:
+                doc_xml = zf.read('word/document.xml').decode('utf-8', errors='replace')
+            
+            paragraphs = re.findall(r"<w:p[^>]*>(.*?)</w:p>", doc_xml, re.DOTALL)
+            for para_idx, para_xml in enumerate(paragraphs):
+                defaults = _docx_paragraph_defaults(para_xml)
+                run_matches = re.findall(r"<w:r[^>]*>(.*?)</w:r>", para_xml, re.DOTALL)
+                for run_idx, run_xml in enumerate(run_matches):
+                    texts = re.findall(r"<w:t[^>]*>([^<]+)</w:t>", run_xml)
+                    raw_text = ''.join(html.unescape(t) for t in texts)
+                    has_tab = bool(re.search(r"<w:tab[^>]*/>", run_xml))
+                    has_break = bool(re.search(r"<w:br[^>]*/>", run_xml))
+                    if has_tab:
+                        raw_text = "\t" + raw_text
+                    if has_break:
+                        raw_text = raw_text + "\n"
+                    if not raw_text and not (has_tab or has_break):
+                        continue
+                    normalized = _normalize_text_for_diff(raw_text)
+                    if not normalized:
+                        normalized = raw_text.strip() or f"__run_{para_idx}_{run_idx}__"
+                    styles = _resolve_docx_run_styles(run_xml, defaults)
+                    entries.append(
+                        {
+                            'text': raw_text,
+                            'normalized_text': normalized,
+                            'paragraph_index': para_idx,
+                            'run_index': run_idx,
+                            'styles': styles,
+                        }
+                    )
+        elif path_lower.endswith('.pptx'):
+            with zipfile.ZipFile(norm_path, 'r') as zf:
+                # Get all slide files, sorted by slide number
+                slide_files = [
+                    name
+                    for name in zf.namelist()
+                    if name.startswith("ppt/slides/slide") and name.endswith(".xml")
+                ]
+                slide_files.sort()
+                
+                for slide_idx, slide_file in enumerate(slide_files):
+                    try:
+                        slide_xml = zf.read(slide_file).decode('utf-8', errors='replace')
+                        # Extract paragraphs from slide (a:p tags)
+                        paragraphs = re.findall(r"<a:p[^>]*>(.*?)</a:p>", slide_xml, re.DOTALL)
+                        for para_idx, para_xml in enumerate(paragraphs):
+                            defaults = _pptx_paragraph_defaults(para_xml)
+                            # Extract runs from paragraph (a:r tags)
+                            run_matches = re.findall(r"<a:r[^>]*>(.*?)</a:r>", para_xml, re.DOTALL)
+                            for run_idx, run_xml in enumerate(run_matches):
+                                # Extract text from a:t tags
+                                texts = re.findall(r"<a:t[^>]*>([^<]+)</a:t>", run_xml)
+                                raw_text = ''.join(html.unescape(t) for t in texts)
+                                # Check for line breaks in PowerPoint (a:br tags)
+                                has_break = bool(re.search(r"<a:br[^>]*/>", run_xml))
+                                if has_break:
+                                    raw_text = raw_text + "\n"
+                                if not raw_text and not has_break:
+                                    continue
+                                normalized = _normalize_text_for_diff(raw_text)
+                                if not normalized:
+                                    normalized = raw_text.strip() or f"__run_{slide_idx}_{para_idx}_{run_idx}__"
+                                styles = _resolve_pptx_run_styles(run_xml, defaults)
+                                # Use slide_idx as paragraph_index for ordering compatibility
+                                entries.append(
+                                    {
+                                        'text': raw_text,
+                                        'normalized_text': normalized,
+                                        'paragraph_index': slide_idx,  # Use slide index for ordering
+                                        'run_index': (para_idx << 16) | run_idx,  # Combine para and run for uniqueness
+                                        'styles': styles,
+                                    }
+                                )
+                    except Exception:
+                        continue
     except Exception:
         return entries
-
-    paragraphs = re.findall(r"<w:p[^>]*>(.*?)</w:p>", doc_xml, re.DOTALL)
-    for para_idx, para_xml in enumerate(paragraphs):
-        defaults = _docx_paragraph_defaults(para_xml)
-        run_matches = re.findall(r"<w:r[^>]*>(.*?)</w:r>", para_xml, re.DOTALL)
-        for run_idx, run_xml in enumerate(run_matches):
-            texts = re.findall(r"<w:t[^>]*>([^<]+)</w:t>", run_xml)
-            raw_text = ''.join(html.unescape(t) for t in texts)
-            has_tab = bool(re.search(r"<w:tab[^>]*/>", run_xml))
-            has_break = bool(re.search(r"<w:br[^>]*/>", run_xml))
-            if has_tab:
-                raw_text = "\t" + raw_text
-            if has_break:
-                raw_text = raw_text + "\n"
-            if not raw_text and not (has_tab or has_break):
-                continue
-            normalized = _normalize_text_for_diff(raw_text)
-            if not normalized:
-                normalized = raw_text.strip() or f"__run_{para_idx}_{run_idx}__"
-            styles = _resolve_docx_run_styles(run_xml, defaults)
-            entries.append(
-                {
-                    'text': raw_text,
-                    'normalized_text': normalized,
-                    'paragraph_index': para_idx,
-                    'run_index': run_idx,
-                    'styles': styles,
-                }
-            )
     return entries
 
 
@@ -1542,6 +1590,198 @@ def _formatting_delta_signature(
     return tuple(signature)
 
 
+def _pptx_paragraph_defaults(para_xml: str) -> dict[str, Any]:
+    """Extract default formatting from PowerPoint paragraph properties."""
+    defaults: dict[str, Any] = {
+        'bold': False,
+        'italic': False,
+        'underline': '',
+        'strikethrough': '',
+        'color': '',
+        'highlight': '',
+    }
+    # PowerPoint paragraphs may have default run properties in a:pPr/a:defRPr
+    match = re.search(r"<a:pPr[^>]*>(.*?)</a:pPr>", para_xml, re.DOTALL)
+    if match:
+        ppr_block = match.group(1)
+        def_rpr_match = re.search(r"<a:defRPr[^>]*>(.*?)</a:defRPr>", ppr_block, re.DOTALL)
+        if def_rpr_match:
+            block = def_rpr_match.group(1)
+            defaults['bold'] = bool(_pptx_bool_from_fragment(block, 'a:b'))
+            defaults['italic'] = bool(_pptx_bool_from_fragment(block, 'a:i'))
+            defaults['underline'] = _pptx_underline_from_fragment(block)
+            if _pptx_bool_from_fragment(block, 'a:strike'):
+                defaults['strikethrough'] = 'single'
+            defaults['color'] = _pptx_color_from_fragment(block)
+            # Highlight in PPTX is typically in fill properties
+            highlight = _pptx_highlight_from_fragment(block)
+            if highlight:
+                defaults['highlight'] = highlight.upper()
+    return defaults
+
+
+def _resolve_pptx_run_styles(run_xml: str, defaults: dict[str, Any]) -> dict[str, Any]:
+    """Resolve effective formatting styles for a PowerPoint run, applying paragraph defaults."""
+    styles: dict[str, Any] = {}
+    match = re.search(r"<a:rPr[^>]*>(.*?)</a:rPr>", run_xml, re.DOTALL)
+    fragment = match.group(1) if match else run_xml
+
+    def resolve_bool(tag: str, fallback: bool) -> bool:
+        val = _pptx_bool_from_fragment(fragment, tag)
+        if val is None:
+            return fallback
+        return val
+
+    if resolve_bool('a:b', defaults.get('bold', False)):
+        styles['bold'] = True
+    if resolve_bool('a:i', defaults.get('italic', False)):
+        styles['italic'] = True
+
+    underline = _pptx_underline_from_fragment(fragment)
+    if not underline:
+        underline = defaults.get('underline', '')
+    if underline:
+        styles['underline'] = underline
+
+    strike = ''
+    if _pptx_bool_from_fragment(fragment, 'a:strike'):
+        strike = 'single'
+    elif defaults.get('strikethrough'):
+        strike = defaults['strikethrough']
+    if strike:
+        styles['strikethrough'] = strike
+
+    color = _pptx_color_from_fragment(fragment) or defaults.get('color', '')
+    if color:
+        styles['color'] = color.upper()
+
+    highlight = _pptx_highlight_from_fragment(fragment) or defaults.get('highlight', '')
+    if highlight:
+        styles['highlight'] = str(highlight).upper()
+
+    return styles
+
+
+def _pptx_bool_from_fragment(fragment: str, tag: str) -> bool | None:
+    """Extract boolean value from PowerPoint XML fragment (e.g., <a:b/> or <a:b val="1"/>)."""
+    pattern = rf"<{tag}\b([^>]*)/?>"
+    match = re.search(pattern, fragment)
+    if not match:
+        match = re.search(rf"<{tag}\b([^>]*)>(.*?)</{tag}>", fragment, re.DOTALL)
+        if not match:
+            return None
+    attrs = match.group(1) or ''
+    # Check for explicit false values
+    if re.search(r'val="(?:0|false)"', attrs, re.IGNORECASE):
+        return False
+    # If tag exists, it's typically True (unless explicitly false)
+    return True
+
+
+def _pptx_underline_from_fragment(fragment: str) -> str:
+    """Extract underline style from PowerPoint XML fragment."""
+    match = re.search(r'<a:u[^>]*val="([^"]+)"', fragment)
+    if match:
+        val = match.group(1).strip().lower()
+        if val in {'false', 'none', '0'}:
+            return ''
+        return val
+    if re.search(r'<a:u\b', fragment):
+        return 'single'
+    return ''
+
+
+def _pptx_color_from_fragment(fragment: str) -> str:
+    """Extract color from PowerPoint XML fragment (supports srgbClr, schemeClr, and prstClr)."""
+    # Try solidFill with srgbClr first (most common - direct RGB hex)
+    match = re.search(r'<a:solidFill[^>]*>.*?<a:srgbClr[^>]*val="([^"]+)"', fragment, re.DOTALL)
+    if match:
+        val = match.group(1).strip()
+        # Remove # if present and ensure uppercase hex
+        val = val.lstrip('#').upper()
+        if re.fullmatch(r'[0-9A-F]{6}', val):
+            return val
+    
+    # Try prstClr (preset colors like "red", "blue", etc.)
+    match = re.search(r'<a:solidFill[^>]*>.*?<a:prstClr[^>]*val="([^"]+)"', fragment, re.DOTALL)
+    if match:
+        preset_name = match.group(1).strip().upper()
+        # Map common preset colors to hex
+        preset_colors = {
+            'BLACK': '000000',
+            'WHITE': 'FFFFFF',
+            'RED': 'FF0000',
+            'GREEN': '00FF00',
+            'BLUE': '0000FF',
+            'YELLOW': 'FFFF00',
+            'MAGENTA': 'FF00FF',
+            'CYAN': '00FFFF',
+            'GRAY': '808080',
+            'DARKGRAY': '404040',
+            'LIGHTGRAY': 'C0C0C0',
+        }
+        if preset_name in preset_colors:
+            return preset_colors[preset_name]
+    
+    # Try schemeClr (theme colors) - these are context-dependent but we'll use defaults
+    match = re.search(r'<a:solidFill[^>]*>.*?<a:schemeClr[^>]*val="([^"]+)"', fragment, re.DOTALL)
+    if match:
+        val = match.group(1).strip().upper()
+        # Map common theme colors to hex (simplified mapping - actual colors depend on theme)
+        theme_colors = {
+            'TX1': '000000',  # Text 1 (typically black)
+            'TX2': 'FFFFFF',  # Text 2 (typically white)
+            'BG1': 'FFFFFF',  # Background 1
+            'BG2': '000000',  # Background 2
+            'ACCENT1': '4472C4',  # Accent 1 (blue)
+            'ACCENT2': 'ED7D31',  # Accent 2 (orange)
+            'ACCENT3': 'A5A5A5',  # Accent 3 (gray)
+            'ACCENT4': 'FFC000',  # Accent 4 (yellow)
+            'ACCENT5': '5B9BD5',  # Accent 5 (light blue)
+            'ACCENT6': '70AD47',  # Accent 6 (green)
+            'DK1': '000000',  # Dark 1
+            'LT1': 'FFFFFF',  # Light 1
+            'DK2': '404040',  # Dark 2
+            'LT2': 'F2F2F2',  # Light 2
+        }
+        if val in theme_colors:
+            return theme_colors[val]
+    
+    # Also check for color directly in rPr (some PowerPoint versions)
+    match = re.search(r'<a:solidFill[^>]*>.*?val="([^"]+)"', fragment, re.DOTALL)
+    if match:
+        val = match.group(1).strip().lstrip('#').upper()
+        if re.fullmatch(r'[0-9A-F]{6}', val):
+            return val
+    
+    return ''
+
+
+def _pptx_highlight_from_fragment(fragment: str) -> str:
+    """Extract highlight color from PowerPoint XML fragment."""
+    # PowerPoint doesn't have a direct highlight feature like Word, but text can have
+    # background fills that act like highlighting. Check for bgFill or similar.
+    # Try highlight tag first (if present)
+    match = re.search(r'<a:highlight[^>]*>.*?<a:srgbClr[^>]*val="([^"]+)"', fragment, re.DOTALL)
+    if match:
+        val = match.group(1).strip().lstrip('#').upper()
+        if re.fullmatch(r'[0-9A-F]{6}', val):
+            return val
+    # Check for background fill in run properties (some PowerPoint versions use this)
+    match = re.search(r'<a:bgFill[^>]*>.*?<a:srgbClr[^>]*val="([^"]+)"', fragment, re.DOTALL)
+    if match:
+        val = match.group(1).strip().lstrip('#').upper()
+        if re.fullmatch(r'[0-9A-F]{6}', val):
+            return val
+    # Check for patternFill with solid fill (another way highlights might be stored)
+    match = re.search(r'<a:patternFill[^>]*>.*?<a:srgbClr[^>]*val="([^"]+)"', fragment, re.DOTALL)
+    if match:
+        val = match.group(1).strip().lstrip('#').upper()
+        if re.fullmatch(r'[0-9A-F]{6}', val):
+            return val
+    return ''
+
+
 def _doc_position_order(
     paragraph_index: Any,
     run_index: Any,
@@ -1551,6 +1791,7 @@ def _doc_position_order(
     """
     produce a sortable integer that reflects the position of a run (or character) in the document.
     falls back to the provided value when paragraph/run indexes are unavailable.
+    For PPTX, paragraph_index is actually slide_index, and run_index combines para_idx and run_idx.
     """
     has_para = isinstance(paragraph_index, int) and paragraph_index >= 0
     has_run = isinstance(run_index, int) and run_index >= 0
