@@ -1901,7 +1901,15 @@ def _diff_docx_formatting(
         baseline_para_text = (
             baseline_paragraph_texts.get(para_idx, '') if para_idx is not None else ''
         )
-        has_actual_text_changes = bool(current_para_text) and current_para_text != baseline_para_text
+        
+        # Normalize both texts for comparison (strip and normalize whitespace)
+        # Only consider it a text change if the normalized content actually differs
+        current_normalized = ' '.join(current_para_text.split()) if current_para_text else ''
+        baseline_normalized = ' '.join(baseline_para_text.split()) if baseline_para_text else ''
+        
+        # Only set has_text_changes if the actual text content changed (not just formatting)
+        has_actual_text_changes = current_normalized != baseline_normalized
+        
         if has_actual_text_changes:
             # Use the full current paragraph text to show exactly what's in the document now
             change['text'] = current_para_text
