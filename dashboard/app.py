@@ -931,7 +931,46 @@ def _extract_images_from_office_doc(path: str) -> list[dict[str, Any]]:
 
             # Build a map of relationship IDs to media paths for .docx
             rels_map = {}
-            if p_lower.endswith(".docx"):
+            # For PPTX, build maps to find which slide images are on
+            pptx_rels_map = {}  # Maps relationship ID to slide number
+            slide_rels_map = {}  # Maps relationship ID to media path
+            if p_lower.endswith(".pptx"):
+                try:
+                    # Get all slide files
+                    slide_files = [
+                        name
+                        for name in zf.namelist()
+                        if name.startswith("ppt/slides/slide") and name.endswith(".xml")
+                    ]
+                    slide_files.sort()
+                    
+                    for slide_num, slide_file in enumerate(slide_files, start=1):
+                        try:
+                            slide_xml = zf.read(slide_file).decode('utf-8', errors='replace')
+                            # Find all image references in this slide
+                            # Images are referenced via relationship IDs in <a:blip r:embed="rIdX">
+                            blip_matches = re.findall(r'<a:blip[^>]*r:embed="([^"]+)"', slide_xml)
+                            for rel_id in blip_matches:
+                                if rel_id not in pptx_rels_map:
+                                    pptx_rels_map[rel_id] = slide_num
+                        except Exception:
+                            continue
+                    
+                    # Also check slide relationship files to map rel IDs to media paths
+                    for slide_file in slide_files:
+                        rels_file = slide_file.replace('.xml', '.xml.rels')
+                        if rels_file in zf.namelist():
+                            try:
+                                rels_xml = zf.read(rels_file).decode('utf-8', errors='replace')
+                                rel_pattern = r'<Relationship[^>]*Id="([^"]+)"[^>]*Target="([^"]+)"'
+                                for rel_id, target in re.findall(rel_pattern, rels_xml):
+                                    if target.startswith("../media/"):
+                                        slide_rels_map[rel_id] = target.replace("../", "ppt/")
+                            except Exception:
+                                continue
+                except Exception:
+                    pass
+            elif p_lower.endswith(".docx"):
                 try:
                     rels_xml = zf.read("word/_rels/document.xml.rels").decode("utf-8", errors="replace")
                     # Extract relationships: <Relationship Id="rIdX" Target="media/imageY.png"/>
@@ -1050,6 +1089,128 @@ def _extract_images_from_office_doc(path: str) -> list[dict[str, Any]]:
                         if width is not None and height is not None:
                             img_info["width"] = width
                             img_info["height"] = height
+                        
+                        # For PPTX, find which slide this image is on and extract dimensions
+                        if p_lower.endswith(".pptx"):
+                            # Find the relationship ID that points to this image
+                            # The name is like "ppt/media/image16.png"
+                            # We need to match it with relationship targets which might be "ppt/media/image16.png" or "../media/image16.png"
+                            slide_num = None
+                            rel_id_for_image = None
+                            
+                            # Try multiple matching strategies
+                            media_basename = os.path.basename(name)
+                            # Normalize the image name for comparison (remove ppt/ prefix if present)
+                            normalized_name = name.replace("ppt/", "") if name.startswith("ppt/") else name
+                            
+                            for rel_id, target_path in slide_rels_map.items():
+                                # Normalize target path for comparison
+                                normalized_target = target_path.replace("ppt/", "") if target_path.startswith("ppt/") else target_path
+                                normalized_target = normalized_target.replace("../", "")
+                                
+                                # Match by exact path, normalized path, or basename
+                                if (target_path == name or 
+                                    normalized_target == normalized_name or
+                                    target_path.endswith(media_basename) or
+                                    normalized_target.endswith(media_basename) or
+                                    os.path.basename(target_path) == media_basename):
+                                    # Found the relationship ID, now find which slide uses it
+                                    slide_num = pptx_rels_map.get(rel_id)
+                                    if slide_num:
+                                        rel_id_for_image = rel_id
+                                        break
+                            
+                            # If still not found, try quick direct search in slide XML files (limited to prevent slowdown)
+                            # Only check first 10 slides to keep it fast - if not found quickly, skip it
+                            if not slide_num:
+                                try:
+                                    slide_files_for_search = [
+                                        n
+                                        for n in zf.namelist()
+                                        if n.startswith("ppt/slides/slide") and n.endswith(".xml")
+                                    ]
+                                    slide_files_for_search.sort()
+                                    # Limit search to first 10 slides to prevent slowdown
+                                    max_slides_to_check = 10
+                                    
+                                    for slide_idx, slide_file in enumerate(slide_files_for_search[:max_slides_to_check], start=1):
+                                        try:
+                                            # Quick check: just read relationship file first (faster than full XML)
+                                            rels_file_search = slide_file.replace('.xml', '.xml.rels')
+                                            if rels_file_search in zf.namelist():
+                                                try:
+                                                    rels_xml_search = zf.read(rels_file_search).decode('utf-8', errors='replace')
+                                                    # Check if the media path appears in relationships
+                                                    if media_basename in rels_xml_search or normalized_name.replace("media/", "") in rels_xml_search:
+                                                        slide_num = slide_idx
+                                                        break
+                                                except Exception:
+                                                    pass
+                                            
+                                            # Only check slide XML if relationship file didn't help
+                                            if not slide_num:
+                                                slide_xml_search = zf.read(slide_file).decode('utf-8', errors='replace')
+                                                # Quick substring check - if found, this is the slide
+                                                if media_basename in slide_xml_search:
+                                                    slide_num = slide_idx
+                                                    break
+                                        except Exception:
+                                            continue
+                                    # If not found in first 10 slides, skip expensive full search
+                                    # This prevents slowdown - user will see "Slide number not detected" message
+                                except Exception:
+                                    pass
+                            
+                            if slide_num:
+                                img_info["slide_number"] = slide_num
+                            
+                            # Extract dimensions from the slide XML that contains this image
+                            if rel_id_for_image and slide_num:
+                                try:
+                                    # Get the slide file for this slide number (1-indexed)
+                                    slide_files_for_dims = [
+                                        n
+                                        for n in zf.namelist()
+                                        if n.startswith("ppt/slides/slide") and n.endswith(".xml")
+                                    ]
+                                    slide_files_for_dims.sort()
+                                    if 1 <= slide_num <= len(slide_files_for_dims):
+                                        slide_file_for_dims = slide_files_for_dims[slide_num - 1]
+                                        slide_xml_for_dims = zf.read(slide_file_for_dims).decode('utf-8', errors='replace')
+                                        
+                                        # Find the image by relationship ID and extract dimensions
+                                        # PowerPoint structure: <p:pic><p:blipFill><a:blip r:embed="rIdX">...<a:xfrm><a:ext cx="..." cy="..."/>
+                                        # Search for the blip with this relationship ID
+                                        blip_pattern = rf'<a:blip[^>]*r:embed="{re.escape(rel_id_for_image)}"[^>]*>'
+                                        blip_match = re.search(blip_pattern, slide_xml_for_dims, re.DOTALL)
+                                        if blip_match:
+                                            # Find extent near the blip - search in a larger area around it
+                                            search_start = max(0, blip_match.start() - 5000)
+                                            search_end = min(len(slide_xml_for_dims), blip_match.end() + 5000)
+                                            search_area = slide_xml_for_dims[search_start:search_end]
+                                            
+                                            # Try multiple patterns for extent
+                                            # Pattern 1: <a:xfrm><a:ext cx="..." cy="..."/>
+                                            ext_pattern1 = r'<a:xfrm[^>]*>.*?<a:ext[^>]*cx="(\d+)"[^>]*cy="(\d+)"[^>]*/?>'
+                                            ext_matches = re.findall(ext_pattern1, search_area, re.DOTALL)
+                                            if not ext_matches:
+                                                # Pattern 2: <p:xfrm><p:ext cx="..." cy="..."/>
+                                                ext_pattern2 = r'<p:xfrm[^>]*>.*?<p:ext[^>]*cx="(\d+)"[^>]*cy="(\d+)"[^>]*/?>'
+                                                ext_matches = re.findall(ext_pattern2, search_area, re.DOTALL)
+                                            if not ext_matches:
+                                                # Pattern 3: Direct <a:ext> or <p:ext> near the blip
+                                                ext_pattern3 = r'<[ap]:ext[^>]*cx="(\d+)"[^>]*cy="(\d+)"[^>]*/?>'
+                                                ext_matches = re.findall(ext_pattern3, search_area, re.DOTALL)
+                                            
+                                            if ext_matches:
+                                                cx_emu, cy_emu = ext_matches[0]
+                                                # PowerPoint uses EMU (English Metric Units): 1 inch = 914400 EMU, 96 DPI
+                                                width = round(int(cx_emu) / 914400 * 96)
+                                                height = round(int(cy_emu) / 914400 * 96)
+                                                img_info["width"] = width
+                                                img_info["height"] = height
+                                except Exception:
+                                    pass
 
                         images.append(img_info)
                     except Exception:
@@ -1368,13 +1529,16 @@ def _extract_formatting_from_office_doc(path: str) -> list[dict[str, Any]]:
                                 if not normalized:
                                     normalized = raw_text.strip() or f"__run_{slide_idx}_{para_idx}_{run_idx}__"
                                 styles = _resolve_pptx_run_styles(run_xml, defaults)
-                                # Use slide_idx as paragraph_index for ordering compatibility
+                                # Use composite key (slide_idx << 16) | para_idx as paragraph_index
+                                # This ensures each paragraph on each slide has a unique identifier
+                                # This prevents formatting-only changes from being reported as text changes
+                                composite_para_idx = (slide_idx << 16) | para_idx
                                 entries.append(
                                     {
                                         'text': raw_text,
                                         'normalized_text': normalized,
-                                        'paragraph_index': slide_idx,  # Use slide index for ordering
-                                        'run_index': (para_idx << 16) | run_idx,  # Combine para and run for uniqueness
+                                        'paragraph_index': composite_para_idx,  # Composite: slide + paragraph
+                                        'run_index': run_idx,  # Just run index within paragraph
                                         'styles': styles,
                                     }
                                 )
@@ -2016,6 +2180,7 @@ def _diff_docx_formatting(
             elif text_changed:
                 # Text changed - check for formatting changes across the replaced chunk
                 # Compare formatting of baseline vs current runs
+                # Only report formatting if text also changed (otherwise it's handled above)
                 for base_run, curr_run in zip(baseline_runs[i1:i2], current_runs[j1:j2]):
                     before_snapshot = _style_snapshot(base_run.get('styles', {}))
                     after_snapshot = _style_snapshot(curr_run.get('styles', {}))
@@ -2301,16 +2466,42 @@ def _extract_text_from_office_doc(path: str) -> tuple[str | None, str]:
                     ]
                     slide_files.sort()
 
-                    for slide_file in slide_files[:10]:  # limit to first 10 slides
+                    for slide_file in slide_files:  # process all slides for full scrolling
                         try:
                             slide_xml = zf.read(slide_file).decode("utf-8", errors="replace")
-                            # extract text from <a:t> tags (text in PowerPoint)
-                            text_matches = re.findall(r"<a:t[^>]*>([^<]+)</a:t>", slide_xml)
-                            if text_matches:
-                                slide_num = slide_file.split("/")[-1].replace(".xml", "")
-                                text_parts.append(
-                                    f"[Slide {slide_num}]\n" + "\n".join(text_matches) + "\n"
-                                )
+                            slide_num = slide_file.split("/")[-1].replace(".xml", "")
+                            
+                            # Extract paragraphs from slide (a:p tags) - same structure as DOCX
+                            paragraphs = re.findall(r"<a:p[^>]*>(.*?)</a:p>", slide_xml, re.DOTALL)
+                            
+                            if paragraphs:
+                                para_texts = []
+                                for para in paragraphs:
+                                    # Extract all text runs within this paragraph (a:r tags with a:t)
+                                    text_runs = re.findall(r"<a:r[^>]*>.*?<a:t[^>]*>([^<]+)</a:t>.*?</a:r>", para, re.DOTALL)
+                                    # Also check for line breaks in PowerPoint (a:br tags)
+                                    has_break = bool(re.search(r"<a:br[^>]*/>", para))
+                                    
+                                    if text_runs:
+                                        # Join text runs within a paragraph (preserves structure)
+                                        para_text = "".join(html.unescape(t) for t in text_runs)
+                                        # Preserve line breaks
+                                        if has_break:
+                                            para_text = para_text + "\n"
+                                        if para_text.strip() or has_break:
+                                            para_texts.append(para_text)
+                                
+                                if para_texts:
+                                    # Join paragraphs with newlines to preserve structure (like DOCX)
+                                    text = "\n".join(para_texts)
+                                    text_parts.append(f"[Slide {slide_num}]\n{text}\n")
+                            else:
+                                # Fallback: extract all text from <a:t> tags if no paragraph structure
+                                text_matches = re.findall(r"<a:t[^>]*>([^<]+)</a:t>", slide_xml)
+                                if text_matches:
+                                    text_parts.append(
+                                        f"[Slide {slide_num}]\n" + "\n".join(text_matches) + "\n"
+                                    )
                         except Exception:
                             continue
                 except Exception as e:
@@ -2528,26 +2719,81 @@ def _compute_line_diff(old_lines: list[str], new_lines: list[str], file_path: st
             )
         elif tag == "delete":
             # lines removed
-            diff_segments.append(
-                {
-                    "type": "removed",
-                    "old_start": i1 + 1,
-                    "old_end": i2,
-                    "old_lines": old_lines[i1:i2],
-                    "new_lines": [],
-                }
-            )
+            # Before marking as removed, check if these lines appear anywhere in new_lines
+            # This prevents false "additions" when content just shifts position
+            # BUT: if a line is truly deleted (doesn't appear anywhere), it must still be shown
+            deleted_lines = old_lines[i1:i2]
+            deleted_normalized = old_normalized[i1:i2]
+            
+            # Check if any of the deleted lines appear anywhere in new_lines
+            # If they do, they're just shifted, not truly deleted
+            # If they don't appear anywhere, they're truly deleted and must be shown
+            truly_deleted = []
+            truly_deleted_indices = []
+            for del_idx, del_line_norm in enumerate(deleted_normalized):
+                # Check if this line appears anywhere in new_lines
+                # If it appears, it's just shifted (don't show as deleted to prevent false additions)
+                # If it doesn't appear, it's truly deleted (must show in baseline)
+                found_anywhere = False
+                for new_idx in range(len(new_normalized)):
+                    if new_normalized[new_idx] == del_line_norm:
+                        found_anywhere = True
+                        break
+                if not found_anywhere:
+                    # This line doesn't appear anywhere in new_lines, so it's truly deleted
+                    # Must show it in baseline with red/strikethrough
+                    truly_deleted.append(deleted_lines[del_idx])
+                    truly_deleted_indices.append(i1 + del_idx)
+            
+            # Always show truly deleted lines (even if empty list, the check above ensures we only add truly deleted)
+            if truly_deleted:
+                diff_segments.append(
+                    {
+                        "type": "removed",
+                        "old_start": truly_deleted_indices[0] + 1,
+                        "old_end": truly_deleted_indices[-1] + 1,
+                        "old_lines": truly_deleted,
+                        "new_lines": [],
+                    }
+                )
         elif tag == "insert":
             # lines added
-            diff_segments.append(
-                {
-                    "type": "added",
-                    "new_start": j1 + 1,
-                    "new_end": j2,
-                    "old_lines": [],
-                    "new_lines": new_lines[j1:j2],
-                }
-            )
+            # Before marking as added, check if these lines appear anywhere in old_lines
+            # This prevents false "additions" when content just shifts position
+            # BUT: if a line is truly added (doesn't appear anywhere), it must still be shown
+            inserted_lines = new_lines[j1:j2]
+            inserted_normalized = new_normalized[j1:j2]
+            
+            # Check if any of the inserted lines appear anywhere in old_lines
+            # If they do, they're just shifted, not truly added
+            # If they don't appear anywhere, they're truly added and must be shown
+            truly_added = []
+            truly_added_indices = []
+            for ins_idx, ins_line_norm in enumerate(inserted_normalized):
+                # Check if this line appears anywhere in old_lines
+                # If it appears, it's just shifted (don't show as added to prevent false additions)
+                # If it doesn't appear, it's truly added (must show)
+                found_anywhere = False
+                for old_idx in range(len(old_normalized)):
+                    if old_normalized[old_idx] == ins_line_norm:
+                        found_anywhere = True
+                        break
+                if not found_anywhere:
+                    # This line doesn't appear anywhere in old_lines, so it's truly added
+                    truly_added.append(inserted_lines[ins_idx])
+                    truly_added_indices.append(j1 + ins_idx)
+            
+            # Always show truly added lines (even if empty list, the check above ensures we only add truly added)
+            if truly_added:
+                diff_segments.append(
+                    {
+                        "type": "added",
+                        "new_start": truly_added_indices[0] + 1,
+                        "new_end": truly_added_indices[-1] + 1,
+                        "old_lines": [],
+                        "new_lines": truly_added,
+                    }
+                )
         elif tag == "replace":
             # Stage B: within changed lines, use word-level diff with Jaccard similarity check
             # this prevents full-line replacements when only a few words differ
@@ -3976,21 +4222,27 @@ def build_app(event_bus) -> Flask:
 
                         # added images (new hash)
                         for img_hash in current_hashes - baseline_hashes:
+                            img_data = current_img_map[img_hash].copy()
+                            # Ensure slide_number is preserved if present
                             image_changes.append(
                                 {
                                     "change": "added",
-                                    "image": current_img_map[img_hash],
+                                    "image": img_data,
                                     "type": "image",
+                                    "slide_number": img_data.get("slide_number"),  # Explicitly preserve slide_number
                                 }
                             )
 
                         # removed images (hash no longer exists)
                         for img_hash in baseline_hashes - current_hashes:
+                            img_data = baseline_img_map[img_hash].copy()
+                            # Ensure slide_number is preserved if present
                             image_changes.append(
                                 {
                                     "change": "removed",
-                                    "image": baseline_img_map[img_hash],
+                                    "image": img_data,
                                     "type": "image",
+                                    "slide_number": img_data.get("slide_number"),  # Explicitly preserve slide_number
                                 }
                             )
 
@@ -4143,15 +4395,17 @@ def build_app(event_bus) -> Flask:
                                         )
 
                                         if is_resized:
+                                            img_data = current_img.copy()
                                             image_changes.append(
                                                 {
                                                     "change": "resized",
-                                                    "image": current_img,
+                                                    "image": img_data,
                                                     "old_width": baseline_width,
                                                     "old_height": baseline_height,
                                                     "new_width": current_width,
                                                     "new_height": current_height,
                                                     "type": "image",
+                                                    "slide_number": img_data.get("slide_number"),  # Explicitly preserve slide_number
                                                 }
                                             )
                                     else:

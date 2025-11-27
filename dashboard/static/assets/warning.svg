@@ -1,0 +1,17 @@
+
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200">
+  <!-- Rounded triangle -->
+  <path d="
+    M 108 35
+    L 167 155
+    A 15 15 0 0 1 160 178
+    L 40 178
+    A 15 15 0 0 1 33 155
+    L 92 35
+    A 15 15 0 0 1 108 35
+    Z" fill="#FF6A00"/>
+
+  <!-- Exclamation mark -->
+  <rect x="90" y="70" width="20" height="70" rx="6" fill="white"/>
+  <circle cx="100" cy="155" r="12" fill="white"/>
+</svg>

@@ -1395,6 +1395,25 @@
     }
 
     function hideModal() {
+      // Save scroll positions before closing
+      if (window.currentDiffPath && modal.style.display !== 'none') {
+        const diffSides = modalBody.querySelectorAll('.diff-side .diff-lines');
+        const scrollPositions = [];
+        diffSides.forEach(side => {
+          scrollPositions.push({
+            scrollTop: side.scrollTop,
+            scrollLeft: side.scrollLeft
+          });
+        });
+        if (scrollPositions.length > 0) {
+          try {
+            sessionStorage.setItem(`diff-scroll-${window.currentDiffPath}`, JSON.stringify(scrollPositions));
+          } catch (e) {
+            // ignore storage errors
+          }
+        }
+      }
+      
       modal.style.display = 'none';
       modalTitle.textContent = '';
       modalBody.textContent = '';
@@ -1471,73 +1490,175 @@
         const segments = textDiff.diff_segments;
         let addedCount = 0, removedCount = 0;
         
+        // Check if this is an Office document (DOCX/PPTX) for smarter counting
+        const isOffice = textDiff.is_office || false;
+        
+        // Helper function to split text into sentences
+        const splitIntoSentences = (text) => {
+          if (!text) return [];
+          // Split by sentence-ending punctuation followed by space or end of string
+          // This handles: . ! ? followed by space, newline, or end
+          const sentences = text.split(/([.!?]+[\s\n]|[\n])/).filter(s => s.trim().length > 0);
+          // Rejoin punctuation with previous sentence
+          const result = [];
+          for (let i = 0; i < sentences.length; i++) {
+            if (sentences[i].match(/^[.!?]+[\s\n]?$/)) {
+              if (result.length > 0) {
+                result[result.length - 1] += sentences[i];
+              }
+            } else {
+              result.push(sentences[i].trim());
+            }
+          }
+          return result.filter(s => s.length > 0);
+        };
+        
         // count actual additions and removals from character-level diffs, not just line counts
         segments.forEach(seg => {
           if (seg.type === 'added') {
-            // count added lines
-            addedCount += seg.new_lines.length;
+            if (isOffice) {
+              // For Office docs, count by sentences/paragraphs
+              const allText = seg.new_lines.join('\n');
+              const sentences = splitIntoSentences(allText);
+              addedCount += sentences.length > 0 ? sentences.length : 1;
+            } else {
+              // count added lines
+              addedCount += seg.new_lines.length;
+            }
           } else if (seg.type === 'removed') {
-            // count removed lines
-            removedCount += seg.old_lines.length;
+            if (isOffice) {
+              // For Office docs, count by sentences/paragraphs
+              const allText = seg.old_lines.join('\n');
+              const sentences = splitIntoSentences(allText);
+              removedCount += sentences.length > 0 ? sentences.length : 1;
+            } else {
+              // count removed lines
+              removedCount += seg.old_lines.length;
+            }
           } else if (seg.type === 'modified') {
             // for modified segments, count actual character/word additions and removals
             const oldCharDiffs = seg.old_char_diffs || [];
             const newCharDiffs = seg.new_char_diffs || [];
             
             if (oldCharDiffs.length > 0 && newCharDiffs.length > 0) {
-              // count additions and removals from character-level diffs
-              for (let i = 0; i < Math.max(oldCharDiffs.length, newCharDiffs.length); i++) {
-                if (oldCharDiffs[i] && Array.isArray(oldCharDiffs[i])) {
-                  oldCharDiffs[i].forEach(part => {
-                    if (part && part.type === 'removed' && part.text) {
-                      // count words or characters removed (prefer word count for readability)
-                      const words = part.text.trim().split(/\s+/).filter(w => w.length > 0);
-                      removedCount += words.length > 0 ? words.length : 1;
-                    }
-                  });
+              if (isOffice) {
+                // For Office docs, count distinct contiguous change blocks
+                // Each contiguous block of additions/removals counts as 1
+                for (let i = 0; i < Math.max(oldCharDiffs.length, newCharDiffs.length); i++) {
+                  if (oldCharDiffs[i] && Array.isArray(oldCharDiffs[i])) {
+                    // Count contiguous blocks of removals
+                    let inRemovalBlock = false;
+                    oldCharDiffs[i].forEach(part => {
+                      if (part && part.type === 'removed' && part.text && part.text.trim()) {
+                        if (!inRemovalBlock) {
+                          removedCount++;
+                          inRemovalBlock = true;
+                        }
+                      } else if (part && part.type !== 'removed') {
+                        inRemovalBlock = false;
+                      }
+                    });
+                  }
+                  
+                  if (newCharDiffs[i] && Array.isArray(newCharDiffs[i])) {
+                    // Count contiguous blocks of additions
+                    let inAdditionBlock = false;
+                    newCharDiffs[i].forEach(part => {
+                      if (part && part.type === 'added' && part.text && part.text.trim()) {
+                        if (!inAdditionBlock) {
+                          addedCount++;
+                          inAdditionBlock = true;
+                        }
+                      } else if (part && part.type !== 'added') {
+                        inAdditionBlock = false;
+                      }
+                    });
+                  }
                 }
-                if (newCharDiffs[i] && Array.isArray(newCharDiffs[i])) {
-                  newCharDiffs[i].forEach(part => {
-                    if (part && part.type === 'added' && part.text) {
-                      // count words or characters added (prefer word count for readability)
-                      const words = part.text.trim().split(/\s+/).filter(w => w.length > 0);
-                      addedCount += words.length > 0 ? words.length : 1;
-                    }
-                  });
+              } else {
+                // For non-Office files, use word-level counting
+                for (let i = 0; i < Math.max(oldCharDiffs.length, newCharDiffs.length); i++) {
+                  if (oldCharDiffs[i] && Array.isArray(oldCharDiffs[i])) {
+                    oldCharDiffs[i].forEach(part => {
+                      if (part && part.type === 'removed' && part.text) {
+                        const words = part.text.trim().split(/\s+/).filter(w => w.length > 0);
+                        removedCount += words.length > 0 ? words.length : 1;
+                      }
+                    });
+                  }
+                  if (newCharDiffs[i] && Array.isArray(newCharDiffs[i])) {
+                    newCharDiffs[i].forEach(part => {
+                      if (part && part.type === 'added' && part.text) {
+                        const words = part.text.trim().split(/\s+/).filter(w => w.length > 0);
+                        addedCount += words.length > 0 ? words.length : 1;
+                      }
+                    });
+                  }
                 }
               }
             } else {
               // fallback: if no character-level diffs, count as line modifications
-              // but try to estimate additions/removals based on line content
-              const oldLines = seg.old_lines || [];
-              const newLines = seg.new_lines || [];
-              const maxLines = Math.max(oldLines.length, newLines.length);
-              
-              for (let i = 0; i < maxLines; i++) {
-                const oldLine = oldLines[i] || '';
-                const newLine = newLines[i] || '';
+              if (isOffice) {
+                // For Office docs, count by paragraphs (each line is typically a paragraph)
+                const oldLines = seg.old_lines || [];
+                const newLines = seg.new_lines || [];
                 
-                if (oldLine && !newLine) {
-                  // line was removed
-                  const words = oldLine.trim().split(/\s+/).filter(w => w.length > 0);
-                  removedCount += words.length > 0 ? words.length : 1;
-                } else if (!oldLine && newLine) {
-                  // line was added
-                  const words = newLine.trim().split(/\s+/).filter(w => w.length > 0);
-                  addedCount += words.length > 0 ? words.length : 1;
-                } else if (oldLine && newLine && oldLine !== newLine) {
-                  // line was modified - estimate changes
-                  const oldWords = oldLine.trim().split(/\s+/).filter(w => w.length > 0);
-                  const newWords = newLine.trim().split(/\s+/).filter(w => w.length > 0);
-                  const diff = newWords.length - oldWords.length;
-                  if (diff > 0) {
-                    addedCount += diff;
-                  } else if (diff < 0) {
-                    removedCount += Math.abs(diff);
-                  } else {
-                    // same word count, but content changed - count as 1 modification
+                // Count removed paragraphs
+                for (let i = 0; i < oldLines.length; i++) {
+                  const oldLine = oldLines[i] || '';
+                  const newLine = i < newLines.length ? newLines[i] : '';
+                  if (oldLine.trim() && !newLine.trim()) {
+                    removedCount += 1; // Each removed paragraph counts as 1
+                  }
+                }
+                
+                // Count added paragraphs
+                for (let i = 0; i < newLines.length; i++) {
+                  const newLine = newLines[i] || '';
+                  const oldLine = i < oldLines.length ? oldLines[i] : '';
+                  if (newLine.trim() && !oldLine.trim()) {
+                    addedCount += 1; // Each added paragraph counts as 1
+                  }
+                }
+                
+                // Count modified paragraphs (lines that exist in both but differ)
+                for (let i = 0; i < Math.min(oldLines.length, newLines.length); i++) {
+                  const oldLine = oldLines[i] || '';
+                  const newLine = newLines[i] || '';
+                  if (oldLine.trim() && newLine.trim() && oldLine !== newLine) {
+                    // Modified paragraph - count as 1 removal + 1 addition
                     removedCount += 1;
                     addedCount += 1;
+                  }
+                }
+              } else {
+                // For non-Office files, use word-level counting
+                const oldLines = seg.old_lines || [];
+                const newLines = seg.new_lines || [];
+                const maxLines = Math.max(oldLines.length, newLines.length);
+                
+                for (let i = 0; i < maxLines; i++) {
+                  const oldLine = oldLines[i] || '';
+                  const newLine = newLines[i] || '';
+                  
+                  if (oldLine && !newLine) {
+                    const words = oldLine.trim().split(/\s+/).filter(w => w.length > 0);
+                    removedCount += words.length > 0 ? words.length : 1;
+                  } else if (!oldLine && newLine) {
+                    const words = newLine.trim().split(/\s+/).filter(w => w.length > 0);
+                    addedCount += words.length > 0 ? words.length : 1;
+                  } else if (oldLine && newLine && oldLine !== newLine) {
+                    const oldWords = oldLine.trim().split(/\s+/).filter(w => w.length > 0);
+                    const newWords = newLine.trim().split(/\s+/).filter(w => w.length > 0);
+                    const diff = newWords.length - oldWords.length;
+                    if (diff > 0) {
+                      addedCount += diff;
+                    } else if (diff < 0) {
+                      removedCount += Math.abs(diff);
+                    } else {
+                      removedCount += 1;
+                      addedCount += 1;
+                    }
                   }
                 }
               }
@@ -1577,7 +1698,7 @@
               `;
             }
           } else if (type === 'removed') {
-            // Removed lines - show on left, blank on right
+            // Removed lines - show on left with red strikethrough, blank on right
             for (let i = 0; i < oldLines.length; i++) {
               const oldLine = oldLines[i];
               const oldNum = seg.old_start + i;
@@ -1585,7 +1706,7 @@
               oldLinesHTML += `
                 <div class="diff-line removed">
                   <span class="diff-line-number">${oldNum}</span>
-                  <span class="diff-line-content">${esc(oldLine)}</span>
+                  <span class="diff-line-content"><span class="diff-char-removed">${esc(oldLine)}</span></span>
                 </div>
               `;
               
@@ -2068,6 +2189,37 @@
                   }
                   
                   const altText = img.alt_text || '';
+                  const slideNumber = img.slide_number || change.slide_number;
+                  
+                  // Determine appropriate location message based on file type
+                  const fileName = (s.file || '').toLowerCase();
+                  const fileTypeStr = textDiff.file_type || '';
+                  const isPptx = fileName.endsWith('.pptx') || fileTypeStr === 'PowerPoint';
+                  const isDocx = fileName.endsWith('.docx') || fileTypeStr === 'Word document';
+                  const isPdf = fileName.endsWith('.pdf') || textDiff.is_pdf || fileTypeStr === 'PDF';
+                  
+                  let locationLabel = 'Location';
+                  let locationValue = '';
+                  if (slideNumber) {
+                    if (isPptx) {
+                      locationLabel = 'slide';
+                      locationValue = slideNumber;
+                    } else if (isDocx || isPdf) {
+                      locationLabel = 'page';
+                      locationValue = slideNumber;
+                    } else {
+                      locationLabel = 'location';
+                      locationValue = slideNumber;
+                    }
+                  } else {
+                    if (isPptx) {
+                      locationLabel = 'Slide number';
+                    } else if (isDocx || isPdf) {
+                      locationLabel = 'Page number';
+                    } else {
+                      locationLabel = 'Location';
+                    }
+                  }
                   
                   return `
                     <div style="margin:8px 0; padding:8px; background:var(--rowAlt); border-radius:4px;">
@@ -2079,6 +2231,7 @@
                         ${img.hash ? `<span class="small mono muted">hash: ${esc(img.hash)}</span>` : ''}
                         ${img.width && img.height ? `<span class="small muted">${img.width}×${img.height}px</span>` : ''}
                       </div>
+                      ${slideNumber ? `<div class="small" style="margin-top:4px; color:var(--accent); font-weight:500;">${locationLabel}:${locationValue}</div>` : (!slideNumber ? `<div class="small muted" style="margin-top:4px; display:flex; align-items:center; gap:4px;"><img src="/static/assets/warning.svg" alt="Warning" style="width:22px; height:22px; object-fit:contain;" /> ${locationLabel} not detected - check manually</div>` : '')}
                       ${altText ? `<div class="small muted" style="margin-top:4px; padding-top:4px; border-top:1px solid var(--border);">${esc(altText)}</div>` : ''}
                     </div>
                   `;
@@ -2106,6 +2259,37 @@
                       }
                       
                       const altText = img.alt_text || '';
+                      const slideNumber = img.slide_number || change.slide_number;
+                      
+                      // Determine appropriate location message based on file type
+                      const fileName = (s.file || '').toLowerCase();
+                      const fileTypeStr = textDiff.file_type || '';
+                      const isPptx = fileName.endsWith('.pptx') || fileTypeStr === 'PowerPoint';
+                      const isDocx = fileName.endsWith('.docx') || fileTypeStr === 'Word document';
+                      const isPdf = fileName.endsWith('.pdf') || textDiff.is_pdf || fileTypeStr === 'PDF';
+                      
+                      let locationLabel = 'Location';
+                      let locationValue = '';
+                      if (slideNumber) {
+                        if (isPptx) {
+                          locationLabel = 'slide';
+                          locationValue = slideNumber;
+                        } else if (isDocx || isPdf) {
+                          locationLabel = 'page';
+                          locationValue = slideNumber;
+                        } else {
+                          locationLabel = 'location';
+                          locationValue = slideNumber;
+                        }
+                      } else {
+                        if (isPptx) {
+                          locationLabel = 'Slide number';
+                        } else if (isDocx || isPdf) {
+                          locationLabel = 'Page number';
+                        } else {
+                          locationLabel = 'Location';
+                        }
+                      }
                       
                       return `
                         <div style="margin:8px 0; padding:8px; background:var(--rowAlt); border-radius:4px;">
@@ -2117,6 +2301,7 @@
                             ${img.hash ? `<span class="small mono muted">hash: ${esc(img.hash)}</span>` : ''}
                             ${img.width && img.height ? `<span class="small muted">${img.width}×${img.height}px</span>` : ''}
                           </div>
+                          ${slideNumber ? `<div class="small" style="margin-top:4px; color:var(--accent); font-weight:500;">${locationLabel}:${locationValue}</div>` : (!slideNumber ? `<div class="small muted" style="margin-top:4px; display:flex; align-items:center; gap:4px;"><img src="/static/assets/warning.svg" alt="Warning" style="width:22px; height:22px; object-fit:contain;" /> ${locationLabel} not detected - check manually</div>` : '')}
                           ${altText ? `<div class="small muted" style="margin-top:4px; padding-top:4px; border-top:1px solid var(--border);">${esc(altText)}</div>` : ''}
                         </div>
                       `;
@@ -3260,7 +3445,7 @@
                   modalBody.innerHTML = `
                     <div style="padding:20px;">
                       <div style="background:var(--bad); color:white; padding:12px; border-radius:8px; margin-bottom:16px;">
-                        <div style="font-weight:600; font-size:16px; margin-bottom:8px;">⚠️ File Deleted</div>
+                        <div style="font-weight:600; font-size:16px; margin-bottom:8px; display:flex; align-items:center; gap:6px;"><img src="/static/assets/warning.svg" alt="Warning" style="width:20px; height:20px; object-fit:contain;" /> File Deleted</div>
                         <div style="font-size:14px;">The file <span class="mono">${esc(pathForDisplay)}</span> has been deleted or is missing.</div>
                       </div>
                       <div style="padding:12px; background:var(--panel); border:1px solid var(--border); border-radius:8px; margin-bottom:16px;">
@@ -3345,16 +3530,54 @@
                 const diffHTML = renderDiff(j);
                 modalBody.innerHTML = diffHTML;
                 
-                // Restore scroll positions after re-rendering
-                const newDiffSides = modalBody.querySelectorAll('.diff-side .diff-lines');
-                newDiffSides.forEach((side, index) => {
-                  if (scrollPositions[index]) {
-                    // Use requestAnimationFrame to ensure DOM is fully rendered
-                    requestAnimationFrame(() => {
-                      side.scrollTop = scrollPositions[index].scrollTop;
-                      side.scrollLeft = scrollPositions[index].scrollLeft;
-                    });
+                // Restore scroll positions after rendering
+                // First try to restore from sessionStorage (for navigation away/back)
+                let savedScrollPositions = null;
+                try {
+                  const saved = sessionStorage.getItem(`diff-scroll-${path}`);
+                  if (saved) {
+                    savedScrollPositions = JSON.parse(saved);
                   }
+                } catch (e) {
+                  // ignore storage errors
+                }
+                
+                // Use saved positions if available (for first open or navigation back), otherwise use current positions (for re-render)
+                const positionsToRestore = savedScrollPositions || (scrollPositions.length > 0 ? scrollPositions : null);
+                
+                const newDiffSides = modalBody.querySelectorAll('.diff-side .diff-lines');
+                if (positionsToRestore && newDiffSides.length > 0) {
+                  // Use multiple requestAnimationFrame calls to ensure DOM is fully rendered and layout is complete
+                  requestAnimationFrame(() => {
+                    requestAnimationFrame(() => {
+                      newDiffSides.forEach((side, index) => {
+                        if (positionsToRestore[index]) {
+                          side.scrollTop = positionsToRestore[index].scrollTop;
+                          side.scrollLeft = positionsToRestore[index].scrollLeft;
+                        }
+                      });
+                    });
+                  });
+                }
+                
+                // Also save current scroll positions on scroll events for persistence
+                newDiffSides.forEach((side) => {
+                  side.addEventListener('scroll', () => {
+                    if (window.currentDiffPath) {
+                      const currentPositions = [];
+                      modalBody.querySelectorAll('.diff-side .diff-lines').forEach(s => {
+                        currentPositions.push({
+                          scrollTop: s.scrollTop,
+                          scrollLeft: s.scrollLeft
+                        });
+                      });
+                      try {
+                        sessionStorage.setItem(`diff-scroll-${window.currentDiffPath}`, JSON.stringify(currentPositions));
+                      } catch (e) {
+                        // ignore storage errors
+                      }
+                    }
+                  }, { passive: true });
                 });
                 
                 // Restore button states after re-rendering
@@ -3465,12 +3688,10 @@
           // Load diff immediately
           await loadDiff();
           
-          // Set up automatic refresh every 5 seconds while modal is open
-          window.diffAutoRefreshInterval = setInterval(() => {
-            if (modal.style.display !== 'none' && window.currentDiffPath) {
-              loadDiff();
-            }
-          }, 5000);
+          // Disable auto-refresh to prevent flickering
+          // Auto-refresh was causing flickering every 5 seconds
+          // Users can manually refresh by closing and reopening the modal if needed
+          window.diffAutoRefreshInterval = null;
         });
       });
 
@@ -3989,7 +4210,27 @@
     state.timer = setInterval(tick, 1500);
 
     // clean up the timer when leaving the page
-    window.addEventListener('beforeunload', () => { if (state.timer) clearInterval(state.timer); });
+    window.addEventListener('beforeunload', () => { 
+      if (state.timer) clearInterval(state.timer);
+      // Save scroll positions before page unload
+      if (window.currentDiffPath && modal.style.display !== 'none') {
+        const diffSides = modalBody.querySelectorAll('.diff-side .diff-lines');
+        const scrollPositions = [];
+        diffSides.forEach(side => {
+          scrollPositions.push({
+            scrollTop: side.scrollTop,
+            scrollLeft: side.scrollLeft
+          });
+        });
+        if (scrollPositions.length > 0) {
+          try {
+            sessionStorage.setItem(`diff-scroll-${window.currentDiffPath}`, JSON.stringify(scrollPositions));
+          } catch (e) {
+            // ignore storage errors
+          }
+        }
+      }
+    });
 
     // load cached data immediately for instant display when navigating back
     loadDataCache();
