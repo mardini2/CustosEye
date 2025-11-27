@@ -3,7 +3,7 @@
     "path": "C:/Users/alimm/Desktop/College/test/Concept Overview.docx",
     "rule": "sha256",
     "sha256": "855E83DF1485EF0F7E6E0D11655DA21A45DF8246F94E870AD4DCD4507B3EC81D",
-    "last_result": "CHANGED",
+    "last_result": "CHANGED: File deleted or path changed",
     "baseline_blob": {
       "sha256": "855E83DF1485EF0F7E6E0D11655DA21A45DF8246F94E870AD4DCD4507B3EC81D",
       "size": 48609,

@@ -42,40 +42,172 @@
     .tabs { display:flex; gap:8px; margin-bottom:10px; }
     .tab { background:var(--tab); border:1px solid var(--border); border-radius:8px; padding:6px 10px; cursor:pointer; user-select:none; }
     .tab.on { background:var(--tabOn); border-color:var(--accent); }
-    .controls { display:flex; flex-wrap:wrap; gap:10px; align-items:center; }
-    .chip { display:inline-flex; align-items:center; gap:6px; border:1px solid var(--chip-border); padding:4px 10px; border-radius:999px; font-size:12px; cursor:pointer; user-select:none; background:transparent; color:var(--text); }
-    .chip[data-on="true"] { background:rgba(124,197,255,0.1); border-color:var(--accent); }
-    .chip .dot { width:8px; height:8px; border-radius:999px; }
+    .controls { 
+      display:flex; 
+      flex-wrap:wrap; 
+      gap:12px; 
+      align-items:center; 
+      padding:14px; 
+      background:var(--panel); 
+      border:1px solid var(--border); 
+      border-radius:12px; 
+      box-shadow:0 2px 8px rgba(0,0,0,0.08);
+    }
+    .chip { 
+      display:inline-flex; 
+      align-items:center; 
+      gap:8px; 
+      border:1px solid var(--chip-border); 
+      padding:8px 14px; 
+      border-radius:999px; 
+      font-size:13px; 
+      font-weight:500;
+      cursor:pointer; 
+      user-select:none; 
+      background:transparent; 
+      color:var(--text);
+      transition:all 0.2s ease;
+      box-shadow:0 1px 3px rgba(0,0,0,0.1);
+    }
+    .chip:hover {
+      transform:translateY(-1px);
+      box-shadow:0 3px 6px rgba(0,0,0,0.15);
+    }
+    .chip:active {
+      transform:translateY(0);
+      box-shadow:0 1px 2px rgba(0,0,0,0.1);
+    }
+    .chip[data-on="true"] { 
+      background:rgba(124,197,255,0.15); 
+      border-color:var(--accent);
+      box-shadow:0 2px 4px rgba(0,0,0,0.12);
+    }
+    .chip .dot { 
+      width:10px; 
+      height:10px; 
+      border-radius:999px; 
+      box-shadow:0 0 0 2px rgba(255,255,255,0.3) inset;
+    }
     .chip.info .dot { background:var(--chip-info); }
     .chip.warning .dot { background:var(--chip-warning); }
     .chip.critical .dot { background:var(--chip-critical); }
     .chip.ok .dot { background:var(--ok); }
-    .input { background:var(--input); border:1px solid var(--border); padding:8px 10px; border-radius:8px; color:var(--text); min-width:220px; }
-    .btn { background:var(--accent); color:white; border:0; padding:8px 12px; border-radius:8px; cursor:pointer; }
-    .list { margin-top:12px; border-top:1px dashed var(--border); transition:opacity 0.2s ease-in-out; }
+    .input { 
+      background:var(--input); 
+      border:1px solid var(--border); 
+      padding:10px 14px; 
+      border-radius:8px; 
+      color:var(--text); 
+      min-width:220px;
+      font-size:13px;
+      transition:all 0.2s ease;
+    }
+    .input:focus {
+      outline:none;
+      border-color:var(--accent);
+      box-shadow:0 0 0 3px color-mix(in oklab, var(--accent) 15%, transparent);
+    }
+    .btn { 
+      background:var(--accent); 
+      color:white; 
+      border:0; 
+      padding:10px 16px; 
+      border-radius:8px; 
+      cursor:pointer;
+      font-size:13px;
+      font-weight:500;
+      transition:all 0.2s ease;
+      box-shadow:0 2px 4px rgba(0,0,0,0.1);
+    }
+    .btn:hover {
+      transform:translateY(-1px);
+      box-shadow:0 4px 8px rgba(0,0,0,0.15);
+    }
+    .btn:active {
+      transform:translateY(0);
+      box-shadow:0 1px 2px rgba(0,0,0,0.1);
+    }
+    .controls-group {
+      display:flex;
+      gap:10px;
+      align-items:center;
+      padding-left:12px;
+      border-left:1px solid var(--border);
+    }
+    .controls-group:first-child {
+      border-left:none;
+      padding-left:0;
+    }
+    .list { 
+      margin-top:16px; 
+      background:var(--panel);
+      border:1px solid var(--border);
+      border-radius:12px;
+      padding:8px;
+      box-shadow:0 2px 8px rgba(0,0,0,0.08);
+      transition:opacity 0.2s ease-in-out; 
+    }
     .list.updating { opacity:0.7; }
-    .row { display:grid; grid-template-columns:108px 100px 1fr; gap:14px; padding:10px 4px; border-bottom:1px solid var(--border); background:var(--row); align-items:start; }
+    .row { 
+      display:grid; 
+      grid-template-columns:108px 100px 1fr; 
+      gap:14px; 
+      padding:12px 14px; 
+      border-bottom:1px solid var(--border); 
+      background:var(--row); 
+      align-items:start;
+      border-radius:8px;
+      margin:4px 0;
+      transition:all 0.2s ease;
+    }
+    .row:last-child {
+      border-bottom:none;
+    }
     .row:nth-child(odd) { background:var(--rowAlt); }
+    .row:hover {
+      background:color-mix(in oklab, var(--accent) 5%, var(--row));
+      border-color:color-mix(in oklab, var(--accent) 30%, var(--border));
+      box-shadow:0 2px 6px rgba(0,0,0,0.1);
+      transform:translateX(2px);
+    }
+    .row:nth-child(odd):hover {
+      background:color-mix(in oklab, var(--accent) 5%, var(--rowAlt));
+    }
     .row.new-row { animation:fadeInRow 0.2s ease-in; }
     @keyframes fadeInRow {
       from { opacity:0; transform:translateY(-2px); }
       to { opacity:1; transform:translateY(0); }
     }
-    .lvl { display:inline-flex; align-items:center; gap:8px; padding:4px 8px; border-radius:999px; font-weight:600; letter-spacing:.3px; }
+    .lvl { 
+      display:inline-flex; 
+      align-items:center; 
+      gap:8px; 
+      padding:6px 12px; 
+      border-radius:999px; 
+      font-weight:600; 
+      letter-spacing:.3px;
+      font-size:11px;
+      border:1px solid transparent;
+      transition:all 0.2s ease;
+      box-shadow:0 1px 3px rgba(0,0,0,0.1);
+    }
     .lvl.info {
       color: var(--chip-info);
       background: rgba(42,109,241,.14); /* fallback */
       background: color-mix(in oklab, var(--chip-info) 14%, transparent);
+      border-color: color-mix(in oklab, var(--chip-info) 30%, transparent);
     }
     .lvl.warning {
       color: var(--chip-warning);
       background: rgba(230,167,0,.18);  /* fallback */
       background: color-mix(in oklab, var(--chip-warning) 18%, transparent);
+      border-color: color-mix(in oklab, var(--chip-warning) 30%, transparent);
     }
     .lvl.critical {
       color: var(--chip-critical);
       background: rgba(212,60,60,.18);  /* fallback */
       background: color-mix(in oklab, var(--chip-critical) 18%, transparent);
+      border-color: color-mix(in oklab, var(--chip-critical) 30%, transparent);
     }
     .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace; font-size:12px; }
     .muted { color:var(--muted); }
@@ -86,16 +218,185 @@
 
     /* process tree */
     .tree { margin-top:12px; }
-    .treebar { display:flex; gap:8px; align-items:center; margin-bottom:8px; }
-    .pill { display:inline-block; padding:2px 6px; border-radius:999px; border:1px solid var(--border); font-size:11px; }
-    .pill.low { color: var(--trust-low); border-color: color-mix(in oklab, var(--trust-low) 40%, var(--border)); }
-    .pill.medium { color: var(--trust-medium); border-color: color-mix(in oklab, var(--trust-medium) 40%, var(--border)); }
-    .pill.high { color: var(--trust-high); border-color: color-mix(in oklab, var(--trust-high) 40%, var(--border)); }
-    details { border-left:2px solid var(--border); margin-left:10px; padding-left:8px; }
-    details > summary { list-style: none; cursor: pointer; }
+    .treebar { 
+      display:flex; 
+      gap:10px; 
+      align-items:center; 
+      margin-bottom:16px; 
+      padding:12px; 
+      background:var(--panel); 
+      border:1px solid var(--border); 
+      border-radius:12px; 
+      flex-wrap:wrap;
+      box-shadow:0 2px 8px rgba(0,0,0,0.08);
+    }
+    .treebar .input { 
+      flex:1; 
+      min-width:280px; 
+      background:var(--input); 
+      border:1px solid var(--border); 
+      padding:10px 14px; 
+      border-radius:8px; 
+      color:var(--text);
+      font-size:13px;
+      transition:all 0.2s ease;
+    }
+    .treebar .input:focus {
+      outline:none;
+      border-color:var(--accent);
+      box-shadow:0 0 0 3px color-mix(in oklab, var(--accent) 15%, transparent);
+    }
+    .treebar .btn { 
+      padding:10px 16px; 
+      font-size:13px; 
+      font-weight:500;
+      transition:all 0.2s ease;
+      box-shadow:0 2px 4px rgba(0,0,0,0.1);
+    }
+    .treebar .btn:hover {
+      transform:translateY(-1px);
+      box-shadow:0 4px 8px rgba(0,0,0,0.15);
+    }
+    .treebar .btn:active {
+      transform:translateY(0);
+      box-shadow:0 1px 2px rgba(0,0,0,0.1);
+    }
+    .treebar-group {
+      display:flex;
+      gap:8px;
+      align-items:center;
+      padding-left:12px;
+      border-left:1px solid var(--border);
+    }
+    .treebar-group:first-child {
+      border-left:none;
+      padding-left:0;
+    }
+    .pill { 
+      display:inline-block; 
+      padding:4px 10px; 
+      border-radius:999px; 
+      border:1px solid var(--border); 
+      font-size:11px; 
+      font-weight:500;
+      letter-spacing:0.3px;
+      transition:all 0.2s ease;
+    }
+    .pill.low { 
+      color: var(--trust-low); 
+      background:color-mix(in oklab, var(--trust-low) 12%, transparent);
+      border-color: color-mix(in oklab, var(--trust-low) 50%, var(--border)); 
+    }
+    .pill.medium { 
+      color: var(--trust-medium); 
+      background:color-mix(in oklab, var(--trust-medium) 12%, transparent);
+      border-color: color-mix(in oklab, var(--trust-medium) 50%, var(--border)); 
+    }
+    .pill.high { 
+      color: var(--trust-high); 
+      background:color-mix(in oklab, var(--trust-high) 12%, transparent);
+      border-color: color-mix(in oklab, var(--trust-high) 50%, var(--border)); 
+    }
+    #treeRoot {
+      background:var(--panel);
+      border:1px solid var(--border);
+      border-radius:12px;
+      padding:16px;
+      box-shadow:0 2px 8px rgba(0,0,0,0.08);
+    }
+    .tree-node {
+      margin:6px 0;
+      padding:10px 12px;
+      background:var(--row);
+      border:1px solid var(--border);
+      border-radius:8px;
+      transition:all 0.2s ease;
+    }
+    .tree-node:hover {
+      background:color-mix(in oklab, var(--accent) 5%, var(--row));
+      border-color:color-mix(in oklab, var(--accent) 30%, var(--border));
+      box-shadow:0 2px 6px rgba(0,0,0,0.1);
+    }
+    .tree-node-leaf {
+      margin:6px 0 6px 20px;
+      padding:10px 12px;
+      background:var(--rowAlt);
+      border:1px solid var(--border);
+      border-radius:8px;
+      transition:all 0.2s ease;
+    }
+    .tree-node-leaf:hover {
+      background:color-mix(in oklab, var(--accent) 5%, var(--rowAlt));
+      border-color:color-mix(in oklab, var(--accent) 30%, var(--border));
+    }
+    details { 
+      margin:6px 0;
+    }
+    details > summary { 
+      list-style: none; 
+      cursor: pointer; 
+      padding:10px 12px;
+      background:var(--row);
+      border:1px solid var(--border);
+      border-radius:8px;
+      transition:all 0.2s ease;
+      display:flex;
+      align-items:center;
+      gap:8px;
+    }
+    details > summary:hover {
+      background:color-mix(in oklab, var(--accent) 5%, var(--row));
+      border-color:color-mix(in oklab, var(--accent) 30%, var(--border));
+      box-shadow:0 2px 6px rgba(0,0,0,0.1);
+    }
+    details[open] > summary {
+      border-bottom-left-radius:0;
+      border-bottom-right-radius:0;
+      border-bottom:1px dashed var(--border);
+    }
+    details > summary > * {
+      flex-shrink:0;
+    }
     summary::-webkit-details-marker { display:none; }
-    .caret { display:inline-block; width:0; height:0; border-top:6px solid transparent; border-bottom:6px solid transparent; border-left:6px solid var(--muted); margin-right:6px; transform: translateY(1px) rotate(-90deg); transition: transform .15s ease; }
-    details[open] > summary .caret { transform: translateY(1px) rotate(0deg); }
+    .caret { 
+      display:inline-flex;
+      align-items:center;
+      justify-content:center;
+      width:20px;
+      height:20px;
+      border-radius:4px;
+      background:color-mix(in oklab, var(--accent) 10%, transparent);
+      border:1px solid color-mix(in oklab, var(--accent) 30%, var(--border));
+      transition:all 0.2s ease;
+      flex-shrink:0;
+    }
+    .caret::before {
+      content:'';
+      width:0;
+      height:0;
+      border-top:5px solid transparent;
+      border-bottom:5px solid transparent;
+      border-left:6px solid var(--accent);
+      transform:translateX(-1px) rotate(-90deg);
+      transition:transform 0.2s ease;
+    }
+    details[open] > summary .caret {
+      background:color-mix(in oklab, var(--accent) 20%, transparent);
+      border-color:var(--accent);
+    }
+    details[open] > summary .caret::before {
+      transform:translateX(-1px) rotate(0deg);
+    }
+    details > summary:hover .caret {
+      background:color-mix(in oklab, var(--accent) 25%, transparent);
+      border-color:var(--accent);
+    }
+    details > div {
+      margin-left:28px;
+      margin-top:4px;
+      padding-left:12px;
+      border-left:2px solid color-mix(in oklab, var(--accent) 20%, var(--border));
+    }
 
     /* integrity tab */
     .grid { display:grid; gap:10px; grid-template-columns: 1fr; }
@@ -103,10 +404,34 @@
     .tbl { width:100%; border-collapse: collapse; border-bottom:1px solid var(--border); }
     .tbl tbody tr:last-child td { border-bottom:none; } /* avoid a double line */
     .tbl th, .tbl td { padding:8px; border-bottom:1px solid var(--border); text-align:left; font-size:12px; }
-    .badge { display:inline-block; padding:2px 8px; border-radius:999px; border:1px solid var(--border); font-size:11px; }
-    .badge.ok { color:var(--good); border-color: color-mix(in oklab, var(--good) 40%, var(--border)); }
-    .badge.warn { color:var(--warn); border-color: color-mix(in oklab, var(--warn) 40%, var(--border)); }
-    .badge.bad { color:var(--bad); border-color: color-mix(in oklab, var(--bad) 40%, var(--border)); }
+    .badge { 
+      display:inline-block; 
+      padding:4px 10px; 
+      border-radius:999px; 
+      border:1px solid var(--border); 
+      font-size:11px; 
+      font-weight:600;
+      background:color-mix(in oklab, var(--accent) 8%, transparent);
+      color:var(--accent);
+      border-color:color-mix(in oklab, var(--accent) 30%, var(--border));
+      margin-left:6px;
+      transition:all 0.2s ease;
+    }
+    .badge.ok { 
+      color:var(--good); 
+      background:color-mix(in oklab, var(--good) 12%, transparent);
+      border-color: color-mix(in oklab, var(--good) 40%, var(--border)); 
+    }
+    .badge.warn { 
+      color:var(--warn); 
+      background:color-mix(in oklab, var(--warn) 12%, transparent);
+      border-color: color-mix(in oklab, var(--warn) 40%, var(--border)); 
+    }
+    .badge.bad { 
+      color:var(--bad); 
+      background:color-mix(in oklab, var(--bad) 12%, transparent);
+      border-color: color-mix(in oklab, var(--bad) 40%, var(--border)); 
+    }
     .small { font-size:11px; color:var(--muted); }
     .hint { color:var(--muted); font-size:12px; }
 
@@ -512,20 +837,24 @@
         <!-- Live Events panel: filter controls and event list -->
       <div class="panel" id="bar-live" role="tabpanel" aria-labelledby="tab-live">
         <div class="controls">
-          <button class="chip info"     data-on="true"  data-level="info"     data-tip="Toggle Info events"><span class="dot"></span>Info</button>
-          <button class="chip warning"  data-on="true"  data-level="warning"  data-tip="Toggle Warnings"><span class="dot"></span>Warning</button>
-          <button class="chip critical" data-on="true"  data-level="critical" data-tip="Toggle Critical"><span class="dot"></span>Critical</button>
-          <button class="chip ok" id="pause" data-on="false" data-tip="Pause or resume background updates"><span class="dot"></span><span id="pauseText">Live</span></button>
-          <input id="search" class="input" placeholder="Search: reason, source, name, pid..." data-tip="Filter visible rows by text" />
-          <button class="btn" id="refresh" data-tip="Force an immediate refresh">Refresh</button>
-          <select id="exportFmt" class="input" aria-label="Export format" style="min-width:110px">
-            <option value="csv">CSV</option>
-            <option value="json">JSON</option>
-            <option value="jsonl">JSONL</option>
-            <option value="xlsx">XLSX</option>
-          </select>
-          <button class="btn" id="export"  data-tip="Export current view">Export</button>
-          <div class="muted">Showing <span id="count" class="count">0</span> / <span id="total" class="count">0</span></div>
+          <div class="controls-group">
+            <button class="chip info"     data-on="true"  data-level="info"     data-tip="Toggle Info events"><span class="dot"></span>Info</button>
+            <button class="chip warning"  data-on="true"  data-level="warning"  data-tip="Toggle Warnings"><span class="dot"></span>Warning</button>
+            <button class="chip critical" data-on="true"  data-level="critical" data-tip="Toggle Critical"><span class="dot"></span>Critical</button>
+            <button class="chip ok" id="pause" data-on="false" data-tip="Pause or resume background updates"><span class="dot"></span><span id="pauseText">Live</span></button>
+          </div>
+          <input id="search" class="input" placeholder="Search: reason, source, name, pid..." data-tip="Filter visible rows by text" style="flex:1; min-width:280px;" />
+          <div class="controls-group">
+            <button class="btn" id="refresh" data-tip="Force an immediate refresh">Refresh</button>
+            <select id="exportFmt" class="input" aria-label="Export format" style="min-width:120px; padding:10px 14px;">
+              <option value="csv">CSV</option>
+              <option value="json">JSON</option>
+              <option value="jsonl">JSONL</option>
+              <option value="xlsx">XLSX</option>
+            </select>
+            <button class="btn" id="export"  data-tip="Export current view">Export</button>
+          </div>
+          <div class="muted" style="font-size:13px; font-weight:500; padding:8px 12px; background:color-mix(in oklab, var(--accent) 8%, transparent); border:1px solid color-mix(in oklab, var(--accent) 25%, var(--border)); border-radius:8px;">Showing <span id="count" class="count" style="color:var(--accent); font-weight:600;">0</span> / <span id="total" class="count" style="color:var(--text); font-weight:600;">0</span></div>
           <span id="countStatus" role="status" style="position:absolute;left:-9999px;top:auto;width:1px;height:1px;overflow:hidden;">
           </span>
         </div>
@@ -580,12 +909,16 @@
       <!-- process tree: hierarchical view of running processes with trust verdicts -->
       <div id="tree"    class="tree"  role="tabpanel" aria-labelledby="tab-tree" style="display:none">
         <div class="treebar">
-        <input id="treeSearch" class="input" placeholder="Search PIDs, names, verdict/class..." data-tip="Filter nodes by PID, name, verdict/class" />
-        <button class="btn" id="treeRefresh"  data-tip="Refresh tree data">Refresh</button>
-        <button class="btn" id="treeExpand"   data-tip="Expand all nodes">Expand all</button>
-        <button class="btn" id="treeCollapse" data-tip="Collapse all nodes">Collapse all</button>
-        <button class="btn" id="treeCopy"     data-tip="Copy the visible tree to clipboard">Copy</button>
-        <button class="btn" id="treeExport"   data-tip="Download the process tree as JSON">Export JSON</button>
+          <input id="treeSearch" class="input" placeholder="Search PIDs, names, verdict/class..." data-tip="Filter nodes by PID, name, verdict/class" />
+          <div class="treebar-group">
+            <button class="btn" id="treeRefresh"  data-tip="Refresh tree data">Refresh</button>
+            <button class="btn" id="treeExpand"   data-tip="Expand all nodes">Expand all</button>
+            <button class="btn" id="treeCollapse" data-tip="Collapse all nodes">Collapse all</button>
+          </div>
+          <div class="treebar-group">
+            <button class="btn" id="treeCopy"     data-tip="Copy the visible tree to clipboard">Copy</button>
+            <button class="btn" id="treeExport"   data-tip="Download the process tree as JSON">Export JSON</button>
+          </div>
         </div>
         <div id="treeRoot"></div>
       </div>
@@ -2516,13 +2849,16 @@
       const isOpen = state.forceCollapsed
         ? false
         : (state.treeQ ? true : openKeys.has(key));   // auto-open when searching
-      const head = `<span class="caret"></span><span class="mono">PID ${n.pid}</span> <span class="mono">${n.name}</span> ${pill(n.csc_verdict, n.csc_class, n.csc_confidence)}`;
+      const nameDisplay = n.name || '(unnamed)';
+      const pathDisplay = n.path ? `<span class="muted" style="font-size:11px; margin-left:8px;">${esc(n.path)}</span>` : '';
+      const head = `<span class="caret"></span><span class="mono" style="font-weight:600; color:var(--accent);">PID ${n.pid}</span> <span class="mono" style="font-weight:500;">${esc(nameDisplay)}</span>${pathDisplay} ${pill(n.csc_verdict, n.csc_class, n.csc_confidence)}`;
       const kidsHTML = (n.children || []).map(c => renderNode(c, depth + 1, key)).join('');
       if (!kidsHTML) {
-        return `<div style="margin-left:10px"><span class="mono">PID ${n.pid}</span> <span class="mono">${n.name}</span> ${pill(n.csc_verdict, n.csc_class, n.csc_confidence)}</div>`;
+        const leafPathDisplay = n.path ? `<span class="muted" style="font-size:11px; margin-left:8px; display:block; margin-top:4px;">${esc(n.path)}</span>` : '';
+        return `<div class="tree-node-leaf"><span class="mono" style="font-weight:600; color:var(--accent);">PID ${n.pid}</span> <span class="mono" style="font-weight:500;">${esc(nameDisplay)}</span>${leafPathDisplay} ${pill(n.csc_verdict, n.csc_class, n.csc_confidence)}</div>`;
       }
       // IMPORTANT: data-k holds the stable key, we set open if in cache
-      return `<details data-k="${key}"${isOpen ? ' open' : ''}><summary aria-label="Toggle children">${head}</summary>${kidsHTML}</details>`;
+      return `<details data-k="${key}"${isOpen ? ' open' : ''}><summary aria-label="Toggle children">${head}</summary><div>${kidsHTML}</div></details>`;
     }
 
     function toggleAll(open) {
