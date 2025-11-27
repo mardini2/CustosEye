@@ -929,6 +929,19 @@ def _extract_images_from_office_doc(path: str) -> list[dict[str, Any]]:
             else:
                 return images
 
+            # Build a map of relationship IDs to media paths for .docx
+            rels_map = {}
+            if p_lower.endswith(".docx"):
+                try:
+                    rels_xml = zf.read("word/_rels/document.xml.rels").decode("utf-8", errors="replace")
+                    # Extract relationships: <Relationship Id="rIdX" Target="media/imageY.png"/>
+                    rel_pattern = r'<Relationship[^>]*Id="([^"]+)"[^>]*Target="([^"]+)"'
+                    for rel_id, target in re.findall(rel_pattern, rels_xml):
+                        if target.startswith("media/"):
+                            rels_map[rel_id] = target
+                except Exception:
+                    pass
+
             for name in zf.namelist():
                 if name.startswith(media_pattern) and name.lower().endswith(
                     (".png", ".jpg", ".jpeg", ".gif", ".bmp", ".svg", ".wmf", ".emf")
@@ -941,39 +954,98 @@ def _extract_images_from_office_doc(path: str) -> list[dict[str, Any]]:
                             :16
                         ]  # short hash for display
 
-                        # extract dimensions from document.xml for .docx
+                        # Extract alt text/title for display (on separate line)
+                        alt_text = None
                         width = None
                         height = None
 
                         if p_lower.endswith(".docx") and doc_xml:
-                            # find image relationships and extract dimensions
-                            # Word stores dimensions in EMU (English Metric Units): 1 inch = 914400 EMU
-                            # look for <wp:extent> or <a:ext> tags with cx/cy attributes
-                            # search for relationships to this image
-                            rel_pattern = r'<a:blip[^>]*r:embed="[^"]*"[^>]*>.*?<wp:extent[^>]*cx="(\d+)"[^>]*cy="(\d+)"[^>]*>'
-                            matches = re.findall(rel_pattern, doc_xml, re.DOTALL)
-                            if matches:
-                                # use first match (most common case)
-                                cx_emu, cy_emu = matches[0]
-                                # convert EMU to pixels (assuming 96 DPI: 1 inch = 96 pixels = 914400 EMU)
-                                width = round(int(cx_emu) / 914400 * 96)
-                                height = round(int(cy_emu) / 914400 * 96)
-                            else:
-                                # try alternative pattern for inline images
-                                alt_pattern = r'<a:blip[^>]*r:embed="[^"]*"[^>]*>.*?<a:ext[^>]*cx="(\d+)"[^>]*cy="(\d+)"[^>]*>'
-                                alt_matches = re.findall(alt_pattern, doc_xml, re.DOTALL)
-                                if alt_matches:
-                                    cx_emu, cy_emu = alt_matches[0]
+                            # Find the relationship ID that points to this image
+                            # The name is like "word/media/image2.jpeg", relationship target is "media/image2.jpeg"
+                            # Extract the media path part (everything after "word/")
+                            media_path = name.replace("word/", "") if name.startswith("word/") else name
+                            rel_id = None
+                            # Match by exact path first, then fall back to basename
+                            for rid, target in rels_map.items():
+                                if target == media_path:
+                                    rel_id = rid
+                                    break
+                            # If no exact match, try basename (shouldn't happen but safer)
+                            if not rel_id:
+                                media_name = os.path.basename(name)
+                                for rid, target in rels_map.items():
+                                    if target.endswith(media_name):
+                                        rel_id = rid
+                                        break
+                            
+                            # Search for this image in document.xml by relationship ID
+                            if rel_id:
+                                # Find the specific image block that uses this relationship ID
+                                # Look for the drawing that contains this blip reference
+                                # Pattern: find <w:drawing> that contains <a:blip r:embed="rIdX"> and then find <wp:docPr> within that same drawing
+                                drawing_pattern = rf'<w:drawing>.*?<a:blip[^>]*r:embed="{re.escape(rel_id)}"[^>]*>.*?</w:drawing>'
+                                drawing_match = re.search(drawing_pattern, doc_xml, re.DOTALL)
+                                if drawing_match:
+                                    drawing_block = drawing_match.group(0)
+                                    # Now find wp:docPr within this specific drawing block
+                                    docpr_pattern = r'<wp:docPr[^>]*title="([^"]*)"[^>]*>'
+                                    title_matches = re.findall(docpr_pattern, drawing_block)
+                                    if title_matches and title_matches[0]:
+                                        alt_text = title_matches[0]
+                                    else:
+                                        # Try description/alt text
+                                        desc_pattern = r'<wp:docPr[^>]*descr="([^"]*)"[^>]*>'
+                                        desc_matches = re.findall(desc_pattern, drawing_block)
+                                        if desc_matches and desc_matches[0]:
+                                            alt_text = desc_matches[0]
+                                
+                                # Decode HTML entities in alt text
+                                if alt_text:
+                                    import html
+                                    try:
+                                        alt_text = html.unescape(alt_text)
+                                        # Replace newlines and multiple spaces with " - " separator
+                                        # Split by newlines, strip each part, filter empty, join with " - "
+                                        parts = [part.strip() for part in alt_text.split('\n') if part.strip()]
+                                        if len(parts) > 1:
+                                            alt_text = ' - '.join(parts)
+                                        else:
+                                            # If no newlines, just clean up multiple spaces
+                                            alt_text = ' '.join(alt_text.split())
+                                    except Exception:
+                                        pass
+                            
+                            # Also try to find dimensions
+                            if rel_id:
+                                rel_pattern = rf'<a:blip[^>]*r:embed="{re.escape(rel_id)}"[^>]*>.*?<wp:extent[^>]*cx="(\d+)"[^>]*cy="(\d+)"[^>]*>'
+                                matches = re.findall(rel_pattern, doc_xml, re.DOTALL)
+                                if matches:
+                                    cx_emu, cy_emu = matches[0]
                                     width = round(int(cx_emu) / 914400 * 96)
                                     height = round(int(cy_emu) / 914400 * 96)
+                                else:
+                                    # try alternative pattern for inline images
+                                    alt_pattern = rf'<a:blip[^>]*r:embed="{re.escape(rel_id)}"[^>]*>.*?<a:ext[^>]*cx="(\d+)"[^>]*cy="(\d+)"[^>]*>'
+                                    alt_matches = re.findall(alt_pattern, doc_xml, re.DOTALL)
+                                    if alt_matches:
+                                        cx_emu, cy_emu = alt_matches[0]
+                                        width = round(int(cx_emu) / 914400 * 96)
+                                        height = round(int(cy_emu) / 914400 * 96)
+
+                        # Use basename only (image1, image2, etc.) - no filename extraction
+                        display_name = os.path.basename(name)
 
                         img_info = {
-                            "name": os.path.basename(name),
+                            "name": display_name,
                             "path": name,
                             "size": info.file_size,
                             "hash": img_hash,
                             "type": "image",
                         }
+                        
+                        # Add alt text if available
+                        if alt_text:
+                            img_info["alt_text"] = alt_text
 
                         if width is not None and height is not None:
                             img_info["width"] = width
@@ -1593,6 +1665,7 @@ def _diff_docx_formatting(
                     if buffer_order is not None
                     else fallback_seed + len(char_changes),
                     'word_context': word_context_value,
+                    'segments': [fragment_text],
                 }
             )
             buffer_chars = []
@@ -1682,6 +1755,7 @@ def _diff_docx_formatting(
                             'after_attrs': after_snapshot,
                             'order': order_value,
                             'word_context': word_context,
+                            'segments': [text_span],
                         }
                     )
             continue
@@ -1726,6 +1800,7 @@ def _diff_docx_formatting(
                                     'order': order_value,
                                     'word_context': '',
                                     'has_text_changes': True,  # Flag indicating text also changed
+                                    'segments': [curr_text],
                                 }
                             )
     for change in changes:
@@ -1748,8 +1823,20 @@ def _diff_docx_formatting(
                 merged[-1]['order'] = max(merged[-1].get('order', 0), change.get('order', 0))
                 if change.get('word_context') and not merged[-1].get('word_context'):
                     merged[-1]['word_context'] = change.get('word_context')
+                incoming_segments = change.get('segments') or ([text] if text else [])
+                if incoming_segments:
+                    existing_segments = list(merged[-1].get('segments') or [])
+                    existing_segments.extend(incoming_segments)
+                    merged[-1]['segments'] = existing_segments
             else:
-                merged.append(dict(change))
+                new_change = dict(change)
+                incoming_segments = change.get('segments')
+                if incoming_segments is None:
+                    incoming_segments = [text] if text else []
+                else:
+                    incoming_segments = list(incoming_segments)
+                new_change['segments'] = incoming_segments
+                merged.append(new_change)
         else:
             if same_group:
                 merged[-1]['text'] = (merged[-1].get('text') or '') + text
@@ -1785,7 +1872,9 @@ def _diff_docx_formatting(
     for change in merged:
         key = (change.get('paragraph_index'), change.get('delta_signature'))
         if key not in grouped:
-            grouped[key] = dict(change)
+            grouped_entry = dict(change)
+            grouped_entry['segments'] = list(change.get('segments') or [])
+            grouped[key] = grouped_entry
         else:
             # Concatenate text from all changes with same formatting - ensure we preserve all text
             existing_text = grouped[key].get('text') or ''
@@ -1799,6 +1888,11 @@ def _diff_docx_formatting(
                 grouped[key]['has_text_changes'] = True
             if change.get('word_context') and not grouped[key].get('word_context'):
                 grouped[key]['word_context'] = change.get('word_context')
+            existing_segments = list(grouped[key].get('segments') or [])
+            incoming_segments = change.get('segments') or []
+            if incoming_segments:
+                existing_segments.extend(incoming_segments)
+                grouped[key]['segments'] = existing_segments
     
     # For each change, decide if the paragraph's text actually changed and sync the sentence output.
     for change in grouped.values():
@@ -1812,8 +1906,11 @@ def _diff_docx_formatting(
             # Use the full current paragraph text to show exactly what's in the document now
             change['text'] = current_para_text
             change['has_text_changes'] = True
+            change['segments'] = [current_para_text]
         else:
             change['has_text_changes'] = False
+            if 'segments' not in change:
+                change['segments'] = [change.get('text', '')] if change.get('text') else []
 
     result = [
         {k: v for k, v in change.items() if k != 'delta_signature'}
@@ -3654,11 +3751,68 @@ def build_app(event_bus) -> Flask:
                         RESIZE_TOLERANCE_PX = 1  # pixel tolerance
                         RESIZE_TOLERANCE_PCT = 0.01  # 1% tolerance
 
+                        # Check for resizes by comparing images with same hash (more reliable than name)
+                        common_hashes = baseline_hashes & current_hashes
+                        processed_resize_hashes = set()
+                        
+                        for img_hash in common_hashes:
+                            baseline_img = baseline_img_map[img_hash]
+                            current_img = current_img_map[img_hash]
+                            
+                            baseline_width = baseline_img.get("width")
+                            baseline_height = baseline_img.get("height")
+                            current_width = current_img.get("width")
+                            current_height = current_img.get("height")
+                            
+                            # check if dimensions changed beyond tolerance
+                            if (
+                                baseline_width is not None
+                                and baseline_height is not None
+                                and current_width is not None
+                                and current_height is not None
+                            ):
+                                # calculate absolute and percentage differences
+                                width_diff = abs(current_width - baseline_width)
+                                height_diff = abs(current_height - baseline_height)
+                                width_pct_diff = (
+                                    width_diff / baseline_width if baseline_width > 0 else 0
+                                )
+                                height_pct_diff = (
+                                    height_diff / baseline_height if baseline_height > 0 else 0
+                                )
+                                
+                                # check if change exceeds tolerance (>1 px or >1%)
+                                is_resized = (
+                                    width_diff > RESIZE_TOLERANCE_PX
+                                    or width_pct_diff > RESIZE_TOLERANCE_PCT
+                                ) or (
+                                    height_diff > RESIZE_TOLERANCE_PX
+                                    or height_pct_diff > RESIZE_TOLERANCE_PCT
+                                )
+                                
+                                if is_resized:
+                                    processed_resize_hashes.add(img_hash)
+                                    image_changes.append(
+                                        {
+                                            "change": "resized",
+                                            "image": current_img,
+                                            "old_width": baseline_width,
+                                            "old_height": baseline_height,
+                                            "new_width": current_width,
+                                            "new_height": current_height,
+                                            "type": "image",
+                                        }
+                                    )
+                        
+                        # Also check by name for cases where hash might differ but it's the same image renamed
                         common_names = set(baseline_img_by_name.keys()) & set(
                             current_img_by_name.keys()
                         )
                         for img_name in common_names:
+                            # Skip if we already processed this image by hash
                             baseline_img = baseline_img_by_name[img_name]
+                            if baseline_img.get("hash") in processed_resize_hashes:
+                                continue
                             current_img = current_img_by_name[img_name]
 
                             baseline_width = baseline_img.get("width")

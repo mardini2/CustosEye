@@ -1586,51 +1586,97 @@
 
         let normalizedFormattingChanges = [];
         if (textDiff.formatting_changes && textDiff.formatting_changes.length > 0) {
-          // Collect all valid orders to understand the ordering pattern
-          // First pass: identify word-level changes and their orders
-          const wordLevelOrders = textDiff.formatting_changes
-            .map(c => {
-              const text = c.text || '';
-              const isSentenceOrParagraph = text.trim().length > 50 || (text.includes('.') && text.trim().length > 20) || text.includes('!') || text.includes('?');
-              if (!isSentenceOrParagraph && typeof c.order === 'number') {
-                return c.order;
+          const sourceFormattingChanges = textDiff.formatting_changes;
+
+          const resolveFormattingOrders = (changes) => {
+            const total = changes.length;
+            const orders = new Array(total).fill(null);
+            const validIndices = [];
+
+            changes.forEach((change, idx) => {
+              const numericOrder =
+                typeof change.order === 'number' && Number.isFinite(change.order)
+                  ? change.order
+                  : null;
+              if (numericOrder !== null) {
+                orders[idx] = numericOrder;
+                validIndices.push(idx);
               }
-              return null;
-            })
-            .filter(o => o !== null);
-          const minWordOrder = wordLevelOrders.length > 0 ? Math.min(...wordLevelOrders) : 0;
-          
-          normalizedFormattingChanges = textDiff.formatting_changes
-            .map(change => {
+            });
+
+            let trendScore = 0;
+            for (let i = 1; i < validIndices.length; i++) {
+              const prevIdx = validIndices[i - 1];
+              const currIdx = validIndices[i];
+              const prevOrder = orders[prevIdx];
+              const currOrder = orders[currIdx];
+              const diff = currOrder - prevOrder;
+              if (diff > 0) trendScore += 1;
+              else if (diff < 0) trendScore -= 1;
+            }
+            const direction = trendScore <= -2 ? -1 : 1;
+
+            const prevValid = new Array(total).fill(-1);
+            let lastValid = -1;
+            for (let i = 0; i < total; i++) {
+              if (orders[i] !== null) {
+                lastValid = i;
+              }
+              prevValid[i] = lastValid;
+            }
+
+            const nextValid = new Array(total).fill(-1);
+            let nextValidIdx = -1;
+            for (let i = total - 1; i >= 0; i--) {
+              if (orders[i] !== null) {
+                nextValidIdx = i;
+              }
+              nextValid[i] = nextValidIdx;
+            }
+
+            const STEP = 1;
+            for (let i = 0; i < total; i++) {
+              if (orders[i] !== null) continue;
+              const prevIdx = prevValid[i];
+              const nextIdx = nextValid[i];
+
+              if (prevIdx !== -1 && nextIdx !== -1) {
+                const prevOrder = orders[prevIdx];
+                const nextOrder = orders[nextIdx];
+                const gap = nextIdx - prevIdx;
+                if (gap > 0 && prevOrder !== nextOrder) {
+                  const increment = (nextOrder - prevOrder) / gap;
+                  orders[i] = prevOrder + increment * (i - prevIdx);
+                } else {
+                  orders[i] = prevOrder + direction * STEP * (i - prevIdx);
+                }
+              } else if (prevIdx !== -1) {
+                orders[i] = orders[prevIdx] + direction * STEP * (i - prevIdx);
+              } else if (nextIdx !== -1) {
+                orders[i] = orders[nextIdx] - direction * STEP * (nextIdx - i);
+              } else {
+                orders[i] = direction === 1 ? i : -i;
+              }
+            }
+
+            return orders;
+          };
+
+          const resolvedOrders = resolveFormattingOrders(sourceFormattingChanges);
+
+          normalizedFormattingChanges = sourceFormattingChanges
+            .map((change, idx) => {
               const delta = computeFormattingDelta(change);
               if (!delta.hasChanges) return null;
-              const text = change.text || '';
-              // Detect if this is a sentence/paragraph level change (longer text, likely full sentence)
-              const isSentenceOrParagraph = text.trim().length > 50 || (text.includes('.') && text.trim().length > 20) || text.includes('!') || text.includes('?');
-              let order = typeof change.order === 'number' ? change.order : null;
-              
-              // If sentence/paragraph change has no order or order=0, ensure it gets proper ordering
-              // Use the same order as the newest word-level change to maintain consistent ordering
-              if (isSentenceOrParagraph && (order === null || order === 0)) {
-                if (wordLevelOrders.length > 0) {
-                  // Assign the same order as the newest word-level change (lowest order value)
-                  // This ensures sentence/paragraph changes appear in the correct position
-                  order = minWordOrder;
-                } else {
-                  order = 0;
-                }
-              } else if (order === null) {
-                order = 0;
-              }
-              
               return {
-                text: text,
+                text: change.text || '',
                 delta,
                 beforeAttrs: change.before_attrs || {},
                 afterAttrs: change.after_attrs || {},
-                order: order,
+                order: resolvedOrders[idx] ?? 0,
                 wordContext: change.word_context || '',
                 hasTextChanges: change.has_text_changes || false,
+                segments: Array.isArray(change.segments) ? change.segments : null,
               };
             })
             .filter(Boolean)
@@ -1673,6 +1719,9 @@
                   const changeType = change.change || '';
                   const badgeCls = changeType === 'added' ? 'added' : (changeType === 'removed' ? 'removed' : (changeType === 'resized' ? 'modified' : 'modified'));
                   
+                  // Get image name from multiple possible locations
+                  const imageName = img.name || change.name || img.path?.split('/').pop() || change.image?.name || 'Unknown';
+                  
                   let changeLabel = changeType;
                   let changeDetails = '';
                   
@@ -1685,16 +1734,19 @@
                     changeDetails = `<span class="small" style="color:var(--warning); margin-left:8px;">${oldW}×${oldH} → ${newW}×${newH}</span>`;
                   }
                   
+                  const altText = img.alt_text || '';
+                  
                   return `
                     <div style="margin:8px 0; padding:8px; background:var(--rowAlt); border-radius:4px;">
                       <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
                         <span class="diff-stat-badge ${badgeCls}">${changeType === 'added' ? '+' : (changeType === 'removed' ? '-' : '~')}</span>
-                        <span style="font-weight:500;">${esc(img.name || 'Unknown')}</span>
+                        <span style="font-weight:500;">${esc(imageName)}</span>
                         <span class="small muted">(${bytesHuman(img.size || 0)})</span>
                         ${changeDetails}
                         ${img.hash ? `<span class="small mono muted">hash: ${esc(img.hash)}</span>` : ''}
                         ${img.width && img.height ? `<span class="small muted">${img.width}×${img.height}px</span>` : ''}
                       </div>
+                      ${altText ? `<div class="small muted" style="margin-top:4px; padding-top:4px; border-top:1px solid var(--border);">${esc(altText)}</div>` : ''}
                     </div>
                   `;
                 }).join('')}
@@ -1704,6 +1756,9 @@
                       const img = change.image || {};
                       const changeType = change.change || '';
                       const badgeCls = changeType === 'added' ? 'added' : (changeType === 'removed' ? 'removed' : (changeType === 'resized' ? 'modified' : 'modified'));
+                      
+                      // Get image name from multiple possible locations
+                      const imageName = img.name || change.name || img.path?.split('/').pop() || change.image?.name || 'Unknown';
                       
                       let changeLabel = changeType;
                       let changeDetails = '';
@@ -1717,16 +1772,19 @@
                         changeDetails = `<span class="small" style="color:var(--warning); margin-left:8px;">${oldW}×${oldH} → ${newW}×${newH}</span>`;
                       }
                       
+                      const altText = img.alt_text || '';
+                      
                       return `
                         <div style="margin:8px 0; padding:8px; background:var(--rowAlt); border-radius:4px;">
                           <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
                             <span class="diff-stat-badge ${badgeCls}">${changeType === 'added' ? '+' : (changeType === 'removed' ? '-' : '~')}</span>
-                            <span style="font-weight:500;">${esc(img.name || 'Unknown')}</span>
+                            <span style="font-weight:500;">${esc(imageName)}</span>
                             <span class="small muted">(${bytesHuman(img.size || 0)})</span>
                             ${changeDetails}
                             ${img.hash ? `<span class="small mono muted">hash: ${esc(img.hash)}</span>` : ''}
                             ${img.width && img.height ? `<span class="small muted">${img.width}×${img.height}px</span>` : ''}
                           </div>
+                          ${altText ? `<div class="small muted" style="margin-top:4px; padding-top:4px; border-top:1px solid var(--border);">${esc(altText)}</div>` : ''}
                         </div>
                       `;
                     }).join('')}
@@ -1784,10 +1842,11 @@
           const hiddenChangesId = formattingPanelId + '-hidden';
           const toggleButtonId = formattingPanelId + '-toggle';
 
-            // Helper function to format merged text with visual separators
+            const styledPlusBadge = '<span style="display:inline-block; color:var(--accent); background:color-mix(in oklab, var(--accent) 15%, transparent); border:1px solid color-mix(in oklab, var(--accent) 40%, transparent); border-radius:3px; padding:2px 6px; margin:0 4px; font-weight:700; font-size:0.9em; vertical-align:middle;">+</span>';
+
+            // Heuristic fallback for legacy diffs that don't include explicit segments.
             // ONLY applies when multiple separate, non-adjacent words received different formatting edits
-            // Very conservative: only handles obvious cases like "platformand" -> "platform || and"
-            const formatMergedText = (text, wordContext) => {
+            const formatMergedTextHeuristic = (text) => {
               if (!text) return text;
               const trimmed = text.trim();
               
@@ -1811,14 +1870,16 @@
               // Look for very specific patterns: two common words merged together
               // Examples: "platformand", "andinto" - where two distinct words are clearly merged
               const commonShortWords = ['and', 'the', 'into', 'onto', 'over', 'with', 'from', 'that', 'this', 'for', 'are', 'was', 'has', 'had', 'not', 'but'];
-              const commonLongWords = ['platform', 'security', 'endpoint'];
+              const commonLongWords = ['platform', 'security', 'endpoint', 'custos', 'custoseye', 'transparent'];
               
               // Check for pattern: longWord + shortWord (e.g., "platformand")
               for (const longWord of commonLongWords) {
                 for (const shortWord of commonShortWords) {
-                  const pattern = new RegExp(`^${longWord}${shortWord}$`, 'i');
-                  if (pattern.test(trimmed)) {
-                    return `${longWord} + ${shortWord}`;
+                  const pattern = new RegExp(`^(${longWord}${shortWord})(\\b.*)?$`, 'i');
+                  const match = trimmed.match(pattern);
+                  if (match) {
+                    const remaining = match[2] ? match[2].trimStart() : '';
+                    return `${longWord} + ${shortWord}${remaining ? ` ${remaining}` : ''}`;
                   }
                 }
               }
@@ -1827,9 +1888,11 @@
               for (let i = 0; i < commonShortWords.length; i++) {
                 for (let j = 0; j < commonShortWords.length; j++) {
                   if (i !== j) {
-                    const pattern = new RegExp(`^${commonShortWords[i]}${commonShortWords[j]}$`, 'i');
-                    if (pattern.test(trimmed)) {
-                      return `${commonShortWords[i]} + ${commonShortWords[j]}`;
+                    const pattern = new RegExp(`^(${commonShortWords[i]}${commonShortWords[j]})(\\b.*)?$`, 'i');
+                    const match = trimmed.match(pattern);
+                    if (match) {
+                      const remaining = match[2] ? match[2].trimStart() : '';
+                      return `${commonShortWords[i]} + ${commonShortWords[j]}${remaining ? ` ${remaining}` : ''}`;
                     }
                   }
                 }
@@ -1842,45 +1905,87 @@
             const renderFormattingEntry = (entry) => {
               const combinedText = entry.text || '';
               const wordContext = entry.wordContext || '';
-              
-              // CRITICAL: Preserve single and two-letter text completely unchanged
-              // This ensures partial-word changes (1-2 letters) are displayed correctly
-              let formattedText = combinedText;
               const textLength = combinedText.trim().length;
-              
-              // Only apply conservative formatting to short text that appears merged
-              // The formatMergedText function is very conservative and only handles obvious cases
-              if (textLength > 2) {
-                formattedText = formatMergedText(combinedText, wordContext);
-              }
-              // For 1-2 character text, use original text exactly as-is
-              
-              // Only show note if text was actually modified (contains "+" separator)
-              const isMerged = formattedText.includes(' + ');
-              
-              // Style the "+" separator with a unique color so users know it's not part of the words
-              let displayText = formattedText;
-              if (isMerged) {
-                // Split by " + " and rejoin with styled "+" separator
-                // Make it very visually distinct with accent color, background, and spacing
-                const parts = formattedText.split(' + ');
-                displayText = parts.map((part, index) => {
-                  if (index === 0) {
-                    return esc(part);
-                  } else {
-                    return `<span style="display:inline-block; color:var(--accent); background:color-mix(in oklab, var(--accent) 15%, transparent); border:1px solid color-mix(in oklab, var(--accent) 40%, transparent); border-radius:3px; padding:2px 6px; margin:0 4px; font-weight:700; font-size:0.9em; vertical-align:middle;">+</span> ${esc(part)}`;
+              const rawSegments = Array.isArray(entry.segments) ? entry.segments : [];
+              const cleanedSegments = rawSegments
+                .map(part => {
+                  if (!part) return '';
+                  if (typeof part === 'string') return part.trim();
+                  if (typeof part === 'object' && part !== null) {
+                    return String(part.text || '').trim();
                   }
-                }).join(' ');
+                  return '';
+                })
+                .filter(part => part.length > 0);
+
+              const MAX_SEGMENTS_FOR_DISPLAY = 4;
+              const MAX_TEXT_LENGTH_FOR_DISPLAY = 80;
+              const hasExplicitSegments = cleanedSegments.length > 1;
+              const allowSegmentDisplay =
+                hasExplicitSegments &&
+                cleanedSegments.length <= MAX_SEGMENTS_FOR_DISPLAY &&
+                textLength <= MAX_TEXT_LENGTH_FOR_DISPLAY &&
+                cleanedSegments.every(part => part.length <= 30);
+
+              const buildSegmentDisplay = (parts) => {
+                if (!parts.length) return '';
+                return parts
+                  .map((part, index) => {
+                    const safe = esc(part);
+                    if (index === 0) {
+                      return `<span style="white-space:pre-wrap;">${safe}</span>`;
+                    }
+                    return `${styledPlusBadge}<span style="white-space:pre-wrap;">${safe}</span>`;
+                  })
+                  .join(' ');
+              };
+
+              const buildSegmentSample = (parts, attrs) => {
+                if (!parts.length) return '';
+                return parts
+                  .map((part, index) => {
+                    const sample = renderStyledText(part, attrs) || `<span class="diff-formatting-text small muted">(none)</span>`;
+                    if (index === 0) return sample;
+                    return `${styledPlusBadge}${sample}`;
+                  })
+                  .join(' ');
+              };
+
+              let formattedText = combinedText;
+              if (textLength > 2 && !hasExplicitSegments) {
+                formattedText = formatMergedTextHeuristic(combinedText);
+              }
+
+              let isMerged = false;
+              let displayText = '';
+              let beforeSample = '';
+              let afterSample = '';
+
+              if (allowSegmentDisplay) {
+                isMerged = true;
+                displayText = buildSegmentDisplay(cleanedSegments);
+                beforeSample = buildSegmentSample(cleanedSegments, entry.beforeAttrs);
+                afterSample = buildSegmentSample(cleanedSegments, entry.afterAttrs);
+              } else if (!hasExplicitSegments && formattedText && formattedText.includes(' + ')) {
+                isMerged = true;
+                const heuristicParts = formattedText.split(' + ').map(part => part.trim()).filter(Boolean);
+                displayText = buildSegmentDisplay(heuristicParts);
+                beforeSample = buildSegmentSample(heuristicParts, entry.beforeAttrs);
+                afterSample = buildSegmentSample(heuristicParts, entry.afterAttrs);
               } else {
-                displayText = esc(displayText);
+                displayText = formattedText
+                  ? `<span style="white-space:pre-wrap;">${esc(formattedText)}</span>`
+                  : '<span class="small muted">(blank)</span>';
+                beforeSample = renderStyledText(formattedText, entry.beforeAttrs);
+                afterSample = renderStyledText(formattedText, entry.afterAttrs);
               }
               
               const mergedNote = isMerged 
                 ? `<span class="small" style="display:inline-block; margin-left:8px; padding:2px 6px; color:var(--accent); background:color-mix(in oklab, var(--accent) 15%, transparent); border:1px solid color-mix(in oklab, var(--accent) 40%, transparent); border-radius:3px; font-weight:500; font-style:italic;">(separate characters got changed but are from the same paragraph)</span>`
                 : '';
               
-              const displayFullText = formattedText
-                ? `<span style="white-space:pre-wrap;">${displayText}</span>${mergedNote}`
+              const displayFullText = displayText
+                ? `${displayText}${mergedNote && isMerged ? ` ${mergedNote}` : ''}`
                 : '<span class="small muted">(blank)</span>';
               
               const normalizedWordContext = wordContext.trim();
@@ -1936,26 +2041,11 @@
                 }
               });
 
-              // Apply the same merged text formatting to before/after samples
-              // For samples, split the text and render each word separately so the "+" doesn't get affected by formatting
-              let beforeSample = '';
-              let afterSample = '';
-              
-              if (isMerged) {
-                // Split by " + " and render each word separately, then insert styled "+" between them
-                const parts = formattedText.split(' + ');
-                const styledPlus = '<span style="display:inline-block; color:var(--accent); background:color-mix(in oklab, var(--accent) 15%, transparent); border:1px solid color-mix(in oklab, var(--accent) 40%, transparent); border-radius:3px; padding:2px 6px; margin:0 4px; font-weight:700; font-size:0.9em; vertical-align:middle;">+</span>';
-                
-                // Render each part separately and join with styled "+"
-                const beforeParts = parts.map(part => renderStyledText(part, entry.beforeAttrs));
-                const afterParts = parts.map(part => renderStyledText(part, entry.afterAttrs));
-                
-                beforeSample = beforeParts.join(` ${styledPlus} `);
-                afterSample = afterParts.join(` ${styledPlus} `);
-              } else {
-                // No merging, render normally
-                beforeSample = renderStyledText(formattedText, entry.beforeAttrs);
-                afterSample = renderStyledText(formattedText, entry.afterAttrs);
+              if (!beforeSample) {
+                beforeSample = renderStyledText(formattedText, entry.beforeAttrs) || '';
+              }
+              if (!afterSample) {
+                afterSample = renderStyledText(formattedText, entry.afterAttrs) || '';
               }
               
               let sampleBlock = '';
@@ -1997,7 +2087,7 @@
 
           formattingChangesHTML = `
             <div style="margin:12px 0; padding:12px; background:var(--panel); border:1px solid var(--border); border-radius:8px;">
-              <div style="font-weight:600; margin-bottom:8px;">🎨 Formatting Changes ${hasMore ? `(${totalChanges} total)` : `(${totalChanges})`}</div>
+              <div style="font-weight:600; margin-bottom:8px;">🎨 Formatting Changes (${totalChanges})</div>
               <div id="${formattingPanelId}">
                 ${renderList(initialChanges)}
                 ${hasMore ? `
