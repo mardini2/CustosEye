@@ -1586,16 +1586,49 @@
 
         let normalizedFormattingChanges = [];
         if (textDiff.formatting_changes && textDiff.formatting_changes.length > 0) {
+          // Collect all valid orders to understand the ordering pattern
+          // First pass: identify word-level changes and their orders
+          const wordLevelOrders = textDiff.formatting_changes
+            .map(c => {
+              const text = c.text || '';
+              const isSentenceOrParagraph = text.trim().length > 50 || (text.includes('.') && text.trim().length > 20) || text.includes('!') || text.includes('?');
+              if (!isSentenceOrParagraph && typeof c.order === 'number') {
+                return c.order;
+              }
+              return null;
+            })
+            .filter(o => o !== null);
+          const minWordOrder = wordLevelOrders.length > 0 ? Math.min(...wordLevelOrders) : 0;
+          
           normalizedFormattingChanges = textDiff.formatting_changes
             .map(change => {
               const delta = computeFormattingDelta(change);
               if (!delta.hasChanges) return null;
+              const text = change.text || '';
+              // Detect if this is a sentence/paragraph level change (longer text, likely full sentence)
+              const isSentenceOrParagraph = text.trim().length > 50 || (text.includes('.') && text.trim().length > 20) || text.includes('!') || text.includes('?');
+              let order = typeof change.order === 'number' ? change.order : null;
+              
+              // If sentence/paragraph change has no order or order=0, ensure it gets proper ordering
+              // Use the same order as the newest word-level change to maintain consistent ordering
+              if (isSentenceOrParagraph && (order === null || order === 0)) {
+                if (wordLevelOrders.length > 0) {
+                  // Assign the same order as the newest word-level change (lowest order value)
+                  // This ensures sentence/paragraph changes appear in the correct position
+                  order = minWordOrder;
+                } else {
+                  order = 0;
+                }
+              } else if (order === null) {
+                order = 0;
+              }
+              
               return {
-                text: change.text || '',
+                text: text,
                 delta,
                 beforeAttrs: change.before_attrs || {},
                 afterAttrs: change.after_attrs || {},
-                order: typeof change.order === 'number' ? change.order : 0,
+                order: order,
                 wordContext: change.word_context || '',
                 hasTextChanges: change.has_text_changes || false,
               };
@@ -1751,12 +1784,105 @@
           const hiddenChangesId = formattingPanelId + '-hidden';
           const toggleButtonId = formattingPanelId + '-toggle';
 
+            // Helper function to format merged text with visual separators
+            // ONLY applies when multiple separate, non-adjacent words received different formatting edits
+            // Very conservative: only handles obvious cases like "platformand" -> "platform || and"
+            const formatMergedText = (text, wordContext) => {
+              if (!text) return text;
+              const trimmed = text.trim();
+              
+              // NEVER modify:
+              // - Single or two-letter text (partial-word changes)
+              if (trimmed.length <= 2) return text;
+              
+              // - Long text (sentences/paragraphs - these should not be broken up)
+              if (trimmed.length > 30) return text;
+              
+              // - Text with sentence punctuation (full sentences)
+              if (trimmed.includes('.') || trimmed.includes('!') || trimmed.includes('?')) return text;
+              
+              // - Text with multiple spaces (already has word separators)
+              if (trimmed.includes('  ') || trimmed.split(/\s+/).length > 3) return text;
+              
+              // - Text that looks like a continuous region (contains hyphens, etc.)
+              if (trimmed.includes('-') || trimmed.includes('—')) return text;
+              
+              // Only process short text (2-3 words max) that appears to be merged
+              // Look for very specific patterns: two common words merged together
+              // Examples: "platformand", "andinto" - where two distinct words are clearly merged
+              const commonShortWords = ['and', 'the', 'into', 'onto', 'over', 'with', 'from', 'that', 'this', 'for', 'are', 'was', 'has', 'had', 'not', 'but'];
+              const commonLongWords = ['platform', 'security', 'endpoint'];
+              
+              // Check for pattern: longWord + shortWord (e.g., "platformand")
+              for (const longWord of commonLongWords) {
+                for (const shortWord of commonShortWords) {
+                  const pattern = new RegExp(`^${longWord}${shortWord}$`, 'i');
+                  if (pattern.test(trimmed)) {
+                    return `${longWord} + ${shortWord}`;
+                  }
+                }
+              }
+              
+              // Check for pattern: shortWord + shortWord (e.g., "andinto")
+              for (let i = 0; i < commonShortWords.length; i++) {
+                for (let j = 0; j < commonShortWords.length; j++) {
+                  if (i !== j) {
+                    const pattern = new RegExp(`^${commonShortWords[i]}${commonShortWords[j]}$`, 'i');
+                    if (pattern.test(trimmed)) {
+                      return `${commonShortWords[i]} + ${commonShortWords[j]}`;
+                    }
+                  }
+                }
+              }
+              
+              // If no obvious merged pattern detected, return original text unchanged
+              return text;
+            };
+
             const renderFormattingEntry = (entry) => {
               const combinedText = entry.text || '';
-              const displayFullText = combinedText
-                ? `<span style="white-space:pre-wrap;">${esc(combinedText)}</span>`
-                : '<span class="small muted">(blank)</span>';
               const wordContext = entry.wordContext || '';
+              
+              // CRITICAL: Preserve single and two-letter text completely unchanged
+              // This ensures partial-word changes (1-2 letters) are displayed correctly
+              let formattedText = combinedText;
+              const textLength = combinedText.trim().length;
+              
+              // Only apply conservative formatting to short text that appears merged
+              // The formatMergedText function is very conservative and only handles obvious cases
+              if (textLength > 2) {
+                formattedText = formatMergedText(combinedText, wordContext);
+              }
+              // For 1-2 character text, use original text exactly as-is
+              
+              // Only show note if text was actually modified (contains "+" separator)
+              const isMerged = formattedText.includes(' + ');
+              
+              // Style the "+" separator with a unique color so users know it's not part of the words
+              let displayText = formattedText;
+              if (isMerged) {
+                // Split by " + " and rejoin with styled "+" separator
+                // Make it very visually distinct with accent color, background, and spacing
+                const parts = formattedText.split(' + ');
+                displayText = parts.map((part, index) => {
+                  if (index === 0) {
+                    return esc(part);
+                  } else {
+                    return `<span style="display:inline-block; color:var(--accent); background:color-mix(in oklab, var(--accent) 15%, transparent); border:1px solid color-mix(in oklab, var(--accent) 40%, transparent); border-radius:3px; padding:2px 6px; margin:0 4px; font-weight:700; font-size:0.9em; vertical-align:middle;">+</span> ${esc(part)}`;
+                  }
+                }).join(' ');
+              } else {
+                displayText = esc(displayText);
+              }
+              
+              const mergedNote = isMerged 
+                ? `<span class="small" style="display:inline-block; margin-left:8px; padding:2px 6px; color:var(--accent); background:color-mix(in oklab, var(--accent) 15%, transparent); border:1px solid color-mix(in oklab, var(--accent) 40%, transparent); border-radius:3px; font-weight:500; font-style:italic;">(separate characters got changed but are from the same paragraph)</span>`
+                : '';
+              
+              const displayFullText = formattedText
+                ? `<span style="white-space:pre-wrap;">${displayText}</span>${mergedNote}`
+                : '<span class="small muted">(blank)</span>';
+              
               const normalizedWordContext = wordContext.trim();
               const normalizedCombinedText = combinedText.trim();
               const shouldShowWordContext =
@@ -1810,8 +1936,28 @@
                 }
               });
 
-              const beforeSample = renderStyledText(entry.text, entry.beforeAttrs);
-              const afterSample = renderStyledText(entry.text, entry.afterAttrs);
+              // Apply the same merged text formatting to before/after samples
+              // For samples, split the text and render each word separately so the "+" doesn't get affected by formatting
+              let beforeSample = '';
+              let afterSample = '';
+              
+              if (isMerged) {
+                // Split by " + " and render each word separately, then insert styled "+" between them
+                const parts = formattedText.split(' + ');
+                const styledPlus = '<span style="display:inline-block; color:var(--accent); background:color-mix(in oklab, var(--accent) 15%, transparent); border:1px solid color-mix(in oklab, var(--accent) 40%, transparent); border-radius:3px; padding:2px 6px; margin:0 4px; font-weight:700; font-size:0.9em; vertical-align:middle;">+</span>';
+                
+                // Render each part separately and join with styled "+"
+                const beforeParts = parts.map(part => renderStyledText(part, entry.beforeAttrs));
+                const afterParts = parts.map(part => renderStyledText(part, entry.afterAttrs));
+                
+                beforeSample = beforeParts.join(` ${styledPlus} `);
+                afterSample = afterParts.join(` ${styledPlus} `);
+              } else {
+                // No merging, render normally
+                beforeSample = renderStyledText(formattedText, entry.beforeAttrs);
+                afterSample = renderStyledText(formattedText, entry.afterAttrs);
+              }
+              
               let sampleBlock = '';
               if (beforeSample || afterSample) {
                 const beforeDisplay = beforeSample || `<span class="diff-formatting-text small muted">(none)</span>`;
@@ -1828,8 +1974,8 @@
               if (desc.length === 0 && !sampleBlock) return '';
 
               const textChangesNote = entry.hasTextChanges 
-                ? `<div style="margin-top:6px; padding:6px; background:var(--warn); color:var(--text); border-radius:4px; font-size:0.9em;">
-                    <strong>Note:</strong> This sentence also has text additions/removals. See the text changes section below for details.
+                ? `<div style="margin-top:6px; padding:8px; background:color-mix(in oklab, var(--warn) 35%, var(--panel)); color:var(--text); border:1px solid color-mix(in oklab, var(--warn) 75%, var(--border)); border-radius:4px; font-size:0.9em; font-weight:500; box-shadow:0 2px 4px rgba(0,0,0,0.25);">
+                    <strong style="color:color-mix(in oklab, var(--warn) 90%, var(--text));">Note:</strong> This sentence also has text additions/removals. See the text changes section below for details.
                    </div>`
                 : '';
 
