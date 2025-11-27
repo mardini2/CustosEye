@@ -980,6 +980,25 @@ def _extract_images_from_office_doc(path: str) -> list[dict[str, Any]]:
                             rels_map[rel_id] = target
                 except Exception:
                     pass
+                
+                # Extract image positions in document order for .docx
+                # This helps uniquely identify images when multiple images share the same hash
+                # Each drawing instance gets its own position, even if they share the same media file
+                image_positions = {}  # Maps rel_id to position index
+                if doc_xml:
+                    try:
+                        # Find all drawings in document order using a more precise pattern
+                        # We need to match each drawing block individually to preserve order
+                        # Pattern: <w:drawing>...<a:blip r:embed="rIdX">...</w:drawing>
+                        drawing_blocks = re.finditer(r'<w:drawing>.*?<a:blip[^>]*r:embed="([^"]+)"[^>]*>.*?</w:drawing>', doc_xml, re.DOTALL)
+                        for pos, match in enumerate(drawing_blocks):
+                            rel_id = match.group(1)
+                            # Each relationship ID gets its position based on first occurrence in document
+                            # In valid .docx files, each drawing should have a unique relationship ID
+                            if rel_id not in image_positions:
+                                image_positions[rel_id] = pos
+                    except Exception:
+                        pass
 
             for name in zf.namelist():
                 if name.startswith(media_pattern) and name.lower().endswith(
@@ -1081,6 +1100,12 @@ def _extract_images_from_office_doc(path: str) -> list[dict[str, Any]]:
                             "hash": img_hash,
                             "type": "image",
                         }
+                        
+                        # For .docx, store relationship ID and position for accurate matching
+                        if p_lower.endswith(".docx") and rel_id:
+                            img_info["rel_id"] = rel_id
+                            if rel_id in image_positions:
+                                img_info["position"] = image_positions[rel_id]
                         
                         # Add alt text if available
                         if alt_text:
@@ -4209,165 +4234,157 @@ def build_app(event_bus) -> Flask:
                         images_current = _extract_images_from_office_doc(path)
 
                         # compare images to detect add/remove/replace/resize
-                        # create maps by hash for quick lookup
-                        baseline_img_map = {img["hash"]: img for img in images_baseline}
-                        current_img_map = {img["hash"]: img for img in images_current}
-
-                        # also create maps by name for resize detection (when hash might be same but dimensions differ)
-                        baseline_img_by_name = {img["name"]: img for img in images_baseline}
-                        current_img_by_name = {img["name"]: img for img in images_current}
-
-                        baseline_hashes = set(baseline_img_map.keys())
-                        current_hashes = set(current_img_map.keys())
-
-                        # added images (new hash)
-                        for img_hash in current_hashes - baseline_hashes:
-                            img_data = current_img_map[img_hash].copy()
-                            # Ensure slide_number is preserved if present
-                            image_changes.append(
-                                {
-                                    "change": "added",
-                                    "image": img_data,
-                                    "type": "image",
-                                    "slide_number": img_data.get("slide_number"),  # Explicitly preserve slide_number
-                                }
-                            )
-
-                        # removed images (hash no longer exists)
-                        for img_hash in baseline_hashes - current_hashes:
-                            img_data = baseline_img_map[img_hash].copy()
-                            # Ensure slide_number is preserved if present
-                            image_changes.append(
-                                {
-                                    "change": "removed",
-                                    "image": img_data,
-                                    "type": "image",
-                                    "slide_number": img_data.get("slide_number"),  # Explicitly preserve slide_number
-                                }
-                            )
-
-                        # check for resized images (same name/hash but different dimensions)
-                        # use tolerance threshold to avoid false positives from minor dimension differences
-                        # tolerance: >1 px or >1% change (prevents false positives from rounding/rendering differences)
+                        # For .docx files, use position-based matching to accurately identify which image changed
+                        # For other file types, use hash/name-based matching
+                        is_docx = (path or "").lower().endswith(".docx")
+                        
                         RESIZE_TOLERANCE_PX = 1  # pixel tolerance
                         RESIZE_TOLERANCE_PCT = 0.01  # 1% tolerance
-
-                        # Check for resizes by comparing images with same hash (more reliable than name)
-                        common_hashes = baseline_hashes & current_hashes
-                        processed_resize_hashes = set()
                         
-                        for img_hash in common_hashes:
-                            baseline_img = baseline_img_map[img_hash]
-                            current_img = current_img_map[img_hash]
+                        if is_docx:
+                            # For .docx: Use a more robust matching strategy
+                            # Relationship IDs can change when Word regenerates the document
+                            # So we need to match by hash + position, accounting for deletions
                             
-                            baseline_width = baseline_img.get("width")
-                            baseline_height = baseline_img.get("height")
-                            current_width = current_img.get("width")
-                            current_height = current_img.get("height")
+                            # Build maps by relationship ID (try this first, but it may not work if IDs changed)
+                            baseline_by_rel_id = {}
+                            current_by_rel_id = {}
                             
-                            # check if dimensions changed beyond tolerance
-                            if (
-                                baseline_width is not None
-                                and baseline_height is not None
-                                and current_width is not None
-                                and current_height is not None
-                            ):
-                                # calculate absolute and percentage differences
-                                width_diff = abs(current_width - baseline_width)
-                                height_diff = abs(current_height - baseline_height)
-                                width_pct_diff = (
-                                    width_diff / baseline_width if baseline_width > 0 else 0
-                                )
-                                height_pct_diff = (
-                                    height_diff / baseline_height if baseline_height > 0 else 0
-                                )
+                            # Build maps by hash
+                            baseline_by_hash = {}
+                            current_by_hash = {}
+                            
+                            # Sort images by position for ordered matching
+                            baseline_sorted = sorted([img for img in images_baseline if img.get("position") is not None], 
+                                                   key=lambda x: x.get("position", 999999))
+                            current_sorted = sorted([img for img in images_current if img.get("position") is not None],
+                                                  key=lambda x: x.get("position", 999999))
+                            
+                            for img in images_baseline:
+                                rel_id = img.get("rel_id")
+                                if rel_id:
+                                    baseline_by_rel_id[rel_id] = img
+                                img_hash = img.get("hash")
+                                if img_hash:
+                                    if img_hash not in baseline_by_hash:
+                                        baseline_by_hash[img_hash] = []
+                                    baseline_by_hash[img_hash].append(img)
+                            
+                            for img in images_current:
+                                rel_id = img.get("rel_id")
+                                if rel_id:
+                                    current_by_rel_id[rel_id] = img
+                                img_hash = img.get("hash")
+                                if img_hash:
+                                    if img_hash not in current_by_hash:
+                                        current_by_hash[img_hash] = []
+                                    current_by_hash[img_hash].append(img)
+                            
+                            # Track which images we've already processed
+                            processed_baseline = set()  # Track by ("rel_id", rel_id) or ("hash_pos", hash, pos) or index
+                            processed_current = set()
+                            
+                            # First pass: Match by relationship ID (most reliable when it works)
+                            baseline_rel_ids = set(baseline_by_rel_id.keys())
+                            current_rel_ids = set(current_by_rel_id.keys())
+                            
+                            common_rel_ids = baseline_rel_ids & current_rel_ids
+                            for rel_id in common_rel_ids:
+                                baseline_img = baseline_by_rel_id[rel_id]
+                                current_img = current_by_rel_id[rel_id]
                                 
-                                # check if change exceeds tolerance (>1 px or >1%)
-                                is_resized = (
-                                    width_diff > RESIZE_TOLERANCE_PX
-                                    or width_pct_diff > RESIZE_TOLERANCE_PCT
-                                ) or (
-                                    height_diff > RESIZE_TOLERANCE_PX
-                                    or height_pct_diff > RESIZE_TOLERANCE_PCT
-                                )
+                                processed_baseline.add(("rel_id", rel_id))
+                                processed_current.add(("rel_id", rel_id))
                                 
-                                if is_resized:
-                                    processed_resize_hashes.add(img_hash)
-                                    image_changes.append(
-                                        {
-                                            "change": "resized",
-                                            "image": current_img,
-                                            "old_width": baseline_width,
-                                            "old_height": baseline_height,
-                                            "new_width": current_width,
-                                            "new_height": current_height,
-                                            "type": "image",
-                                        }
-                                    )
-                        
-                        # Also check by name for cases where hash might differ but it's the same image renamed
-                        common_names = set(baseline_img_by_name.keys()) & set(
-                            current_img_by_name.keys()
-                        )
-                        for img_name in common_names:
-                            # Skip if we already processed this image by hash
-                            baseline_img = baseline_img_by_name[img_name]
-                            if baseline_img.get("hash") in processed_resize_hashes:
-                                continue
-                            current_img = current_img_by_name[img_name]
-
-                            baseline_width = baseline_img.get("width")
-                            baseline_height = baseline_img.get("height")
-                            current_width = current_img.get("width")
-                            current_height = current_img.get("height")
-
-                            # check if dimensions changed beyond tolerance
-                            if (
-                                baseline_width is not None
-                                and baseline_height is not None
-                                and current_width is not None
-                                and current_height is not None
-                            ):
-                                # calculate absolute and percentage differences
-                                width_diff = abs(current_width - baseline_width)
-                                height_diff = abs(current_height - baseline_height)
-                                width_pct_diff = (
-                                    width_diff / baseline_width if baseline_width > 0 else 0
-                                )
-                                height_pct_diff = (
-                                    height_diff / baseline_height if baseline_height > 0 else 0
-                                )
-
-                                # check if change exceeds tolerance (>1 px or >1%)
-                                is_resized = (
-                                    width_diff > RESIZE_TOLERANCE_PX
-                                    or width_pct_diff > RESIZE_TOLERANCE_PCT
-                                ) or (
-                                    height_diff > RESIZE_TOLERANCE_PX
-                                    or height_pct_diff > RESIZE_TOLERANCE_PCT
-                                )
-
-                                if is_resized:
-                                    # image was resized beyond tolerance threshold
-                                    image_changes.append(
-                                        {
-                                            "change": "resized",
-                                            "image": current_img,
-                                            "old_width": baseline_width,
-                                            "old_height": baseline_height,
-                                            "new_width": current_width,
-                                            "new_height": current_height,
-                                            "type": "image",
-                                        }
-                                    )
-                            # also check if hash is same but dimensions are missing in one version
-                            elif baseline_img.get("hash") == current_img.get("hash"):
-                                # same hash means same image file, but dimensions might have changed
-                                # this is a resize case where we detected the same file but dimensions differ
-                                if (baseline_width is not None or baseline_height is not None) and (
-                                    current_width is not None or current_height is not None
+                                baseline_width = baseline_img.get("width")
+                                baseline_height = baseline_img.get("height")
+                                current_width = current_img.get("width")
+                                current_height = current_img.get("height")
+                                
+                                # Check if dimensions changed beyond tolerance
+                                if (
+                                    baseline_width is not None
+                                    and baseline_height is not None
+                                    and current_width is not None
+                                    and current_height is not None
                                 ):
-                                    # calculate differences if both dimensions are available
+                                    width_diff = abs(current_width - baseline_width)
+                                    height_diff = abs(current_height - baseline_height)
+                                    width_pct_diff = (
+                                        width_diff / baseline_width if baseline_width > 0 else 0
+                                    )
+                                    height_pct_diff = (
+                                        height_diff / baseline_height if baseline_height > 0 else 0
+                                    )
+                                    
+                                    is_resized = (
+                                        width_diff > RESIZE_TOLERANCE_PX
+                                        or width_pct_diff > RESIZE_TOLERANCE_PCT
+                                    ) or (
+                                        height_diff > RESIZE_TOLERANCE_PX
+                                        or height_pct_diff > RESIZE_TOLERANCE_PCT
+                                    )
+                                    
+                                    if is_resized:
+                                        image_changes.append(
+                                            {
+                                                "change": "resized",
+                                                "image": current_img,
+                                                "old_width": baseline_width,
+                                                "old_height": baseline_height,
+                                                "new_width": current_width,
+                                                "new_height": current_height,
+                                                "type": "image",
+                                            }
+                                        )
+                            
+                            # Second pass: Match by hash + ordered position (accounting for deletions)
+                            # Only match if hash AND dimensions are the same (within tolerance)
+                            # This prevents false resizes when images shift positions
+                            baseline_idx = 0
+                            current_idx = 0
+                            
+                            # Track which specific images have been matched (by index to avoid duplicates)
+                            matched_baseline_indices = set()
+                            matched_current_indices = set()
+                            
+                            while baseline_idx < len(baseline_sorted) and current_idx < len(current_sorted):
+                                baseline_img = baseline_sorted[baseline_idx]
+                                current_img = current_sorted[current_idx]
+                                
+                                baseline_rel_id = baseline_img.get("rel_id")
+                                current_rel_id = current_img.get("rel_id")
+                                
+                                # Skip if already processed by relationship ID
+                                if baseline_rel_id and ("rel_id", baseline_rel_id) in processed_baseline:
+                                    baseline_idx += 1
+                                    continue
+                                if current_rel_id and ("rel_id", current_rel_id) in processed_current:
+                                    current_idx += 1
+                                    continue
+                                
+                                # Skip if already matched in this pass
+                                if baseline_idx in matched_baseline_indices:
+                                    baseline_idx += 1
+                                    continue
+                                if current_idx in matched_current_indices:
+                                    current_idx += 1
+                                    continue
+                                
+                                baseline_hash = baseline_img.get("hash")
+                                current_hash = current_img.get("hash")
+                                
+                                # If hashes match, check if dimensions are the same (within tolerance)
+                                if baseline_hash and current_hash and baseline_hash == current_hash:
+                                    baseline_width = baseline_img.get("width")
+                                    baseline_height = baseline_img.get("height")
+                                    current_width = current_img.get("width")
+                                    current_height = current_img.get("height")
+                                    
+                                    # Check dimensions
+                                    dimensions_match = False
+                                    is_resized = False
+                                    
                                     if (
                                         baseline_width is not None
                                         and baseline_height is not None
@@ -4380,12 +4397,18 @@ def build_app(event_bus) -> Flask:
                                             width_diff / baseline_width if baseline_width > 0 else 0
                                         )
                                         height_pct_diff = (
-                                            height_diff / baseline_height
-                                            if baseline_height > 0
-                                            else 0
+                                            height_diff / baseline_height if baseline_height > 0 else 0
                                         )
-
-                                        # check if change exceeds tolerance
+                                        
+                                        # Dimensions match if within tolerance
+                                        dimensions_match = (
+                                            width_diff <= RESIZE_TOLERANCE_PX
+                                            and width_pct_diff <= RESIZE_TOLERANCE_PCT
+                                            and height_diff <= RESIZE_TOLERANCE_PX
+                                            and height_pct_diff <= RESIZE_TOLERANCE_PCT
+                                        )
+                                        
+                                        # Resized if beyond tolerance
                                         is_resized = (
                                             width_diff > RESIZE_TOLERANCE_PX
                                             or width_pct_diff > RESIZE_TOLERANCE_PCT
@@ -4393,27 +4416,28 @@ def build_app(event_bus) -> Flask:
                                             height_diff > RESIZE_TOLERANCE_PX
                                             or height_pct_diff > RESIZE_TOLERANCE_PCT
                                         )
-
+                                    
+                                    # Only match if dimensions are the same OR if resized (same image, different size)
+                                    if dimensions_match or is_resized:
+                                        # Mark as processed
+                                        baseline_pos = baseline_img.get("position")
+                                        current_pos = current_img.get("position")
+                                        
+                                        if baseline_rel_id:
+                                            processed_baseline.add(("rel_id", baseline_rel_id))
+                                        elif baseline_pos is not None:
+                                            processed_baseline.add(("hash_pos", baseline_hash, baseline_pos))
+                                        
+                                        if current_rel_id:
+                                            processed_current.add(("rel_id", current_rel_id))
+                                        elif current_pos is not None:
+                                            processed_current.add(("hash_pos", current_hash, current_pos))
+                                        
+                                        matched_baseline_indices.add(baseline_idx)
+                                        matched_current_indices.add(current_idx)
+                                        
+                                        # Report resize if dimensions changed
                                         if is_resized:
-                                            img_data = current_img.copy()
-                                            image_changes.append(
-                                                {
-                                                    "change": "resized",
-                                                    "image": img_data,
-                                                    "old_width": baseline_width,
-                                                    "old_height": baseline_height,
-                                                    "new_width": current_width,
-                                                    "new_height": current_height,
-                                                    "type": "image",
-                                                    "slide_number": img_data.get("slide_number"),  # Explicitly preserve slide_number
-                                                }
-                                            )
-                                    else:
-                                        # one dimension missing - treat as resize if dimensions differ
-                                        if (
-                                            baseline_width != current_width
-                                            or baseline_height != current_height
-                                        ):
                                             image_changes.append(
                                                 {
                                                     "change": "resized",
@@ -4425,6 +4449,303 @@ def build_app(event_bus) -> Flask:
                                                     "type": "image",
                                                 }
                                             )
+                                        
+                                        # Both matched, advance both
+                                        baseline_idx += 1
+                                        current_idx += 1
+                                    else:
+                                        # Hash matches but dimensions are very different - might be different instances
+                                        # Advance the one with lower position
+                                        baseline_pos = baseline_img.get("position", 999999)
+                                        current_pos = current_img.get("position", 999999)
+                                        if baseline_pos < current_pos:
+                                            baseline_idx += 1
+                                        else:
+                                            current_idx += 1
+                                else:
+                                    # Hashes don't match - one was deleted or added
+                                    # Advance the one with lower position (earlier in document)
+                                    baseline_pos = baseline_img.get("position", 999999)
+                                    current_pos = current_img.get("position", 999999)
+                                    
+                                    if baseline_pos < current_pos:
+                                        # Baseline image was deleted
+                                        baseline_idx += 1
+                                    else:
+                                        # Current image was added
+                                        current_idx += 1
+                            
+                            # Mark remaining baseline images as removed (only if not already matched)
+                            while baseline_idx < len(baseline_sorted):
+                                baseline_img = baseline_sorted[baseline_idx]
+                                baseline_rel_id = baseline_img.get("rel_id")
+                                if (not (baseline_rel_id and ("rel_id", baseline_rel_id) in processed_baseline) and
+                                    baseline_idx not in matched_baseline_indices):
+                                    image_changes.append(
+                                        {
+                                            "change": "removed",
+                                            "image": baseline_img,
+                                            "type": "image",
+                                        }
+                                    )
+                                baseline_idx += 1
+                            
+                            # Mark remaining current images as added (only if not already matched)
+                            while current_idx < len(current_sorted):
+                                current_img = current_sorted[current_idx]
+                                current_rel_id = current_img.get("rel_id")
+                                if (not (current_rel_id and ("rel_id", current_rel_id) in processed_current) and
+                                    current_idx not in matched_current_indices):
+                                    image_changes.append(
+                                        {
+                                            "change": "added",
+                                            "image": current_img,
+                                            "type": "image",
+                                        }
+                                    )
+                                current_idx += 1
+                            
+                            # Also handle images without position info (fallback)
+                            baseline_no_pos = [img for img in images_baseline if img.get("position") is None]
+                            current_no_pos = [img for img in images_current if img.get("position") is None]
+                            
+                            for img in baseline_no_pos:
+                                rel_id = img.get("rel_id")
+                                if not (rel_id and ("rel_id", rel_id) in processed_baseline):
+                                    image_changes.append(
+                                        {
+                                            "change": "removed",
+                                            "image": img,
+                                            "type": "image",
+                                        }
+                                    )
+                            
+                            for img in current_no_pos:
+                                rel_id = img.get("rel_id")
+                                if not (rel_id and ("rel_id", rel_id) in processed_current):
+                                    image_changes.append(
+                                        {
+                                            "change": "added",
+                                            "image": img,
+                                            "type": "image",
+                                        }
+                                    )
+                            
+                            # Sort image changes: newest first (by position descending, then by change type)
+                            # Resized/added/removed should show newest (highest position) at top
+                            def sort_key(change):
+                                img = change.get("image", {})
+                                pos = img.get("position", -1)
+                                change_type = change.get("change", "")
+                                # Order: resized > added > removed (for same position)
+                                type_order = {"resized": 3, "added": 2, "removed": 1}.get(change_type, 0)
+                                return (-pos, -type_order)  # Negative for descending
+                            
+                            image_changes.sort(key=sort_key)
+                        else:
+                            # For non-.docx files (PPTX, XLSX): Use hash/name-based matching (existing logic)
+                            baseline_img_map = {img["hash"]: img for img in images_baseline}
+                            current_img_map = {img["hash"]: img for img in images_current}
+                            baseline_img_by_name = {img["name"]: img for img in images_baseline}
+                            current_img_by_name = {img["name"]: img for img in images_current}
+                            baseline_hashes = set(baseline_img_map.keys())
+                            current_hashes = set(current_img_map.keys())
+
+                            # added images (new hash)
+                            for img_hash in current_hashes - baseline_hashes:
+                                img_data = current_img_map[img_hash].copy()
+                                image_changes.append(
+                                    {
+                                        "change": "added",
+                                        "image": img_data,
+                                        "type": "image",
+                                        "slide_number": img_data.get("slide_number"),
+                                    }
+                                )
+
+                            # removed images (hash no longer exists)
+                            for img_hash in baseline_hashes - current_hashes:
+                                img_data = baseline_img_map[img_hash].copy()
+                                image_changes.append(
+                                    {
+                                        "change": "removed",
+                                        "image": img_data,
+                                        "type": "image",
+                                        "slide_number": img_data.get("slide_number"),
+                                    }
+                                )
+
+                            # Check for resizes by comparing images with same hash
+                            common_hashes = baseline_hashes & current_hashes
+                            processed_resize_hashes = set()
+                            
+                            for img_hash in common_hashes:
+                                baseline_img = baseline_img_map[img_hash]
+                                current_img = current_img_map[img_hash]
+                                
+                                baseline_width = baseline_img.get("width")
+                                baseline_height = baseline_img.get("height")
+                                current_width = current_img.get("width")
+                                current_height = current_img.get("height")
+                                
+                                if (
+                                    baseline_width is not None
+                                    and baseline_height is not None
+                                    and current_width is not None
+                                    and current_height is not None
+                                ):
+                                    width_diff = abs(current_width - baseline_width)
+                                    height_diff = abs(current_height - baseline_height)
+                                    width_pct_diff = (
+                                        width_diff / baseline_width if baseline_width > 0 else 0
+                                    )
+                                    height_pct_diff = (
+                                        height_diff / baseline_height if baseline_height > 0 else 0
+                                    )
+                                    
+                                    is_resized = (
+                                        width_diff > RESIZE_TOLERANCE_PX
+                                        or width_pct_diff > RESIZE_TOLERANCE_PCT
+                                    ) or (
+                                        height_diff > RESIZE_TOLERANCE_PX
+                                        or height_pct_diff > RESIZE_TOLERANCE_PCT
+                                    )
+                                    
+                                    if is_resized:
+                                        processed_resize_hashes.add(img_hash)
+                                        image_changes.append(
+                                            {
+                                                "change": "resized",
+                                                "image": current_img,
+                                                "old_width": baseline_width,
+                                                "old_height": baseline_height,
+                                                "new_width": current_width,
+                                                "new_height": current_height,
+                                                "type": "image",
+                                            }
+                                        )
+                            
+                            # Also check by name for cases where hash might differ but it's the same image renamed
+                            common_names = set(baseline_img_by_name.keys()) & set(
+                                current_img_by_name.keys()
+                            )
+                            for img_name in common_names:
+                                baseline_img = baseline_img_by_name[img_name]
+                                if baseline_img.get("hash") in processed_resize_hashes:
+                                    continue
+                                current_img = current_img_by_name[img_name]
+
+                                baseline_width = baseline_img.get("width")
+                                baseline_height = baseline_img.get("height")
+                                current_width = current_img.get("width")
+                                current_height = current_img.get("height")
+
+                                if (
+                                    baseline_width is not None
+                                    and baseline_height is not None
+                                    and current_width is not None
+                                    and current_height is not None
+                                ):
+                                    width_diff = abs(current_width - baseline_width)
+                                    height_diff = abs(current_height - baseline_height)
+                                    width_pct_diff = (
+                                        width_diff / baseline_width if baseline_width > 0 else 0
+                                    )
+                                    height_pct_diff = (
+                                        height_diff / baseline_height if baseline_height > 0 else 0
+                                    )
+
+                                    is_resized = (
+                                        width_diff > RESIZE_TOLERANCE_PX
+                                        or width_pct_diff > RESIZE_TOLERANCE_PCT
+                                    ) or (
+                                        height_diff > RESIZE_TOLERANCE_PX
+                                        or height_pct_diff > RESIZE_TOLERANCE_PCT
+                                    )
+
+                                    if is_resized:
+                                        image_changes.append(
+                                            {
+                                                "change": "resized",
+                                                "image": current_img,
+                                                "old_width": baseline_width,
+                                                "old_height": baseline_height,
+                                                "new_width": current_width,
+                                                "new_height": current_height,
+                                                "type": "image",
+                                            }
+                                        )
+                                # also check if hash is same but dimensions are missing in one version
+                                elif baseline_img.get("hash") == current_img.get("hash"):
+                                    if (baseline_width is not None or baseline_height is not None) and (
+                                        current_width is not None or current_height is not None
+                                    ):
+                                        if (
+                                            baseline_width is not None
+                                            and baseline_height is not None
+                                            and current_width is not None
+                                            and current_height is not None
+                                        ):
+                                            width_diff = abs(current_width - baseline_width)
+                                            height_diff = abs(current_height - baseline_height)
+                                            width_pct_diff = (
+                                                width_diff / baseline_width if baseline_width > 0 else 0
+                                            )
+                                            height_pct_diff = (
+                                                height_diff / baseline_height
+                                                if baseline_height > 0
+                                                else 0
+                                            )
+
+                                            is_resized = (
+                                                width_diff > RESIZE_TOLERANCE_PX
+                                                or width_pct_diff > RESIZE_TOLERANCE_PCT
+                                            ) or (
+                                                height_diff > RESIZE_TOLERANCE_PX
+                                                or height_pct_diff > RESIZE_TOLERANCE_PCT
+                                            )
+
+                                            if is_resized:
+                                                img_data = current_img.copy()
+                                                image_changes.append(
+                                                    {
+                                                        "change": "resized",
+                                                        "image": img_data,
+                                                        "old_width": baseline_width,
+                                                        "old_height": baseline_height,
+                                                        "new_width": current_width,
+                                                        "new_height": current_height,
+                                                        "type": "image",
+                                                        "slide_number": img_data.get("slide_number"),
+                                                    }
+                                                )
+                                        else:
+                                            if (
+                                                baseline_width != current_width
+                                                or baseline_height != current_height
+                                            ):
+                                                image_changes.append(
+                                                    {
+                                                        "change": "resized",
+                                                        "image": current_img,
+                                                        "old_width": baseline_width,
+                                                        "old_height": baseline_height,
+                                                        "new_width": current_width,
+                                                        "new_height": current_height,
+                                                        "type": "image",
+                                                    }
+                                                )
+                            
+                            # Sort image changes: newest first (by position/slide descending, then by change type)
+                            def sort_key_non_docx(change):
+                                img = change.get("image", {})
+                                # For PPTX, use slide_number; for others, use position or hash as fallback
+                                pos = img.get("slide_number") or img.get("position", -1)
+                                change_type = change.get("change", "")
+                                type_order = {"resized": 3, "added": 2, "removed": 1}.get(change_type, 0)
+                                return (-pos, -type_order)  # Negative for descending
+                            
+                            image_changes.sort(key=sort_key_non_docx)
 
                         # prepare formatting deltas for Office documents
                         baseline_formatting_runs = (

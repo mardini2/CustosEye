@@ -14,6 +14,8 @@
   <link rel="icon" type="image/png" sizes="16x16" href="/static/assets/favicon-16x16.png?v=2">
   <link rel="apple-touch-icon" href="/static/assets/apple-touch-icon.png?v=2">
   <link rel="preload" href="/static/assets/logo_warning.svg" as="image" type="image/svg+xml">
+  <link rel="preload" href="/static/assets/goodbye.svg" as="image" type="image/svg+xml">
+  <link rel="preload" href="/static/assets/logo.svg" as="image" type="image/svg+xml">
   <style>
     /* CSS styles: theme variables, layout, and component styling */
     :root {
@@ -4672,9 +4674,14 @@
             margin-bottom: 24px;
             animation: fadeInScale 0.4s ease-out;
             display: flex;
+            flex-direction: column;
             align-items: center;
             justify-content: center;
-          "><img src="/static/assets/goodbye.svg" alt="" style="width:92px; height:92px;" /></div>
+            gap: 16px;
+          ">
+            <img src="/static/assets/logo.svg" alt="" style="width:112px; height:112px;" />
+            <img src="/static/assets/goodbye.svg" alt="" style="width:92px; height:92px;" />
+          </div>
           <h1 style="
             font-size: 28px;
             font-weight: 600;
