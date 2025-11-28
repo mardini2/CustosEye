@@ -4034,13 +4034,24 @@ def build_app(event_bus) -> Flask:
                 return jsonify({"ok": False, "error": "no baseline chunks available"}), 400
 
             # check if file exists
-            if not os.path.exists(_norm_user_path(path)):
+            norm_path = _norm_user_path(path)
+            if not os.path.exists(norm_path):
                 return (
                     jsonify(
                         {"ok": False, "error": "File deleted or path changed", "file_deleted": True}
                     ),
                     400,
                 )
+
+            # get file modification time for last edit tracking
+            file_stat = os.stat(norm_path)
+            last_edited_at = int(file_stat.st_mtime)
+            
+            # get first edit time from baseline_blob.created_at
+            baseline_blob = target.get("baseline_blob")
+            first_edited_at = None
+            if baseline_blob and isinstance(baseline_blob, dict) and not baseline_blob.get("error"):
+                first_edited_at = baseline_blob.get("created_at")
 
             # current per-chunk hashes
             cur = _chunk_hashes(path)
@@ -4890,6 +4901,10 @@ def build_app(event_bus) -> Flask:
                 "zip_changes": zip_changes,
                 "regions": regions_out,
                 "text_diff": text_diff,  # new: text-based diff for readable files
+                "edit_times": {
+                    "first_edited_at": first_edited_at,
+                    "last_edited_at": last_edited_at,
+                },
             }
             return jsonify(out)
 

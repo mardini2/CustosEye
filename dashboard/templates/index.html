@@ -1469,6 +1469,18 @@
 
       // Summary header
       const st = payload.summary_text || {};
+      const editTimes = payload.edit_times || {};
+      
+      // Format timestamp to readable date/time
+      function formatDateTime(timestamp) {
+        if (!timestamp) return 'N/A';
+        const d = new Date(timestamp * 1000);
+        return d.toLocaleString();
+      }
+      
+      const firstEdited = formatDateTime(editTimes.first_edited_at);
+      const lastEdited = formatDateTime(editTimes.last_edited_at);
+      
       const summaryHTML = `
         <div class="diff-summary">
           <div class="mono"><b>${esc(s.file || '')}</b></div>
@@ -1483,6 +1495,15 @@
               <span class="small muted">File size:</span>
               <span class="mono">${bytesHuman(s.baseline_size)} → ${bytesHuman(s.current_size)}</span>
             </div>
+          </div>
+          <div id="editTimesAndButton" style="margin-top:10px; display:flex; align-items:flex-start; gap:12px; flex-wrap:wrap;">
+            ${firstEdited !== 'N/A' || lastEdited !== 'N/A' ? `
+            <div style="flex:1; min-width:200px; padding:8px 10px; background:rgba(0,0,0,0.03); border-left:3px solid var(--accent, #4a9eff); border-radius:2px;">
+              ${firstEdited !== 'N/A' ? `<div class="small" style="margin-bottom:3px;"><span class="muted">First edited & saved:</span> <span class="mono" style="color:var(--text); font-weight:500;">${esc(firstEdited)}</span></div>` : ''}
+              ${lastEdited !== 'N/A' ? `<div class="small"><span class="muted">Last edited & saved:</span> <span class="mono" style="color:var(--text); font-weight:500;">${esc(lastEdited)}</span></div>` : ''}
+            </div>
+            ` : ''}
+            <div id="acceptButtonContainer" style="flex:0 0 auto; align-self:center;"></div>
           </div>
         </div>
       `;
@@ -2652,18 +2673,12 @@
         }
         
 
-        // Add "Change is OK" button
+        // Add "Change is OK" button - will be moved to acceptButtonContainer via JavaScript
         const changeIsOKButton = `
-          <div style="margin:12px 0; padding:12px; background:var(--panel); border:1px solid var(--border); border-radius:8px;">
-            <div style="display:flex; align-items:center; justify-content:space-between; gap:12px;">
-              <div>
-                <div style="font-weight:600; margin-bottom:4px;">This change is intentional</div>
-                <div class="small muted">If you made this change, click here to update the baseline and stop alerts.</div>
-              </div>
-              <button class="btn" id="acceptBaselineBtn" data-path="${encodeURIComponent(s.file || '')}" style="white-space:nowrap;">
-                Mark Change as Intentional
-              </button>
-            </div>
+          <div style="display:none;" id="acceptBaselineBtnWrapper">
+            <button class="btn" id="acceptBaselineBtn" data-path="${encodeURIComponent(s.file || '')}" style="white-space:nowrap; font-size:13px; padding:6px 12px;">
+              Mark Edit as Intentional
+            </button>
           </div>
         `;
 
@@ -2736,18 +2751,12 @@
 
       // Binary file - show helpful explanation with structured comparison
       if (fileType === 'binary' || (!textDiff && regions.length === 0)) {
-        // Add "Change is OK" button for binary files too
+        // Add "Change is OK" button for binary files - will be moved to acceptButtonContainer via JavaScript
         const changeIsOKButton = `
-          <div style="margin:12px 0; padding:12px; background:var(--panel); border:1px solid var(--border); border-radius:8px;">
-            <div style="display:flex; align-items:center; justify-content:space-between; gap:12px;">
-              <div>
-                <div style="font-weight:600; margin-bottom:4px;">This change is intentional</div>
-                <div class="small muted">If you made this change, click here to update the baseline and stop alerts.</div>
-              </div>
-              <button class="btn" id="acceptBaselineBtnBinary" data-path="${encodeURIComponent(s.file || '')}" style="white-space:nowrap;">
-                Mark Change as Intentional
-              </button>
-            </div>
+          <div style="display:none;" id="acceptBaselineBtnBinaryWrapper">
+            <button class="btn" id="acceptBaselineBtnBinary" data-path="${encodeURIComponent(s.file || '')}" style="white-space:nowrap; font-size:13px; padding:6px 12px;">
+              Mark Edit as Intentional
+            </button>
           </div>
         `;
         
@@ -3531,6 +3540,19 @@
                 
                 const diffHTML = renderDiff(j);
                 modalBody.innerHTML = diffHTML;
+                
+                // Insert "Mark Edit as Intentional" button into the acceptButtonContainer
+                const acceptContainer = modalBody.querySelector('#acceptButtonContainer');
+                const acceptBtnForMove = modalBody.querySelector('#acceptBaselineBtn');
+                const acceptBtnBinaryForMove = modalBody.querySelector('#acceptBaselineBtnBinary');
+                if (acceptContainer && (acceptBtnForMove || acceptBtnBinaryForMove)) {
+                  const btnToMove = acceptBtnForMove || acceptBtnBinaryForMove;
+                  const wrapper = btnToMove?.closest('[id$="Wrapper"]');
+                  if (btnToMove && wrapper) {
+                    wrapper.remove();
+                    acceptContainer.appendChild(btnToMove);
+                  }
+                }
                 
                 // Restore scroll positions after rendering
                 // First try to restore from sessionStorage (for navigation away/back)
@@ -4573,10 +4595,10 @@
         
         if (confirmMessage) {
           const shortPath = filePath.length > 50 ? '...' + filePath.slice(-47) : filePath;
-          const actionText = isDeletion ? 'Mark Deletion as Intentional' : 'Mark Change as Intentional';
+          const actionText = isDeletion ? 'Mark Deletion as Intentional' : 'Mark Edit as Intentional';
           const messageText = isDeletion 
             ? 'Are you sure you want to mark this file deletion as intentional? This will update the baseline and stop alerts.'
-            : 'Are you sure you want to mark this change as intentional? This will update the baseline and stop alerts.';
+            : 'Are you sure you want to mark this edit as intentional? This will update the baseline and stop alerts.';
           
           confirmMessage.innerHTML = `
             <div style="padding:28px; text-align:center;">
