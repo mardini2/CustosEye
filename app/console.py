@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """
 goal: main launcher for CustosEye: starts all monitoring agents, the web dashboard, and optionally opens the browser
 or shows a system tray icon. uses an event bus to fan-out events from agents to all subscribers (like the dashboard).

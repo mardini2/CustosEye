@@ -328,7 +328,9 @@ def test_word_level_diff_preserves_unchanged_text():
     ), "Equal parts should contain the same text"
 
 
-def _make_run(text: str, styles: dict[str, object] | None = None, paragraph_index: int = 0, run_index: int = 0) -> dict:
+def _make_run(
+    text: str, styles: dict[str, object] | None = None, paragraph_index: int = 0, run_index: int = 0
+) -> dict:
     return {
         "text": text,
         "normalized_text": text.lower(),
@@ -465,10 +467,12 @@ def test_docx_formatting_whole_paragraph_collapse():
         "transparent. ",
     ]
     baseline = [
-        _make_run(word, {"color": "A02B93"}, paragraph_index=0, run_index=i) for i, word in enumerate(words)
+        _make_run(word, {"color": "A02B93"}, paragraph_index=0, run_index=i)
+        for i, word in enumerate(words)
     ]
     current = [
-        _make_run(word, {"color": "00B0F0"}, paragraph_index=0, run_index=i) for i, word in enumerate(words)
+        _make_run(word, {"color": "00B0F0"}, paragraph_index=0, run_index=i)
+        for i, word in enumerate(words)
     ]
 
     changes = _diff_docx_formatting(baseline, current)
@@ -511,12 +515,23 @@ def test_docx_formatting_returns_newest_first_for_bold():
 
 def test_docx_formatting_preserves_whitespace_in_full_paragraph():
     """Full paragraph style changes retain spaces and punctuation."""
-    words = ["To ", "give ", "a ", "haw ", "ye ", "human-", "readable", " ", "add ", "eye ", "happening "]
-    baseline = [
-        _make_run(word, {}, paragraph_index=2, run_index=i) for i, word in enumerate(words)
+    words = [
+        "To ",
+        "give ",
+        "a ",
+        "haw ",
+        "ye ",
+        "human-",
+        "readable",
+        " ",
+        "add ",
+        "eye ",
+        "happening ",
     ]
+    baseline = [_make_run(word, {}, paragraph_index=2, run_index=i) for i, word in enumerate(words)]
     current = [
-        _make_run(word, {"bold": True}, paragraph_index=2, run_index=i) for i, word in enumerate(words)
+        _make_run(word, {"bold": True}, paragraph_index=2, run_index=i)
+        for i, word in enumerate(words)
     ]
 
     changes = _diff_docx_formatting(baseline, current)
@@ -569,7 +584,9 @@ def test_docx_formatting_sentence_updates_with_text_edits():
 def test_docx_formatting_text_note_only_when_text_differs():
     """The note flag should only be set when the paragraph's text actually changed."""
     baseline = [_make_run("alpha beta ", {"bold": True}, paragraph_index=1, run_index=0)]
-    current = [_make_run("alpha beta ", {"bold": True, "color": "00FF00"}, paragraph_index=1, run_index=0)]
+    current = [
+        _make_run("alpha beta ", {"bold": True, "color": "00FF00"}, paragraph_index=1, run_index=0)
+    ]
 
     changes = _diff_docx_formatting(baseline, current)
     assert len(changes) == 1

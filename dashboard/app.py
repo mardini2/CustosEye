@@ -1,49 +1,43 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 # ruff: noqa: E501
 """
-goal: flask web dashboard for CustosEye security monitoring system. provides a web interface
-         for viewing live security events, process tree with trust scores, and file integrity
-         monitoring. runs entirely locally without cloud dependencies.
+Flask web dashboard for CustosEye - the main backend that powers the web interface
 
-what this app is responsible for:
-- event ingestion: subscribes to the event bus from monitoring agents (process monitor, network
-  scanner, integrity checker) and processes incoming events
-- trust scoring: integrates with the CSC trust engine to evaluate process trustworthiness and
-  attach verdicts (trusted, suspicious, malicious, etc.) to process events
-- integrity monitoring: manages a watch list of files to monitor, computes baselines (SHA256 or
-  mtime+size), detects changes, and provides diff views for changed files
-- API endpoints: exposes REST endpoints for the frontend to fetch events, process tree, integrity
-  targets, and file diffs
-- event deduplication: uses fingerprint-based coalescing to prevent duplicate events from flooding
-  the UI, with "worse event" promotion to ensure critical events aren't lost
+This is where all the magic happens. The dashboard subscribes to events from the monitoring
+agents (process monitor, network scanner, integrity checker) and turns them into something
+the frontend can display. Everything runs locally, no cloud needed.
 
-how data flows through the app:
-1. agents publish events to the event bus (process monitor, network scanner, integrity checker)
-2. dashboard subscribes to the bus and drains events in a background thread
-3. events are processed: rules engine tags them with levels/reasons, CSC engine scores processes,
-   integrity events update target status
-4. processed events are deduplicated and added to a bounded ring buffer (BUFFER)
-5. frontend polls /api/events to fetch events from the buffer
-6. frontend also polls /api/proctree to get the process tree built from process events
-7. integrity operations (add target, rehash, view diff) go through dedicated API endpoints
+What this thing does:
+- Pulls events from the event bus and processes them (rules engine, trust scoring, etc.)
+- Manages the integrity watch list - files you want to monitor for changes
+- Computes file diffs when changes are detected (handles text files, Office docs, PDFs)
+- Exposes API endpoints so the frontend can fetch events, process tree, integrity status
+- Deduplicates events so the UI doesn't get flooded with the same thing over and over
+- Builds the process tree from process events so you can see what's running
 
-major components and logic sections:
-- event processing pipeline: drain_into_buffer() pulls events from bus, applies rules/trust scoring,
-  deduplicates, and stores in BUFFER
-- trust scoring integration: uses CSCTrustEngine to evaluate processes, with fast-paths for known
-  system processes and optional name-based heuristics
-- integrity target management: CRUD operations for watch list, automatic baseline computation,
-  change detection, and status updates
-- diff computation: chunk-based hashing for efficient change detection, text extraction from
-  various file types (Office docs, PDFs, text files), character/word/line-level diff algorithms
-- baseline snapshot storage: optional content-addressed storage for full file snapshots, with
-  automatic pruning to stay within size limits
-- Flask routes: main page, event API, process tree API, integrity management endpoints, diff
-  viewer, file picker, static assets
+How data flows:
+1. Agents publish events to the event bus (process monitor, network scanner, integrity checker)
+2. Dashboard subscribes and drains events in a background thread
+3. Events get processed: rules engine tags them, CSC engine scores processes, integrity events
+   update target status
+4. Events get deduplicated and shoved into a ring buffer (oldest events drop when full)
+5. Frontend polls /api/events to get events from the buffer
+6. Frontend also polls /api/proctree to get the process tree
+7. Integrity stuff (add target, rehash, view diff) goes through dedicated endpoints
+
+Main pieces:
+- drain_into_buffer(): pulls events from bus, processes them, deduplicates, stores in BUFFER
+- Trust scoring: uses CSCTrustEngine to evaluate processes, with shortcuts for known-good stuff
+- Integrity management: CRUD for watch list, baseline computation, change detection
+- Diff computation: chunk-based hashing to find what changed, extracts text from various file types,
+  does character/word/line-level diffs
+- Baseline storage: optionally stores full file snapshots, auto-prunes to stay under size limits
+- Flask routes: main page, event API, process tree API, integrity endpoints, diff viewer, etc.
 """
 
 from __future__ import annotations
 
-# --- standard library ---
+# Standard library imports - all the basic stuff we need
 import csv
 import hashlib
 import html
@@ -61,15 +55,16 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import Any, TypedDict, cast
 
-# load environment variables from .env file before importing auth modules
+# Load environment variables from .env file before importing auth stuff
+# This needs to happen early because auth modules might need secrets from .env
 try:
     from dotenv import load_dotenv
 
-    load_dotenv()  # load .env file if it exists (required for auth secrets)
+    load_dotenv()  # loads .env if it exists (needed for auth secrets)
 except ImportError:
-    pass  # python-dotenv is optional, but required for .env support
+    pass  # dotenv is optional, but you need it if you want .env support
 
-# --- third-party ---
+# Third-party imports - Flask and friends
 from flask import (
     Flask,
     jsonify,
@@ -79,7 +74,7 @@ from flask import (
     send_file,
 )
 
-# --- local/project imports (move these up here) ---
+# Local imports - our own modules
 from agent.rules_engine import RulesEngine
 from algorithm.csc_engine import CSCTrustEngine  # v2 under the hood
 from dashboard.auth import SESSION_SECRET
@@ -87,14 +82,16 @@ from dashboard.auth_routes import register_auth_routes, require_auth
 from dashboard.config import Config, load_config
 
 
-# (now we can define classes/variables/etc.)
+# TypedDict for tracking recent events in the deduplication system
+# Stores a reference to the event, how many times we've seen it, and when we last saw it
 class RecentMeta(TypedDict, total=False):
     ref: dict[str, Any]
     seen: int
     last_seen: float
 
 
-# single waitress optional block (we keep only this one, after all imports)
+# Try to import waitress for production server (optional - falls back to Flask dev server)
+# Waitress is a production WSGI server that's way better than Flask's built-in one
 try:
     from waitress import serve as _serve  # type: ignore[import-untyped]
 
@@ -103,30 +100,32 @@ except Exception:
     HAVE_WAITRESS = False
     _serve = None  # type: ignore
 
-# load configuration and set up paths
+# Load config from file - this sets up all the paths and settings
 CFG: Config = load_config()
 
+# Whether to allow mtime+size snapshots (some configs might disable this)
 ALLOW_MTIME_SNAPSHOTS: bool = bool(getattr(CFG, "allow_mtime_snapshots", True))
 
 # ---------------- Config / paths ----------------
-# extract all config paths for easy access throughout the app
+# Pull out all the config paths so we can use them easily throughout the app
 BASE_DIR = CFG.base_dir
 
-# session invalidation: generate a new session key on each program start
-# this ensures all sessions from previous runs are invalidated when program restarts
-# by changing the session secret key, all old session cookies become invalid
+# Session invalidation - generate a new session key every time the program starts
+# This makes sure all sessions from previous runs get invalidated when you restart
+# We do this by changing the session secret key, which makes all old session cookies useless
 SESSION_KEY_FILE = BASE_DIR / "data" / ".session_key"
 SESSION_START_TIME = time.time()
 
-# generate new session key for this run (changes on each program start)
-# this invalidates all sessions from previous program runs
+# Generate a fresh session key for this run (different every time)
+# This invalidates all sessions from previous runs - users have to log in again after restart
 _current_session_key = secrets.token_hex(32)
 try:
     SESSION_KEY_FILE.parent.mkdir(parents=True, exist_ok=True)
     with open(SESSION_KEY_FILE, "w", encoding="utf-8") as f:
         f.write(_current_session_key)
 except Exception:
-    pass  # if we can't write, continue anyway (sessions will still work, just won't invalidate on restart)
+    pass  # if we can't write the file, that's fine - sessions still work, just won't invalidate on restart
+# Extract all the config paths as strings for easy use
 RULES_PATH = str(CFG.rules_path)
 CSC_WEIGHTS_PATH = str(CFG.csc_weights_path)
 CSC_DB_PATH = str(CFG.csc_db_path)
@@ -134,14 +133,15 @@ INTEGRITY_TARGETS_PATH = str(CFG.integrity_targets_path)
 SELF_SUPPRESS_PATH = str(CFG.self_suppress_path)
 
 
-# load self-suppression list to filter out our own processes from the event stream
+# Load the self-suppression list - this filters out CustosEye's own processes
+# We don't want to see events from ourselves, that would be annoying
 def _load_self_suppress() -> dict[str, set[str]]:
     try:
         with open(SELF_SUPPRESS_PATH, encoding="utf-8") as f:
             obj = json.load(f) or {}
     except Exception:
         obj = {}
-    # normalize to lowercase sets
+    # Normalize everything to lowercase sets for case-insensitive matching
     return {
         "names": {s.lower() for s in obj.get("names", ["CustosEye.exe"])},
         "exes": {s.lower() for s in obj.get("exes", [])},
@@ -151,18 +151,21 @@ def _load_self_suppress() -> dict[str, set[str]]:
 
 SELF_SUPPRESS = _load_self_suppress()
 
-# initialize rules engine and trust engine with config paths
+# Initialize the rules engine and trust engine with their config files
+# Rules engine tags events with levels/reasons, trust engine scores process trustworthiness
 _rules = RulesEngine(path=RULES_PATH)
 _rules_mtime = os.path.getmtime(RULES_PATH) if os.path.exists(RULES_PATH) else 0.0
 _csc = CSCTrustEngine(weights_path=CSC_WEIGHTS_PATH, db_path=CSC_DB_PATH)
 
-# optional name-based trust heuristics (fast-path for known-good processes)
+# Optional name-based trust heuristics - fast path for known-good processes
+# If a process name is in here, we skip the full trust engine and just use the cached verdict
 NAME_TRUST_PATH = str((BASE_DIR / "data" / "name_trust.json").resolve())
 _name_trust: dict[str, tuple[str, str, float]] = {}
 _name_trust_mtime: float = 0.0
 
 
-# hot-reload name trust heuristics if the file changed
+# Hot-reload name trust heuristics if the file changed on disk
+# This lets you update the trust map without restarting the app
 def _maybe_reload_name_trust() -> None:
     global _name_trust, _name_trust_mtime
     try:
@@ -185,7 +188,8 @@ def _maybe_reload_name_trust() -> None:
             _name_trust = {}
 
 
-# fast-path: check if process name is in the trust map and apply verdict directly
+# Fast-path check: if the process name is in our trust map, just use that verdict
+# This skips the expensive trust engine evaluation for processes we already know about
 def _maybe_promote_to_trusted(ev: dict) -> bool:
     nm = (ev.get("name") or "").lower()
     verdict = _name_trust.get(nm)
@@ -205,7 +209,8 @@ def _maybe_promote_to_trusted(ev: dict) -> bool:
     return True
 
 
-# hot-reload rules if the rules file changed (allows live rule updates)
+# Hot-reload rules if the rules file changed on disk
+# Lets you update rules without restarting - just edit the file and it picks up changes
 def _maybe_reload_rules() -> None:
     global _rules, _rules_mtime
     try:
@@ -218,18 +223,24 @@ def _maybe_reload_rules() -> None:
 
 
 # ---------------- Buffers / indices ----------------
-# bounded ring buffer for live events (oldest events drop when full)
+# Ring buffer for live events - when it fills up, oldest events get pushed out
+# This prevents memory from growing forever if events come in faster than they're consumed
 BUFFER_MAX = CFG.buffer_max
 BUFFER: deque[dict[str, Any]] = deque(maxlen=BUFFER_MAX)
-# process index for building the process tree (PID -> process metadata)
+
+# Process index - maps PID to process metadata for building the process tree
+# We build this up as process events come in, then use it to construct the tree view
 PROC_INDEX: dict[int, dict[str, Any]] = {}
 
 
+# Update live events when user accepts a baseline change
+# When someone marks a file change as intentional, we update the existing events in the buffer
+# to show that it was accepted, but keep the level as CRITICAL so it's still visible
 def _update_live_events_for_path(path: str, acceptance_text: str) -> None:
     """
-    Update existing Live Events entries for a given path when baseline is accepted.
-    Appends acceptance text to the existing reason, keeping the level as CRITICAL.
-    Only updates integrity events related to file changes (not verification events).
+    Updates existing Live Events entries for a path when baseline is accepted.
+    Appends acceptance text to the reason but keeps level as CRITICAL.
+    Only touches integrity events about file changes, not verification events.
     """
     try:
         path_lower = path.lower() if path else ""
@@ -293,11 +304,13 @@ def _update_live_events_for_path(path: str, acceptance_text: str) -> None:
         pass
 
 
+# Update live events when hash is verified (user clicked retest and it matches)
+# Similar to acceptance, but replaces the reason entirely with "Hash verified"
 def _update_live_events_for_hash_verified(path: str) -> None:
     """
-    update existing Live Events entries for a given path when hash is verified.
-    replaces the reason with "✔ Hash verified", keeping the level as CRITICAL.
-    only updates integrity events related to file changes (not verification events).
+    Updates existing Live Events entries when hash is verified.
+    Replaces the reason with "Hash verified", keeps level as CRITICAL.
+    Only touches integrity events about file changes, not verification events.
     """
     try:
         path_lower = path.lower() if path else ""
@@ -362,24 +375,28 @@ def _update_live_events_for_hash_verified(path: str) -> None:
 
 
 # --- dedupe/coalesce guard for live events ---
-# deduplication system: prevents duplicate events from flooding the UI by coalescing similar
-# events within a time window, but promotes "worse" events (higher severity, worse verdicts)
-RECENT_TTL = 15.0  # seconds
-RECENT_MAP: dict[str, RecentMeta] = {}  # fp -> {"ref": ev_dict, "seen": int, "last_seen": float}
+# Deduplication system - stops duplicate events from flooding the UI
+# Coalesces similar events within a time window, but promotes "worse" events
+# (higher severity, worse verdicts) so important stuff doesn't get lost
+RECENT_TTL = 15.0  # seconds - how long to consider events "recent" for deduplication
+RECENT_MAP: dict[str, RecentMeta] = {}  # fingerprint -> event metadata with seen count
 
-# severity and verdict ranking for "worse event" promotion logic
+# Ranking for "worse event" promotion - higher number = worse
+# Used to decide if a new event should replace an old one even if they're similar
 _SEV_RANK = {"info": 0, "warning": 1, "critical": 2}
 _VERDICT_RANK = {"trusted": 0, "caution": 1, "suspicious": 2, "malicious": 3, "unknown": 1}
 
 
-# create a fingerprint from key event fields to identify duplicate events
+# Create a fingerprint from key event fields to identify duplicates
+# Uses source, reason, pid, name, path, rule - if all these match, it's probably the same event
 def _fingerprint_base(ev: dict) -> str:
     key_fields = ("source", "reason", "pid", "name", "path", "rule")
     return json.dumps({k: ev.get(k) for k in key_fields}, sort_keys=True, ensure_ascii=False)
 
 
-# check if the current event is "worse" than the previous one (higher severity, worse verdict)
-# used to promote worse events even if they're duplicates
+# Check if the current event is "worse" than the previous one
+# Higher severity or worse verdict means we should show the new one even if it's a duplicate
+# This ensures critical events don't get hidden by deduplication
 def _is_worse(prev: dict, cur: dict) -> bool:
     pl = _SEV_RANK.get(str(prev.get("level", "info")).lower(), 0)
     cl = _SEV_RANK.get(str(cur.get("level", "info")).lower(), 0)
@@ -412,21 +429,23 @@ def _is_worse(prev: dict, cur: dict) -> bool:
     return False
 
 
-# deduplication logic: coalesce similar events or admit new/worse events to the buffer
+# Main deduplication logic - decides whether to add event to buffer or merge with existing one
+# Returns True if we should add it to buffer, False if we merged it into an existing event
 def _coalesce_or_admit(ev: dict) -> bool:
     """
-    returns True to append ev to BUFFER, False if merged into a recent one.
-    keeps a single representative event within RECENT_TTL unless the new event is "worse".
+    Returns True to append ev to BUFFER, False if merged into a recent one.
+    Keeps a single representative event within RECENT_TTL unless the new event is "worse".
     """
     now = time.time()
-    # prune expired
-    for k, rec in list(RECENT_MAP.items()):  # <— renamed from "entry"
+    # Clean up expired entries from the recent map (older than RECENT_TTL)
+    for k, rec in list(RECENT_MAP.items()):
         if now - float(rec.get("last_seen", 0)) > RECENT_TTL:
             RECENT_MAP.pop(k, None)
 
     fp = _fingerprint_base(ev)
-    hit: RecentMeta | None = RECENT_MAP.get(fp)  # <— distinct name
+    hit: RecentMeta | None = RECENT_MAP.get(fp)
 
+    # First time we've seen this fingerprint - add it
     if hit is None:
         ev["seen"] = 1
         RECENT_MAP[fp] = {"ref": ev, "seen": 1, "last_seen": now}
@@ -434,13 +453,15 @@ def _coalesce_or_admit(ev: dict) -> bool:
 
     prev: dict[str, Any] = hit["ref"]
 
-    # admit if the new one is worse (higher severity, worse verdict/class/conf)
+    # If the new event is worse (higher severity, worse verdict), replace the old one
+    # This ensures critical stuff doesn't get hidden
     if _is_worse(prev, ev):
         ev["seen"] = 1
         RECENT_MAP[fp] = {"ref": ev, "seen": 1, "last_seen": now}
         return True
 
-    # otherwise coalesce
+    # Otherwise just increment the seen count and update timestamp
+    # The event is similar enough that we just merge it
     hit["seen"] = int(hit.get("seen", 1)) + 1
     hit["last_seen"] = now
     prev["seen"] = hit["seen"]
@@ -448,22 +469,25 @@ def _coalesce_or_admit(ev: dict) -> bool:
     return False
 
 
-# guardrails for event draining: limit how many events we process per API call and how long
-# we spend draining to avoid blocking the web server
+# Guardrails for event draining - limit how many events we process per API call
+# and how long we spend draining to avoid blocking the web server
+# These keep the UI responsive even when events are coming in fast
 DRAIN_LIMIT_PER_CALL = CFG.drain_limit_per_call
 DRAIN_DEADLINE_SEC = CFG.drain_deadline_sec
 
-_DRAIN_LOCK = threading.Lock()  # to prevent concurrent drains
+# Lock to prevent concurrent drains - only one drain at a time
+_DRAIN_LOCK = threading.Lock()
 
 
 # ---------------- fan-out subscription plumbing ----------------
-# subscribe to the event bus and return an iterator that yields events
+# Subscribe to the event bus and get an iterator that yields events
+# This is how we pull events from the monitoring agents
 def _bus_iterator(bus: Any) -> Iterator[dict[str, Any]]:
     """
-    Return an iterator that yields events for this subscriber.
+    Returns an iterator that yields events for this subscriber.
     Supports either:
       - bus.subscribe() -> iterator (preferred)
-      - bus.iter_events() -> iterator (legacy)
+      - bus.iter_events() -> iterator (legacy fallback)
     """
     if hasattr(bus, "subscribe"):
         it = bus.subscribe()
@@ -473,14 +497,14 @@ def _bus_iterator(bus: Any) -> Iterator[dict[str, Any]]:
     return it  # type: ignore[return-value]
 
 
-# integrity target management: read the watch list from JSON
+# Integrity target management - read the watch list from JSON
+# This is the list of files the user wants to monitor for changes
 def _read_integrity_targets() -> list[dict[str, Any]]:
     """
-    back-compat:
-      - if file is a JSON array: return it.
-      - if file is an object with "targets": return that list.
-      - if missing/unreadable: return [].
-    also augments each row with "rule" (default sha256) and "last_result" if present.
+    Reads the integrity targets watch list from JSON file.
+    Back-compat: handles both array format and object with "targets" key.
+    If file is missing or unreadable, returns empty list.
+    Also adds "rule" field (defaults to sha256) and "last_result" if present.
     """
     try:
         with open(INTEGRITY_TARGETS_PATH, encoding="utf-8") as f:
@@ -505,12 +529,14 @@ def _read_integrity_targets() -> list[dict[str, Any]]:
     return norm
 
 
-# update integrity target status when an integrity event comes in
+# Update integrity target status when an integrity event comes in
+# Note: Last Result is only updated when user clicks Retest, not automatically
+# This gives users control - they decide when to update the status
 def _update_integrity_target_from_event(ev: dict[str, Any]) -> None:
     """
-    update integrity targets JSON when integrity events come in.
-    note: Last Result is now only updated when user clicks Retest, not automatically from events.
-    this gives users intentional control over status updates.
+    Updates integrity targets JSON when integrity events come in.
+    Note: Last Result is only updated when user clicks Retest, not automatically from events.
+    This gives users intentional control over status updates.
     """
     try:
         path = ev.get("path", "")
@@ -546,10 +572,11 @@ def _update_integrity_target_from_event(ev: dict[str, Any]) -> None:
         pass
 
 
-# write the integrity targets watch list back to JSON
+# Write the integrity targets watch list back to JSON
+# Saves the watch list to disk so it persists across restarts
 def _write_integrity_targets(rows: list[dict[str, Any]]) -> None:
     """
-    persist as a plain array to keep compatibility with your current file.
+    Persists the watch list as a plain array to keep compatibility with existing files.
     """
     try:
         Path(INTEGRITY_TARGETS_PATH).parent.mkdir(parents=True, exist_ok=True)
@@ -559,9 +586,10 @@ def _write_integrity_targets(rows: list[dict[str, Any]]) -> None:
         pass
 
 
-# compute SHA256 hash of a file and return metadata (size, mtime, hash)
+# Compute SHA256 hash of a file and return metadata (size, mtime, hash)
+# Used for integrity checks and baseline computation
 def _sha256_file(path: str) -> dict[str, Any]:
-    # normalize (env vars, ~, quotes) but keep original text in "path"
+    # Normalize the path (expand env vars, ~, strip quotes) but keep original in "path" field
     p = _norm_user_path(path)
     out: dict[str, Any] = {"path": path}
     try:
@@ -582,19 +610,21 @@ def _sha256_file(path: str) -> dict[str, Any]:
     return out
 
 
-# normalize file paths: expand environment variables, home directory, strip quotes
+# Normalize file paths - expand environment variables, home directory, strip quotes
+# Makes paths consistent so we can match them properly
 def _norm_user_path(p: str) -> str:
-    # normalize, expand env vars (~, %WINDIR%), strip quotes, keep Unicode
+    # Normalize: expand env vars (~, %WINDIR%), strip quotes, keep Unicode intact
     p = (p or "").strip().strip('"')
     p = os.path.expandvars(os.path.expanduser(p))
     return str(Path(p))
 
 
 # ----- Integrity: chunk hashing + diff utilities -----
-# chunk-based hashing: compute SHA256 for each fixed-size chunk to enable efficient
-# region-level diff detection (only changed chunks need to be compared)
+# Chunk-based hashing - compute SHA256 for each fixed-size chunk
+# This lets us do efficient region-level diff detection - only changed chunks need comparison
+# Way faster than comparing entire files byte-by-byte
 def _chunk_hashes(path: str, chunk_size: int = 4096) -> dict[str, Any]:
-    # compute sha256 for each fixed-size chunk to enable region-level diffs
+    # Compute sha256 for each fixed-size chunk to enable region-level diffs
     p = _norm_user_path(path)  # normalize the path
     try:
         st = os.stat(p)  # stat to get size quickly
@@ -623,9 +653,10 @@ def _chunk_hashes(path: str, chunk_size: int = 4096) -> dict[str, Any]:
     }
 
 
-# utility: shorten long hex strings for display (show first N and last M chars)
+# Utility to shorten long hex strings for display
+# Shows first N and last M chars with ellipsis in between - makes hashes readable in UI
 def _short_hex(s: str, left: int = 8, right: int = 6) -> str:
-    # shorten long hex strings for UI readability
+    # Shorten long hex strings for UI readability
     if not s:
         return ""
     if len(s) <= left + right + 1:
@@ -633,9 +664,10 @@ def _short_hex(s: str, left: int = 8, right: int = 6) -> str:
     return f"{s[:left]}…{s[-right:]}"
 
 
-# merge consecutive chunk indexes into ranges for more compact diff display
+# Merge consecutive chunk indexes into ranges for more compact diff display
+# Instead of showing [5, 6, 7, 8, 9], shows [(5, 9)] - much cleaner
 def _merge_changed_chunks(changed_idxs: list[int]) -> list[tuple[int, int]]:
-    # merge consecutive chunk indexes into ranges [start_idx, end_idx] inclusive
+    # Merge consecutive chunk indexes into ranges [start_idx, end_idx] inclusive
     if not changed_idxs:
         return []
     ranges: list[tuple[int, int]] = []
@@ -650,9 +682,10 @@ def _merge_changed_chunks(changed_idxs: list[int]) -> list[tuple[int, int]]:
     return ranges
 
 
-# read a small preview of a changed region to show what the new content looks like
+# Read a small preview of a changed region to show what the new content looks like
+# Used in diff display to give users a quick peek at what changed
 def _read_region_preview(path: str, start: int, length: int, cap: int = 64) -> bytes:
-    # return up to `cap` bytes from the start of a region to preview "after" content
+    # Return up to `cap` bytes from the start of a region to preview "after" content
     p = _norm_user_path(path)
     try:
         with open(p, "rb") as f:
@@ -662,13 +695,14 @@ def _read_region_preview(path: str, start: int, length: int, cap: int = 64) -> b
         return b""  # on error, no preview
 
 
-# extract ZIP manifest for Office docs (docx/xlsx/pptx) to detect member-level changes
-# this helps avoid false positives when Office docs are repacked but content is unchanged
+# Extract ZIP manifest for Office docs (docx/xlsx/pptx) to detect member-level changes
+# Office docs are ZIP files internally - this helps avoid false positives when docs
+# are repacked but content is unchanged (just metadata changed)
 def _zip_manifest(path: str) -> dict[str, dict[str, int]]:
     """
-    If file is a ZIP, return { member_name: {size, crc, date} }.
+    If file is a ZIP, returns { member_name: {size, crc, date} }.
     CRC is stored as unsigned int; date is an int like YYYYMMDD.
-    If not ZIP or on error, return {}.
+    If not ZIP or on error, returns {}.
     """
     p = _norm_user_path(path)
     try:
@@ -694,7 +728,8 @@ def _zip_manifest(path: str) -> dict[str, dict[str, int]]:
     return out
 
 
-# detect file type from extension for human-readable diff summaries
+# Detect file type from extension for human-readable diff summaries
+# Makes the diff viewer say "Word document" instead of just "file"
 def _nl_file_kind(path: str) -> str:
     p = (path or "").lower()
     if p.endswith((".pptx", ".ppt")):
@@ -732,9 +767,10 @@ def _nl_file_kind(path: str) -> str:
     return "file"
 
 
-# check if a file is likely a text file based on extension (for text extraction)
+# Check if a file is likely a text file based on extension
+# Used to decide whether we can extract readable text for diffing
 def _is_text_file(path: str) -> bool:
-    """determine if a file is likely a text file based on extension."""
+    """Determines if a file is likely a text file based on extension."""
     p = (path or "").lower()
     text_extensions = (
         ".txt",
@@ -792,14 +828,17 @@ def _is_text_file(path: str) -> bool:
     return p.endswith(text_extensions)
 
 
+# Check if a file is a PDF - used for PDF-specific text extraction
 def _is_pdf_file(path: str) -> bool:
-    """determine if a file is a PDF."""
+    """Determines if a file is a PDF."""
     p = (path or "").lower()
     return p.endswith(".pdf")
 
 
+# Check if a file is a config file based on extension
+# Used for special handling of config files in diffs
 def _is_config_file(path: str) -> bool:
-    """determine if a file is a config file."""
+    """Determines if a file is a config file based on extension."""
     p = (path or "").lower()
     config_extensions = (
         ".json",
@@ -816,11 +855,13 @@ def _is_config_file(path: str) -> bool:
     return p.endswith(config_extensions)
 
 
-# read text file content with size limit to avoid loading huge files
+# Read text file content with size limit to avoid loading huge files into memory
+# 10MB default limit - anything bigger and we bail out
 def _read_text_file(path: str, max_size: int = 10 * 1024 * 1024) -> tuple[str | None, str]:
     """
-    attempt to read a file as text.
-    returns (content, error_message) where content is None on error.
+    Attempts to read a file as text.
+    Returns (content, error_message) where content is None on error.
+    Tries UTF-8 first, then falls back to other common encodings.
     """
     try:
         p = _norm_user_path(path)
@@ -847,12 +888,15 @@ def _read_text_file(path: str, max_size: int = 10 * 1024 * 1024) -> tuple[str | 
         return None, f"Error reading file: {e}"
 
 
-# extract readable text from PDF files for diff viewing (privacy-preserving)
+# Extract readable text from PDF files for diff viewing
+# This is privacy-preserving - only extracts visible text, not metadata or internals
+# Uses regex to find text objects in the PDF structure
 def _extract_text_from_pdf(path: str) -> tuple[str | None, str]:
     """
-    Extract readable text from PDF files.
+    Extracts readable text from PDF files.
     Returns (content, error_message) where content is None on error.
     Only extracts visible, human-readable text - filters out all PDF internals.
+    Handles PDF escape sequences and cleans up the output.
     """
     try:
         p = _norm_user_path(path)
@@ -877,7 +921,10 @@ def _extract_text_from_pdf(path: str) -> tuple[str | None, str]:
             if printable_count / len(non_whitespace) < 0.6:
                 return False
             # Filter out common PDF internals that might slip through
-            if re.search(r"endstream|endobj|stream|obj\s|/XObject|/Image|/Subtype|/Tx\s|BMC|EMC|/Font|/Type", text):
+            if re.search(
+                r"endstream|endobj|stream|obj\s|/XObject|/Image|/Subtype|/Tx\s|BMC|EMC|/Font|/Type",
+                text,
+            ):
                 return False
             # Allow any text that has printable ASCII characters (letters, numbers, or special characters)
             # Don't require alphanumeric - special characters alone are valid (e.g., "!@#$", "()[]")
@@ -896,14 +943,20 @@ def _extract_text_from_pdf(path: str) -> tuple[str | None, str]:
                 # Skip if it contains too many null bytes or control chars (binary data)
                 if match_bytes.count(b"\x00") > len(match_bytes) * 0.1:
                     continue
-                
+
                 # Decode and handle PDF escape sequences
                 text = match_bytes.decode("latin-1", errors="replace")
-                
+
                 # Handle PDF escape sequences: \n, \r, \t, \\(, \\), \\, \ddd (octal)
                 text_bytes = text.encode("latin-1")
                 # Handle \n, \r, \t
-                text_bytes = re.sub(rb"\\([nrt])", lambda m: {"n": b"\n", "r": b"\r", "t": b"\t"}.get(m.group(1).decode(), m.group(0)), text_bytes)
+                text_bytes = re.sub(
+                    rb"\\([nrt])",
+                    lambda m: {"n": b"\n", "r": b"\r", "t": b"\t"}.get(
+                        m.group(1).decode(), m.group(0)
+                    ),
+                    text_bytes,
+                )
                 text = text_bytes.decode("latin-1", errors="replace")
                 # Handle \\(, \\), \\
                 text_bytes = text.encode("latin-1")
@@ -911,13 +964,17 @@ def _extract_text_from_pdf(path: str) -> tuple[str | None, str]:
                 text = text_bytes.decode("latin-1", errors="replace")
                 # Handle octal escapes \ddd (1-3 digits)
                 text_bytes = text.encode("latin-1")
-                text_bytes = re.sub(rb"\\([0-7]{1,3})", lambda m: chr(int(m.group(1), 8)).encode("latin-1"), text_bytes)
+                text_bytes = re.sub(
+                    rb"\\([0-7]{1,3})",
+                    lambda m: chr(int(m.group(1), 8)).encode("latin-1"),
+                    text_bytes,
+                )
                 text = text_bytes.decode("latin-1", errors="replace")
-                
+
                 # Clean up and keep only printable text (including special characters !@#$%^&*()[]{} etc.)
                 # \x20-\x7E covers all printable ASCII: space through ~ (includes all special chars)
                 text = re.sub(r"[^\x20-\x7E\n\r\t]", "", text)
-                
+
                 # Only keep if it's readable text
                 # Preserve original text (don't strip) to maintain line structure
                 if is_readable_text(text):
@@ -936,24 +993,37 @@ def _extract_text_from_pdf(path: str) -> tuple[str | None, str]:
                 for inner_match in inner_texts:
                     try:
                         # Skip if too long or contains too many nulls
-                        if len(inner_match) > 1000 or inner_match.count(b"\x00") > len(inner_match) * 0.1:
+                        if (
+                            len(inner_match) > 1000
+                            or inner_match.count(b"\x00") > len(inner_match) * 0.1
+                        ):
                             continue
-                            
+
                         text = inner_match.decode("latin-1", errors="replace")
                         # Handle escape sequences (same as Pattern 1)
                         text_bytes = text.encode("latin-1")
-                        text_bytes = re.sub(rb"\\([nrt])", lambda m: {"n": b"\n", "r": b"\r", "t": b"\t"}.get(m.group(1).decode(), m.group(0)), text_bytes)
+                        text_bytes = re.sub(
+                            rb"\\([nrt])",
+                            lambda m: {"n": b"\n", "r": b"\r", "t": b"\t"}.get(
+                                m.group(1).decode(), m.group(0)
+                            ),
+                            text_bytes,
+                        )
                         text = text_bytes.decode("latin-1", errors="replace")
                         text_bytes = text.encode("latin-1")
                         text_bytes = re.sub(rb"\\([()\\\\])", lambda m: m.group(1), text_bytes)
                         text = text_bytes.decode("latin-1", errors="replace")
                         text_bytes = text.encode("latin-1")
-                        text_bytes = re.sub(rb"\\([0-7]{1,3})", lambda m: chr(int(m.group(1), 8)).encode("latin-1"), text_bytes)
+                        text_bytes = re.sub(
+                            rb"\\([0-7]{1,3})",
+                            lambda m: chr(int(m.group(1), 8)).encode("latin-1"),
+                            text_bytes,
+                        )
                         text = text_bytes.decode("latin-1", errors="replace")
                         # Clean up and keep only printable text (including special characters !@#$%^&*()[]{} etc.)
                         # \x20-\x7E covers all printable ASCII: space through ~ (includes all special chars)
                         text = re.sub(r"[^\x20-\x7E\n\r\t]", "", text)
-                        
+
                         # Only keep if it's readable text
                         # Preserve original text (don't strip) to maintain line structure
                         if is_readable_text(text):
@@ -993,16 +1063,16 @@ def _extract_text_from_pdf(path: str) -> tuple[str | None, str]:
                             result_parts.append(part)
                     else:
                         result_parts.append(part)
-            
+
             result = "".join(result_parts)
-            
+
             # Clean up excessive whitespace but preserve line breaks
             result = re.sub(r" {2,}", " ", result)  # Multiple spaces to single space
             result = re.sub(r"\n{3,}", "\n\n", result)  # Multiple newlines to double newline
-            
+
             # Split into lines and clean each line
             lines = result.split("\n")
-            cleaned_lines = []
+            cleaned_lines: list[str] = []
             for line in lines:
                 line_stripped = line.strip()
                 # Keep empty lines (they represent paragraph breaks)
@@ -1022,7 +1092,7 @@ def _extract_text_from_pdf(path: str) -> tuple[str | None, str]:
                     continue
                 # Keep the line (preserve original line structure)
                 cleaned_lines.append(line.rstrip())  # Remove trailing spaces but keep line
-            
+
             result = "\n".join(cleaned_lines)
             # Remove trailing empty lines but keep internal structure
             result = result.rstrip()
@@ -1035,11 +1105,13 @@ def _extract_text_from_pdf(path: str) -> tuple[str | None, str]:
         return None, f"Error extracting text from PDF: {e}"
 
 
-# extract embedded images from PDF files for diff viewing
+# Extract embedded images from PDF files for diff viewing
+# Finds image objects in the PDF and extracts metadata (dimensions, format, etc.)
+# Used to show when images change in PDFs
 def _extract_images_from_pdf(path: str) -> list[dict[str, Any]]:
     """
-    extract image metadata from PDF files, including dimensions.
-    returns list of image info dicts with name, hash, width, height, position.
+    Extracts image metadata from PDF files, including dimensions.
+    Returns list of image info dicts with name, hash, width, height, position.
     """
     images: list[dict[str, Any]] = []
     try:
@@ -1067,7 +1139,7 @@ def _extract_images_from_pdf(path: str) -> list[dict[str, Any]]:
                         continue
 
                     stream_data = stream_match.group(1)
-                    
+
                     # Compute hash for the image
                     img_hash = hashlib.sha256(stream_data).hexdigest()[:16]
 
@@ -1119,11 +1191,14 @@ def _extract_images_from_pdf(path: str) -> list[dict[str, Any]]:
     return images
 
 
-# extract embedded images from Office documents (docx/xlsx/pptx) for diff viewing
+# Extract embedded images from Office documents (docx/xlsx/pptx) for diff viewing
+# Office docs are ZIP files internally - images are stored in media folders
+# Extracts image metadata so we can show when images change
 def _extract_images_from_office_doc(path: str) -> list[dict[str, Any]]:
     """
-    extract image metadata from Office documents, including dimensions.
-    returns list of image info dicts with name, path, size, hash, width, height.
+    Extracts image metadata from Office documents, including dimensions.
+    Returns list of image info dicts with name, path, size, hash, width, height.
+    Handles Word, Excel, and PowerPoint formats.
     """
     images: list[dict[str, Any]] = []
     try:
@@ -1169,10 +1244,10 @@ def _extract_images_from_office_doc(path: str) -> list[dict[str, Any]]:
                         if name.startswith("ppt/slides/slide") and name.endswith(".xml")
                     ]
                     slide_files.sort()
-                    
+
                     for slide_num, slide_file in enumerate(slide_files, start=1):
                         try:
-                            slide_xml = zf.read(slide_file).decode('utf-8', errors='replace')
+                            slide_xml = zf.read(slide_file).decode("utf-8", errors="replace")
                             # Find all image references in this slide
                             # Images are referenced via relationship IDs in <a:blip r:embed="rIdX">
                             blip_matches = re.findall(r'<a:blip[^>]*r:embed="([^"]+)"', slide_xml)
@@ -1181,13 +1256,13 @@ def _extract_images_from_office_doc(path: str) -> list[dict[str, Any]]:
                                     pptx_rels_map[rel_id] = slide_num
                         except Exception:
                             continue
-                    
+
                     # Also check slide relationship files to map rel IDs to media paths
                     for slide_file in slide_files:
-                        rels_file = slide_file.replace('.xml', '.xml.rels')
+                        rels_file = slide_file.replace(".xml", ".xml.rels")
                         if rels_file in zf.namelist():
                             try:
-                                rels_xml = zf.read(rels_file).decode('utf-8', errors='replace')
+                                rels_xml = zf.read(rels_file).decode("utf-8", errors="replace")
                                 rel_pattern = r'<Relationship[^>]*Id="([^"]+)"[^>]*Target="([^"]+)"'
                                 for rel_id, target in re.findall(rel_pattern, rels_xml):
                                     if target.startswith("../media/"):
@@ -1198,7 +1273,9 @@ def _extract_images_from_office_doc(path: str) -> list[dict[str, Any]]:
                     pass
             elif p_lower.endswith(".docx"):
                 try:
-                    rels_xml = zf.read("word/_rels/document.xml.rels").decode("utf-8", errors="replace")
+                    rels_xml = zf.read("word/_rels/document.xml.rels").decode(
+                        "utf-8", errors="replace"
+                    )
                     # Extract relationships: <Relationship Id="rIdX" Target="media/imageY.png"/>
                     rel_pattern = r'<Relationship[^>]*Id="([^"]+)"[^>]*Target="([^"]+)"'
                     for rel_id, target in re.findall(rel_pattern, rels_xml):
@@ -1206,7 +1283,7 @@ def _extract_images_from_office_doc(path: str) -> list[dict[str, Any]]:
                             rels_map[rel_id] = target
                 except Exception:
                     pass
-                
+
                 # Extract image positions in document order for .docx
                 # This helps uniquely identify images when multiple images share the same hash
                 # Each drawing instance gets its own position, even if they share the same media file
@@ -1216,7 +1293,11 @@ def _extract_images_from_office_doc(path: str) -> list[dict[str, Any]]:
                         # Find all drawings in document order using a more precise pattern
                         # We need to match each drawing block individually to preserve order
                         # Pattern: <w:drawing>...<a:blip r:embed="rIdX">...</w:drawing>
-                        drawing_blocks = re.finditer(r'<w:drawing>.*?<a:blip[^>]*r:embed="([^"]+)"[^>]*>.*?</w:drawing>', doc_xml, re.DOTALL)
+                        drawing_blocks = re.finditer(
+                            r'<w:drawing>.*?<a:blip[^>]*r:embed="([^"]+)"[^>]*>.*?</w:drawing>',
+                            doc_xml,
+                            re.DOTALL,
+                        )
                         for pos, match in enumerate(drawing_blocks):
                             rel_id = match.group(1)
                             # Each relationship ID gets its position based on first occurrence in document
@@ -1247,7 +1328,9 @@ def _extract_images_from_office_doc(path: str) -> list[dict[str, Any]]:
                             # Find the relationship ID that points to this image
                             # The name is like "word/media/image2.jpeg", relationship target is "media/image2.jpeg"
                             # Extract the media path part (everything after "word/")
-                            media_path = name.replace("word/", "") if name.startswith("word/") else name
+                            media_path = (
+                                name.replace("word/", "") if name.startswith("word/") else name
+                            )
                             rel_id = None
                             # Match by exact path first, then fall back to basename
                             for rid, target in rels_map.items():
@@ -1261,7 +1344,7 @@ def _extract_images_from_office_doc(path: str) -> list[dict[str, Any]]:
                                     if target.endswith(media_name):
                                         rel_id = rid
                                         break
-                            
+
                             # Search for this image in document.xml by relationship ID
                             if rel_id:
                                 # Find the specific image block that uses this relationship ID
@@ -1282,23 +1365,28 @@ def _extract_images_from_office_doc(path: str) -> list[dict[str, Any]]:
                                         desc_matches = re.findall(desc_pattern, drawing_block)
                                         if desc_matches and desc_matches[0]:
                                             alt_text = desc_matches[0]
-                                
+
                                 # Decode HTML entities in alt text
                                 if alt_text:
                                     import html
+
                                     try:
                                         alt_text = html.unescape(alt_text)
                                         # Replace newlines and multiple spaces with " - " separator
                                         # Split by newlines, strip each part, filter empty, join with " - "
-                                        parts = [part.strip() for part in alt_text.split('\n') if part.strip()]
+                                        parts = [
+                                            part.strip()
+                                            for part in alt_text.split("\n")
+                                            if part.strip()
+                                        ]
                                         if len(parts) > 1:
-                                            alt_text = ' - '.join(parts)
+                                            alt_text = " - ".join(parts)
                                         else:
                                             # If no newlines, just clean up multiple spaces
-                                            alt_text = ' '.join(alt_text.split())
+                                            alt_text = " ".join(alt_text.split())
                                     except Exception:
                                         pass
-                            
+
                             # Also try to find dimensions
                             if rel_id:
                                 rel_pattern = rf'<a:blip[^>]*r:embed="{re.escape(rel_id)}"[^>]*>.*?<wp:extent[^>]*cx="(\d+)"[^>]*cy="(\d+)"[^>]*>'
@@ -1326,13 +1414,13 @@ def _extract_images_from_office_doc(path: str) -> list[dict[str, Any]]:
                             "hash": img_hash,
                             "type": "image",
                         }
-                        
+
                         # For .docx, store relationship ID and position for accurate matching
                         if p_lower.endswith(".docx") and rel_id:
                             img_info["rel_id"] = rel_id
                             if rel_id in image_positions:
                                 img_info["position"] = image_positions[rel_id]
-                        
+
                         # Add alt text if available
                         if alt_text:
                             img_info["alt_text"] = alt_text
@@ -1340,37 +1428,45 @@ def _extract_images_from_office_doc(path: str) -> list[dict[str, Any]]:
                         if width is not None and height is not None:
                             img_info["width"] = width
                             img_info["height"] = height
-                        
+
                         # For PPTX, find which slide this image is on and extract dimensions
                         if p_lower.endswith(".pptx"):
                             # Find the relationship ID that points to this image
                             # The name is like "ppt/media/image16.png"
                             # We need to match it with relationship targets which might be "ppt/media/image16.png" or "../media/image16.png"
-                            slide_num = None
+                            slide_num = None  # type: ignore[assignment]
                             rel_id_for_image = None
-                            
+
                             # Try multiple matching strategies
                             media_basename = os.path.basename(name)
                             # Normalize the image name for comparison (remove ppt/ prefix if present)
-                            normalized_name = name.replace("ppt/", "") if name.startswith("ppt/") else name
-                            
+                            normalized_name = (
+                                name.replace("ppt/", "") if name.startswith("ppt/") else name
+                            )
+
                             for rel_id, target_path in slide_rels_map.items():
                                 # Normalize target path for comparison
-                                normalized_target = target_path.replace("ppt/", "") if target_path.startswith("ppt/") else target_path
+                                normalized_target = (
+                                    target_path.replace("ppt/", "")
+                                    if target_path.startswith("ppt/")
+                                    else target_path
+                                )
                                 normalized_target = normalized_target.replace("../", "")
-                                
+
                                 # Match by exact path, normalized path, or basename
-                                if (target_path == name or 
-                                    normalized_target == normalized_name or
-                                    target_path.endswith(media_basename) or
-                                    normalized_target.endswith(media_basename) or
-                                    os.path.basename(target_path) == media_basename):
+                                if (
+                                    target_path == name
+                                    or normalized_target == normalized_name
+                                    or target_path.endswith(media_basename)
+                                    or normalized_target.endswith(media_basename)
+                                    or os.path.basename(target_path) == media_basename
+                                ):
                                     # Found the relationship ID, now find which slide uses it
-                                    slide_num = pptx_rels_map.get(rel_id)
+                                    slide_num = pptx_rels_map.get(rel_id)  # type: ignore[assignment]
                                     if slide_num:
                                         rel_id_for_image = rel_id
                                         break
-                            
+
                             # If still not found, try quick direct search in slide XML files (limited to prevent slowdown)
                             # Only check first 10 slides to keep it fast - if not found quickly, skip it
                             if not slide_num:
@@ -1383,24 +1479,36 @@ def _extract_images_from_office_doc(path: str) -> list[dict[str, Any]]:
                                     slide_files_for_search.sort()
                                     # Limit search to first 10 slides to prevent slowdown
                                     max_slides_to_check = 10
-                                    
-                                    for slide_idx, slide_file in enumerate(slide_files_for_search[:max_slides_to_check], start=1):
+
+                                    for slide_idx, slide_file in enumerate(
+                                        slide_files_for_search[:max_slides_to_check], start=1
+                                    ):
                                         try:
                                             # Quick check: just read relationship file first (faster than full XML)
-                                            rels_file_search = slide_file.replace('.xml', '.xml.rels')
+                                            rels_file_search = slide_file.replace(
+                                                ".xml", ".xml.rels"
+                                            )
                                             if rels_file_search in zf.namelist():
                                                 try:
-                                                    rels_xml_search = zf.read(rels_file_search).decode('utf-8', errors='replace')
+                                                    rels_xml_search = zf.read(
+                                                        rels_file_search
+                                                    ).decode("utf-8", errors="replace")
                                                     # Check if the media path appears in relationships
-                                                    if media_basename in rels_xml_search or normalized_name.replace("media/", "") in rels_xml_search:
+                                                    if (
+                                                        media_basename in rels_xml_search
+                                                        or normalized_name.replace("media/", "")
+                                                        in rels_xml_search
+                                                    ):
                                                         slide_num = slide_idx
                                                         break
                                                 except Exception:
                                                     pass
-                                            
+
                                             # Only check slide XML if relationship file didn't help
                                             if not slide_num:
-                                                slide_xml_search = zf.read(slide_file).decode('utf-8', errors='replace')
+                                                slide_xml_search = zf.read(slide_file).decode(
+                                                    "utf-8", errors="replace"
+                                                )
                                                 # Quick substring check - if found, this is the slide
                                                 if media_basename in slide_xml_search:
                                                     slide_num = slide_idx
@@ -1411,10 +1519,10 @@ def _extract_images_from_office_doc(path: str) -> list[dict[str, Any]]:
                                     # This prevents slowdown - user will see "Slide number not detected" message
                                 except Exception:
                                     pass
-                            
+
                             if slide_num:
                                 img_info["slide_number"] = slide_num
-                            
+
                             # Extract dimensions from the slide XML that contains this image
                             if rel_id_for_image and slide_num:
                                 try:
@@ -1427,32 +1535,46 @@ def _extract_images_from_office_doc(path: str) -> list[dict[str, Any]]:
                                     slide_files_for_dims.sort()
                                     if 1 <= slide_num <= len(slide_files_for_dims):
                                         slide_file_for_dims = slide_files_for_dims[slide_num - 1]
-                                        slide_xml_for_dims = zf.read(slide_file_for_dims).decode('utf-8', errors='replace')
-                                        
+                                        slide_xml_for_dims = zf.read(slide_file_for_dims).decode(
+                                            "utf-8", errors="replace"
+                                        )
+
                                         # Find the image by relationship ID and extract dimensions
                                         # PowerPoint structure: <p:pic><p:blipFill><a:blip r:embed="rIdX">...<a:xfrm><a:ext cx="..." cy="..."/>
                                         # Search for the blip with this relationship ID
                                         blip_pattern = rf'<a:blip[^>]*r:embed="{re.escape(rel_id_for_image)}"[^>]*>'
-                                        blip_match = re.search(blip_pattern, slide_xml_for_dims, re.DOTALL)
+                                        blip_match = re.search(
+                                            blip_pattern, slide_xml_for_dims, re.DOTALL
+                                        )
                                         if blip_match:
                                             # Find extent near the blip - search in a larger area around it
                                             search_start = max(0, blip_match.start() - 5000)
-                                            search_end = min(len(slide_xml_for_dims), blip_match.end() + 5000)
-                                            search_area = slide_xml_for_dims[search_start:search_end]
-                                            
+                                            search_end = min(
+                                                len(slide_xml_for_dims), blip_match.end() + 5000
+                                            )
+                                            search_area = slide_xml_for_dims[
+                                                search_start:search_end
+                                            ]
+
                                             # Try multiple patterns for extent
                                             # Pattern 1: <a:xfrm><a:ext cx="..." cy="..."/>
                                             ext_pattern1 = r'<a:xfrm[^>]*>.*?<a:ext[^>]*cx="(\d+)"[^>]*cy="(\d+)"[^>]*/?>'
-                                            ext_matches = re.findall(ext_pattern1, search_area, re.DOTALL)
+                                            ext_matches = re.findall(
+                                                ext_pattern1, search_area, re.DOTALL
+                                            )
                                             if not ext_matches:
                                                 # Pattern 2: <p:xfrm><p:ext cx="..." cy="..."/>
                                                 ext_pattern2 = r'<p:xfrm[^>]*>.*?<p:ext[^>]*cx="(\d+)"[^>]*cy="(\d+)"[^>]*/?>'
-                                                ext_matches = re.findall(ext_pattern2, search_area, re.DOTALL)
+                                                ext_matches = re.findall(
+                                                    ext_pattern2, search_area, re.DOTALL
+                                                )
                                             if not ext_matches:
                                                 # Pattern 3: Direct <a:ext> or <p:ext> near the blip
                                                 ext_pattern3 = r'<[ap]:ext[^>]*cx="(\d+)"[^>]*cy="(\d+)"[^>]*/?>'
-                                                ext_matches = re.findall(ext_pattern3, search_area, re.DOTALL)
-                                            
+                                                ext_matches = re.findall(
+                                                    ext_pattern3, search_area, re.DOTALL
+                                                )
+
                                             if ext_matches:
                                                 cx_emu, cy_emu = ext_matches[0]
                                                 # PowerPoint uses EMU (English Metric Units): 1 inch = 914400 EMU, 96 DPI
@@ -1699,10 +1821,12 @@ def _format_attr_for_display(attr_key: str, attr_val: Any) -> str:
         return f"{attr_key}: {attr_val}"
 
 
-# extract text formatting (bold, italic, underline, strikethrough) from Office documents for diff viewing
+# Extract text formatting from Office documents for diff viewing
+# This is what makes the diff viewer show bold/italic/underline changes
+# Parses the XML inside Office docs to find text runs and their formatting
 def _extract_formatting_from_office_doc(path: str) -> list[dict[str, Any]]:
     """
-    Extract ordered DOCX/PPTX run metadata (text + effective styles).
+    Extracts ordered DOCX/PPTX run metadata (text + effective styles).
     Returns a list of run dictionaries containing:
       - text / normalized_text
       - paragraph_index / run_index (or slide_index for PPTX)
@@ -1711,21 +1835,21 @@ def _extract_formatting_from_office_doc(path: str) -> list[dict[str, Any]]:
     entries: list[dict[str, Any]] = []
     try:
         path_lower = str(path or "").lower()
-        if not path or not (path_lower.endswith('.docx') or path_lower.endswith('.pptx')):
+        if not path or not (path_lower.endswith(".docx") or path_lower.endswith(".pptx")):
             return entries
         norm_path = _norm_user_path(path)
-        
-        if path_lower.endswith('.docx'):
-            with zipfile.ZipFile(norm_path, 'r') as zf:
-                doc_xml = zf.read('word/document.xml').decode('utf-8', errors='replace')
-            
+
+        if path_lower.endswith(".docx"):
+            with zipfile.ZipFile(norm_path, "r") as zf:
+                doc_xml = zf.read("word/document.xml").decode("utf-8", errors="replace")
+
             paragraphs = re.findall(r"<w:p[^>]*>(.*?)</w:p>", doc_xml, re.DOTALL)
             for para_idx, para_xml in enumerate(paragraphs):
                 defaults = _docx_paragraph_defaults(para_xml)
                 run_matches = re.findall(r"<w:r[^>]*>(.*?)</w:r>", para_xml, re.DOTALL)
                 for run_idx, run_xml in enumerate(run_matches):
                     texts = re.findall(r"<w:t[^>]*>([^<]+)</w:t>", run_xml)
-                    raw_text = ''.join(html.unescape(t) for t in texts)
+                    raw_text = "".join(html.unescape(t) for t in texts)
                     has_tab = bool(re.search(r"<w:tab[^>]*/>", run_xml))
                     has_break = bool(re.search(r"<w:br[^>]*/>", run_xml))
                     if has_tab:
@@ -1740,15 +1864,15 @@ def _extract_formatting_from_office_doc(path: str) -> list[dict[str, Any]]:
                     styles = _resolve_docx_run_styles(run_xml, defaults)
                     entries.append(
                         {
-                            'text': raw_text,
-                            'normalized_text': normalized,
-                            'paragraph_index': para_idx,
-                            'run_index': run_idx,
-                            'styles': styles,
+                            "text": raw_text,
+                            "normalized_text": normalized,
+                            "paragraph_index": para_idx,
+                            "run_index": run_idx,
+                            "styles": styles,
                         }
                     )
-        elif path_lower.endswith('.pptx'):
-            with zipfile.ZipFile(norm_path, 'r') as zf:
+        elif path_lower.endswith(".pptx"):
+            with zipfile.ZipFile(norm_path, "r") as zf:
                 # Get all slide files, sorted by slide number
                 slide_files = [
                     name
@@ -1756,10 +1880,10 @@ def _extract_formatting_from_office_doc(path: str) -> list[dict[str, Any]]:
                     if name.startswith("ppt/slides/slide") and name.endswith(".xml")
                 ]
                 slide_files.sort()
-                
+
                 for slide_idx, slide_file in enumerate(slide_files):
                     try:
-                        slide_xml = zf.read(slide_file).decode('utf-8', errors='replace')
+                        slide_xml = zf.read(slide_file).decode("utf-8", errors="replace")
                         # Extract paragraphs from slide (a:p tags)
                         paragraphs = re.findall(r"<a:p[^>]*>(.*?)</a:p>", slide_xml, re.DOTALL)
                         for para_idx, para_xml in enumerate(paragraphs):
@@ -1769,7 +1893,7 @@ def _extract_formatting_from_office_doc(path: str) -> list[dict[str, Any]]:
                             for run_idx, run_xml in enumerate(run_matches):
                                 # Extract text from a:t tags
                                 texts = re.findall(r"<a:t[^>]*>([^<]+)</a:t>", run_xml)
-                                raw_text = ''.join(html.unescape(t) for t in texts)
+                                raw_text = "".join(html.unescape(t) for t in texts)
                                 # Check for line breaks in PowerPoint (a:br tags)
                                 has_break = bool(re.search(r"<a:br[^>]*/>", run_xml))
                                 if has_break:
@@ -1778,7 +1902,10 @@ def _extract_formatting_from_office_doc(path: str) -> list[dict[str, Any]]:
                                     continue
                                 normalized = _normalize_text_for_diff(raw_text)
                                 if not normalized:
-                                    normalized = raw_text.strip() or f"__run_{slide_idx}_{para_idx}_{run_idx}__"
+                                    normalized = (
+                                        raw_text.strip()
+                                        or f"__run_{slide_idx}_{para_idx}_{run_idx}__"
+                                    )
                                 styles = _resolve_pptx_run_styles(run_xml, defaults)
                                 # Use composite key (slide_idx << 16) | para_idx as paragraph_index
                                 # This ensures each paragraph on each slide has a unique identifier
@@ -1786,11 +1913,11 @@ def _extract_formatting_from_office_doc(path: str) -> list[dict[str, Any]]:
                                 composite_para_idx = (slide_idx << 16) | para_idx
                                 entries.append(
                                     {
-                                        'text': raw_text,
-                                        'normalized_text': normalized,
-                                        'paragraph_index': composite_para_idx,  # Composite: slide + paragraph
-                                        'run_index': run_idx,  # Just run index within paragraph
-                                        'styles': styles,
+                                        "text": raw_text,
+                                        "normalized_text": normalized,
+                                        "paragraph_index": composite_para_idx,  # Composite: slide + paragraph
+                                        "run_index": run_idx,  # Just run index within paragraph
+                                        "styles": styles,
                                     }
                                 )
                     except Exception:
@@ -1800,33 +1927,37 @@ def _extract_formatting_from_office_doc(path: str) -> list[dict[str, Any]]:
     return entries
 
 
+# Extract default formatting from Word paragraph properties
+# Paragraphs can have default styles that apply to all runs unless overridden
 def _docx_paragraph_defaults(para_xml: str) -> dict[str, Any]:
     defaults: dict[str, Any] = {
-        'bold': False,
-        'italic': False,
-        'underline': '',
-        'strikethrough': '',
-        'color': '',
-        'highlight': '',
+        "bold": False,
+        "italic": False,
+        "underline": "",
+        "strikethrough": "",
+        "color": "",
+        "highlight": "",
     }
     match = re.search(r"<w:pPr[^>]*>(.*?)</w:pPr>", para_xml, re.DOTALL)
     if not match:
         return defaults
     block = match.group(1)
-    defaults['bold'] = bool(_docx_bool_from_fragment(block, 'w:b'))
-    defaults['italic'] = bool(_docx_bool_from_fragment(block, 'w:i'))
-    defaults['underline'] = _docx_underline_from_fragment(block)
-    if _docx_bool_from_fragment(block, 'w:dstrike'):
-        defaults['strikethrough'] = 'double'
-    elif _docx_bool_from_fragment(block, 'w:strike'):
-        defaults['strikethrough'] = 'single'
-    defaults['color'] = _docx_color_from_fragment(block)
+    defaults["bold"] = bool(_docx_bool_from_fragment(block, "w:b"))
+    defaults["italic"] = bool(_docx_bool_from_fragment(block, "w:i"))
+    defaults["underline"] = _docx_underline_from_fragment(block)
+    if _docx_bool_from_fragment(block, "w:dstrike"):
+        defaults["strikethrough"] = "double"
+    elif _docx_bool_from_fragment(block, "w:strike"):
+        defaults["strikethrough"] = "single"
+    defaults["color"] = _docx_color_from_fragment(block)
     highlight = _docx_highlight_from_fragment(block)
     if highlight:
-        defaults['highlight'] = highlight.upper()
+        defaults["highlight"] = highlight.upper()
     return defaults
 
 
+# Resolve effective formatting styles for a Word run
+# Combines run-specific styles with paragraph defaults to get the final style
 def _resolve_docx_run_styles(run_xml: str, defaults: dict[str, Any]) -> dict[str, Any]:
     styles: dict[str, Any] = {}
     match = re.search(r"<w:rPr[^>]*>(.*?)</w:rPr>", run_xml, re.DOTALL)
@@ -1838,34 +1969,34 @@ def _resolve_docx_run_styles(run_xml: str, defaults: dict[str, Any]) -> dict[str
             return fallback
         return val
 
-    if resolve_bool('w:b', defaults.get('bold', False)):
-        styles['bold'] = True
-    if resolve_bool('w:i', defaults.get('italic', False)):
-        styles['italic'] = True
+    if resolve_bool("w:b", defaults.get("bold", False)):
+        styles["bold"] = True
+    if resolve_bool("w:i", defaults.get("italic", False)):
+        styles["italic"] = True
 
     underline = _docx_underline_from_fragment(fragment)
     if not underline:
-        underline = defaults.get('underline', '')
+        underline = defaults.get("underline", "")
     if underline:
-        styles['underline'] = underline
+        styles["underline"] = underline
 
-    strike = ''
-    if _docx_bool_from_fragment(fragment, 'w:dstrike'):
-        strike = 'double'
-    elif _docx_bool_from_fragment(fragment, 'w:strike'):
-        strike = 'single'
-    elif defaults.get('strikethrough'):
-        strike = defaults['strikethrough']
+    strike = ""
+    if _docx_bool_from_fragment(fragment, "w:dstrike"):
+        strike = "double"
+    elif _docx_bool_from_fragment(fragment, "w:strike"):
+        strike = "single"
+    elif defaults.get("strikethrough"):
+        strike = defaults["strikethrough"]
     if strike:
-        styles['strikethrough'] = strike
+        styles["strikethrough"] = strike
 
-    color = _docx_color_from_fragment(fragment) or defaults.get('color', '')
+    color = _docx_color_from_fragment(fragment) or defaults.get("color", "")
     if color:
-        styles['color'] = color.upper()
+        styles["color"] = color.upper()
 
-    highlight = _docx_highlight_from_fragment(fragment) or defaults.get('highlight', '')
+    highlight = _docx_highlight_from_fragment(fragment) or defaults.get("highlight", "")
     if highlight:
-        styles['highlight'] = str(highlight).upper()
+        styles["highlight"] = str(highlight).upper()
 
     return styles
 
@@ -1877,7 +2008,7 @@ def _docx_bool_from_fragment(fragment: str, tag: str) -> bool | None:
         match = re.search(rf"<{tag}\b([^>]*)>(.*?)</{tag}>", fragment, re.DOTALL)
         if not match:
             return None
-    attrs = match.group(1) or ''
+    attrs = match.group(1) or ""
     if re.search(r'w:val="(?:0|false)"', attrs, re.IGNORECASE):
         return False
     return True
@@ -1887,45 +2018,45 @@ def _docx_underline_from_fragment(fragment: str) -> str:
     match = re.search(r'<w:u[^>]*w:val="([^"]+)"', fragment)
     if match:
         val = match.group(1).strip().lower()
-        if val in {'false', 'none', '0'}:
-            return ''
+        if val in {"false", "none", "0"}:
+            return ""
         return val
-    if re.search(r'<w:u\b', fragment):
-        return 'single'
-    return ''
+    if re.search(r"<w:u\b", fragment):
+        return "single"
+    return ""
 
 
 def _docx_color_from_fragment(fragment: str) -> str:
     match = re.search(r'<w:color[^>]*w:val="([^"]+)"', fragment)
     if not match:
-        return ''
+        return ""
     val = match.group(1).strip()
-    return val.upper() if val else ''
+    return val.upper() if val else ""
 
 
 _DOCX_HIGHLIGHT_COLOR_MAP: dict[str, str] = {
-    'BLACK': '000000',
-    'BLUE': '0000FF',
-    'CYAN': '00FFFF',
-    'GREEN': '00FF00',
-    'MAGENTA': 'FF00FF',
-    'RED': 'FF0000',
-    'YELLOW': 'FFFF00',
-    'WHITE': 'FFFFFF',
-    'DARKBLUE': '000080',
-    'DARKCYAN': '008080',
-    'DARKGREEN': '006400',
-    'DARKMAGENTA': '800080',
-    'DARKRED': '800000',
-    'DARKYELLOW': '808000',
-    'DARKGRAY': 'A9A9A9',
-    'LIGHTGRAY': 'D3D3D3',
-    'BRIGHTGREEN': '66FF00',
-    'TURQUOISE': '30D5C8',
-    'PINK': 'FFC0CB',
-    'TEAL': '008080',
-    'ORANGE': 'FFA500',
-    'VIOLET': '8F00FF',
+    "BLACK": "000000",
+    "BLUE": "0000FF",
+    "CYAN": "00FFFF",
+    "GREEN": "00FF00",
+    "MAGENTA": "FF00FF",
+    "RED": "FF0000",
+    "YELLOW": "FFFF00",
+    "WHITE": "FFFFFF",
+    "DARKBLUE": "000080",
+    "DARKCYAN": "008080",
+    "DARKGREEN": "006400",
+    "DARKMAGENTA": "800080",
+    "DARKRED": "800000",
+    "DARKYELLOW": "808000",
+    "DARKGRAY": "A9A9A9",
+    "LIGHTGRAY": "D3D3D3",
+    "BRIGHTGREEN": "66FF00",
+    "TURQUOISE": "30D5C8",
+    "PINK": "FFC0CB",
+    "TEAL": "008080",
+    "ORANGE": "FFA500",
+    "VIOLET": "8F00FF",
 }
 
 
@@ -1933,34 +2064,34 @@ def _docx_highlight_from_fragment(fragment: str) -> str:
     match = re.search(r'<w:highlight[^>]*w:val="([^"]+)"', fragment, re.IGNORECASE)
     if match:
         val = match.group(1).strip()
-        if val.lower() not in {'', 'none', 'auto'}:
+        if val.lower() not in {"", "none", "auto"}:
             return val
-        return ''
+        return ""
     match = re.search(r'<w:shd[^>]*w:fill="([^"]+)"', fragment, re.IGNORECASE)
     if match:
         val = match.group(1).strip()
-        if val.lower() not in {'', 'none', 'auto'}:
+        if val.lower() not in {"", "none", "auto"}:
             return val
-    return ''
+    return ""
 
 
 def _highlight_hex_from_value(value: str) -> str:
     if not value:
-        return ''
+        return ""
     upper = str(value).strip().upper()
-    if not upper or upper in {'NONE', 'AUTO'}:
-        return ''
-    if re.fullmatch(r'[0-9A-F]{6}', upper):
+    if not upper or upper in {"NONE", "AUTO"}:
+        return ""
+    if re.fullmatch(r"[0-9A-F]{6}", upper):
         return upper
-    return _DOCX_HIGHLIGHT_COLOR_MAP.get(upper, '')
+    return _DOCX_HIGHLIGHT_COLOR_MAP.get(upper, "")
 
 
 def _format_highlight_snapshot(value: str) -> str:
     if not value:
-        return ''
+        return ""
     hex_value = _highlight_hex_from_value(value)
-    readable = re.sub(r'(?<!^)(?=[A-Z])', ' ', str(value).strip()).replace('_', ' ').title()
-    readable = readable or 'Highlight'
+    readable = re.sub(r"(?<!^)(?=[A-Z])", " ", str(value).strip()).replace("_", " ").title()
+    readable = readable or "Highlight"
     if hex_value:
         color_name = _hex_to_color_name(hex_value) or readable
         return f"{color_name} highlight (#{hex_value})"
@@ -1969,26 +2100,26 @@ def _format_highlight_snapshot(value: str) -> str:
 
 def _style_snapshot(styles: dict[str, Any]) -> dict[str, Any]:
     snapshot: dict[str, Any] = {}
-    if styles.get('bold'):
-        snapshot['bold'] = True
+    if styles.get("bold"):
+        snapshot["bold"] = True
     # Explicitly track italic - include it in snapshot if True (removal detection works via comparison)
-    if styles.get('italic'):
-        snapshot['italic'] = True
-    underline = styles.get('underline')
+    if styles.get("italic"):
+        snapshot["italic"] = True
+    underline = styles.get("underline")
     if underline:
-        snapshot['underline'] = underline
-    strike = styles.get('strikethrough')
+        snapshot["underline"] = underline
+    strike = styles.get("strikethrough")
     if strike:
-        snapshot['strikethrough'] = strike
-    color = styles.get('color')
+        snapshot["strikethrough"] = strike
+    color = styles.get("color")
     if color:
         upper = str(color).upper()
         color_name = _hex_to_color_name(upper)
         display = f"{color_name} (#{upper})" if color_name else f"#{upper}"
-        snapshot['color'] = display
-    highlight = styles.get('highlight')
+        snapshot["color"] = display
+    highlight = styles.get("highlight")
     if highlight:
-        snapshot['highlight'] = _format_highlight_snapshot(highlight)
+        snapshot["highlight"] = _format_highlight_snapshot(highlight)
     return snapshot
 
 
@@ -2008,12 +2139,12 @@ def _formatting_delta_signature(
 def _pptx_paragraph_defaults(para_xml: str) -> dict[str, Any]:
     """Extract default formatting from PowerPoint paragraph properties."""
     defaults: dict[str, Any] = {
-        'bold': False,
-        'italic': False,
-        'underline': '',
-        'strikethrough': '',
-        'color': '',
-        'highlight': '',
+        "bold": False,
+        "italic": False,
+        "underline": "",
+        "strikethrough": "",
+        "color": "",
+        "highlight": "",
     }
     # PowerPoint paragraphs may have default run properties in a:pPr/a:defRPr
     match = re.search(r"<a:pPr[^>]*>(.*?)</a:pPr>", para_xml, re.DOTALL)
@@ -2022,16 +2153,16 @@ def _pptx_paragraph_defaults(para_xml: str) -> dict[str, Any]:
         def_rpr_match = re.search(r"<a:defRPr[^>]*>(.*?)</a:defRPr>", ppr_block, re.DOTALL)
         if def_rpr_match:
             block = def_rpr_match.group(1)
-            defaults['bold'] = bool(_pptx_bool_from_fragment(block, 'a:b'))
-            defaults['italic'] = bool(_pptx_bool_from_fragment(block, 'a:i'))
-            defaults['underline'] = _pptx_underline_from_fragment(block)
-            if _pptx_bool_from_fragment(block, 'a:strike'):
-                defaults['strikethrough'] = 'single'
-            defaults['color'] = _pptx_color_from_fragment(block)
+            defaults["bold"] = bool(_pptx_bool_from_fragment(block, "a:b"))
+            defaults["italic"] = bool(_pptx_bool_from_fragment(block, "a:i"))
+            defaults["underline"] = _pptx_underline_from_fragment(block)
+            if _pptx_bool_from_fragment(block, "a:strike"):
+                defaults["strikethrough"] = "single"
+            defaults["color"] = _pptx_color_from_fragment(block)
             # Highlight in PPTX is typically in fill properties
             highlight = _pptx_highlight_from_fragment(block)
             if highlight:
-                defaults['highlight'] = highlight.upper()
+                defaults["highlight"] = highlight.upper()
     return defaults
 
 
@@ -2047,32 +2178,32 @@ def _resolve_pptx_run_styles(run_xml: str, defaults: dict[str, Any]) -> dict[str
             return fallback
         return val
 
-    if resolve_bool('a:b', defaults.get('bold', False)):
-        styles['bold'] = True
-    if resolve_bool('a:i', defaults.get('italic', False)):
-        styles['italic'] = True
+    if resolve_bool("a:b", defaults.get("bold", False)):
+        styles["bold"] = True
+    if resolve_bool("a:i", defaults.get("italic", False)):
+        styles["italic"] = True
 
     underline = _pptx_underline_from_fragment(fragment)
     if not underline:
-        underline = defaults.get('underline', '')
+        underline = defaults.get("underline", "")
     if underline:
-        styles['underline'] = underline
+        styles["underline"] = underline
 
-    strike = ''
-    if _pptx_bool_from_fragment(fragment, 'a:strike'):
-        strike = 'single'
-    elif defaults.get('strikethrough'):
-        strike = defaults['strikethrough']
+    strike = ""
+    if _pptx_bool_from_fragment(fragment, "a:strike"):
+        strike = "single"
+    elif defaults.get("strikethrough"):
+        strike = defaults["strikethrough"]
     if strike:
-        styles['strikethrough'] = strike
+        styles["strikethrough"] = strike
 
-    color = _pptx_color_from_fragment(fragment) or defaults.get('color', '')
+    color = _pptx_color_from_fragment(fragment) or defaults.get("color", "")
     if color:
-        styles['color'] = color.upper()
+        styles["color"] = color.upper()
 
-    highlight = _pptx_highlight_from_fragment(fragment) or defaults.get('highlight', '')
+    highlight = _pptx_highlight_from_fragment(fragment) or defaults.get("highlight", "")
     if highlight:
-        styles['highlight'] = str(highlight).upper()
+        styles["highlight"] = str(highlight).upper()
 
     return styles
 
@@ -2085,7 +2216,7 @@ def _pptx_bool_from_fragment(fragment: str, tag: str) -> bool | None:
         match = re.search(rf"<{tag}\b([^>]*)>(.*?)</{tag}>", fragment, re.DOTALL)
         if not match:
             return None
-    attrs = match.group(1) or ''
+    attrs = match.group(1) or ""
     # Check for explicit false values
     if re.search(r'val="(?:0|false)"', attrs, re.IGNORECASE):
         return False
@@ -2098,12 +2229,12 @@ def _pptx_underline_from_fragment(fragment: str) -> str:
     match = re.search(r'<a:u[^>]*val="([^"]+)"', fragment)
     if match:
         val = match.group(1).strip().lower()
-        if val in {'false', 'none', '0'}:
-            return ''
+        if val in {"false", "none", "0"}:
+            return ""
         return val
-    if re.search(r'<a:u\b', fragment):
-        return 'single'
-    return ''
+    if re.search(r"<a:u\b", fragment):
+        return "single"
+    return ""
 
 
 def _pptx_color_from_fragment(fragment: str) -> str:
@@ -2113,63 +2244,63 @@ def _pptx_color_from_fragment(fragment: str) -> str:
     if match:
         val = match.group(1).strip()
         # Remove # if present and ensure uppercase hex
-        val = val.lstrip('#').upper()
-        if re.fullmatch(r'[0-9A-F]{6}', val):
+        val = val.lstrip("#").upper()
+        if re.fullmatch(r"[0-9A-F]{6}", val):
             return val
-    
+
     # Try prstClr (preset colors like "red", "blue", etc.)
     match = re.search(r'<a:solidFill[^>]*>.*?<a:prstClr[^>]*val="([^"]+)"', fragment, re.DOTALL)
     if match:
         preset_name = match.group(1).strip().upper()
         # Map common preset colors to hex
         preset_colors = {
-            'BLACK': '000000',
-            'WHITE': 'FFFFFF',
-            'RED': 'FF0000',
-            'GREEN': '00FF00',
-            'BLUE': '0000FF',
-            'YELLOW': 'FFFF00',
-            'MAGENTA': 'FF00FF',
-            'CYAN': '00FFFF',
-            'GRAY': '808080',
-            'DARKGRAY': '404040',
-            'LIGHTGRAY': 'C0C0C0',
+            "BLACK": "000000",
+            "WHITE": "FFFFFF",
+            "RED": "FF0000",
+            "GREEN": "00FF00",
+            "BLUE": "0000FF",
+            "YELLOW": "FFFF00",
+            "MAGENTA": "FF00FF",
+            "CYAN": "00FFFF",
+            "GRAY": "808080",
+            "DARKGRAY": "404040",
+            "LIGHTGRAY": "C0C0C0",
         }
         if preset_name in preset_colors:
             return preset_colors[preset_name]
-    
+
     # Try schemeClr (theme colors) - these are context-dependent but we'll use defaults
     match = re.search(r'<a:solidFill[^>]*>.*?<a:schemeClr[^>]*val="([^"]+)"', fragment, re.DOTALL)
     if match:
         val = match.group(1).strip().upper()
         # Map common theme colors to hex (simplified mapping - actual colors depend on theme)
         theme_colors = {
-            'TX1': '000000',  # Text 1 (typically black)
-            'TX2': 'FFFFFF',  # Text 2 (typically white)
-            'BG1': 'FFFFFF',  # Background 1
-            'BG2': '000000',  # Background 2
-            'ACCENT1': '4472C4',  # Accent 1 (blue)
-            'ACCENT2': 'ED7D31',  # Accent 2 (orange)
-            'ACCENT3': 'A5A5A5',  # Accent 3 (gray)
-            'ACCENT4': 'FFC000',  # Accent 4 (yellow)
-            'ACCENT5': '5B9BD5',  # Accent 5 (light blue)
-            'ACCENT6': '70AD47',  # Accent 6 (green)
-            'DK1': '000000',  # Dark 1
-            'LT1': 'FFFFFF',  # Light 1
-            'DK2': '404040',  # Dark 2
-            'LT2': 'F2F2F2',  # Light 2
+            "TX1": "000000",  # Text 1 (typically black)
+            "TX2": "FFFFFF",  # Text 2 (typically white)
+            "BG1": "FFFFFF",  # Background 1
+            "BG2": "000000",  # Background 2
+            "ACCENT1": "4472C4",  # Accent 1 (blue)
+            "ACCENT2": "ED7D31",  # Accent 2 (orange)
+            "ACCENT3": "A5A5A5",  # Accent 3 (gray)
+            "ACCENT4": "FFC000",  # Accent 4 (yellow)
+            "ACCENT5": "5B9BD5",  # Accent 5 (light blue)
+            "ACCENT6": "70AD47",  # Accent 6 (green)
+            "DK1": "000000",  # Dark 1
+            "LT1": "FFFFFF",  # Light 1
+            "DK2": "404040",  # Dark 2
+            "LT2": "F2F2F2",  # Light 2
         }
         if val in theme_colors:
             return theme_colors[val]
-    
+
     # Also check for color directly in rPr (some PowerPoint versions)
     match = re.search(r'<a:solidFill[^>]*>.*?val="([^"]+)"', fragment, re.DOTALL)
     if match:
-        val = match.group(1).strip().lstrip('#').upper()
-        if re.fullmatch(r'[0-9A-F]{6}', val):
+        val = match.group(1).strip().lstrip("#").upper()
+        if re.fullmatch(r"[0-9A-F]{6}", val):
             return val
-    
-    return ''
+
+    return ""
 
 
 def _pptx_highlight_from_fragment(fragment: str) -> str:
@@ -2179,22 +2310,22 @@ def _pptx_highlight_from_fragment(fragment: str) -> str:
     # Try highlight tag first (if present)
     match = re.search(r'<a:highlight[^>]*>.*?<a:srgbClr[^>]*val="([^"]+)"', fragment, re.DOTALL)
     if match:
-        val = match.group(1).strip().lstrip('#').upper()
-        if re.fullmatch(r'[0-9A-F]{6}', val):
+        val = match.group(1).strip().lstrip("#").upper()
+        if re.fullmatch(r"[0-9A-F]{6}", val):
             return val
     # Check for background fill in run properties (some PowerPoint versions use this)
     match = re.search(r'<a:bgFill[^>]*>.*?<a:srgbClr[^>]*val="([^"]+)"', fragment, re.DOTALL)
     if match:
-        val = match.group(1).strip().lstrip('#').upper()
-        if re.fullmatch(r'[0-9A-F]{6}', val):
+        val = match.group(1).strip().lstrip("#").upper()
+        if re.fullmatch(r"[0-9A-F]{6}", val):
             return val
     # Check for patternFill with solid fill (another way highlights might be stored)
     match = re.search(r'<a:patternFill[^>]*>.*?<a:srgbClr[^>]*val="([^"]+)"', fragment, re.DOTALL)
     if match:
-        val = match.group(1).strip().lstrip('#').upper()
-        if re.fullmatch(r'[0-9A-F]{6}', val):
+        val = match.group(1).strip().lstrip("#").upper()
+        if re.fullmatch(r"[0-9A-F]{6}", val):
             return val
-    return ''
+    return ""
 
 
 def _doc_position_order(
@@ -2232,7 +2363,7 @@ def _diff_docx_formatting(
         counters: dict[str, int] = {}
         keys: list[str] = []
         for run in runs:
-            base = str(run.get('normalized_text', ''))
+            base = str(run.get("normalized_text", ""))
             idx = counters.get(base, 0)
             counters[base] = idx + 1
             keys.append(f"{base}#{idx}")
@@ -2241,20 +2372,20 @@ def _diff_docx_formatting(
     def _runs_to_char_spans(runs: list[dict[str, Any]]) -> list[dict[str, Any]]:
         spans: list[dict[str, Any]] = []
         for run in runs:
-            text = run.get('text') or ''
+            text = run.get("text") or ""
             if not text:
                 continue
-            paragraph_index = run.get('paragraph_index')
-            run_index = run.get('run_index')
-            snapshot = _style_snapshot(run.get('styles', {}))
+            paragraph_index = run.get("paragraph_index")
+            run_index = run.get("run_index")
+            snapshot = _style_snapshot(run.get("styles", {}))
             for offset, char in enumerate(text):
                 spans.append(
                     {
-                        'char': char,
-                        'paragraph_index': paragraph_index,
-                        'run_index': run_index,
-                        'char_offset': offset,
-                        'snapshot': snapshot,
+                        "char": char,
+                        "paragraph_index": paragraph_index,
+                        "run_index": run_index,
+                        "char_offset": offset,
+                        "snapshot": snapshot,
                     }
                 )
         return spans
@@ -2264,8 +2395,8 @@ def _diff_docx_formatting(
         current_chunk: list[dict[str, Any]],
         fallback_seed: int,
     ) -> list[dict[str, Any]]:
-        base_text = ''.join(run.get('text') or '' for run in base_chunk)
-        current_text = ''.join(run.get('text') or '' for run in current_chunk)
+        base_text = "".join(run.get("text") or "" for run in base_chunk)
+        current_text = "".join(run.get("text") or "" for run in current_chunk)
         if not base_text or base_text != current_text:
             return []
 
@@ -2284,7 +2415,7 @@ def _diff_docx_formatting(
 
         def _word_context(full_text: str, start_idx: int, length: int) -> str:
             if not full_text:
-                return ''
+                return ""
             start = max(0, min(start_idx, len(full_text)))
             end = max(start, min(len(full_text), start_idx + max(length, 1)))
             while start > 0 and not full_text[start - 1].isspace():
@@ -2297,11 +2428,11 @@ def _diff_docx_formatting(
             nonlocal buffer_chars, buffer_before, buffer_after, buffer_para, buffer_order, buffer_start_idx
             if not buffer_chars:
                 return
-            fragment_text = ''.join(buffer_chars)
-            context_word = ''
+            fragment_text = "".join(buffer_chars)
+            context_word = ""
             if buffer_start_idx is not None:
                 context_word = _word_context(current_text, buffer_start_idx, len(buffer_chars))
-            word_context_value = ''
+            word_context_value = ""
             normalized_fragment = fragment_text.strip()
             normalized_context = context_word.strip()
             if (
@@ -2313,15 +2444,17 @@ def _diff_docx_formatting(
                 word_context_value = context_word
             char_changes.append(
                 {
-                    'text': fragment_text,
-                    'paragraph_index': buffer_para,
-                    'before_attrs': buffer_before or {},
-                    'after_attrs': buffer_after or {},
-                    'order': buffer_order
-                    if buffer_order is not None
-                    else fallback_seed + len(char_changes),
-                    'word_context': word_context_value,
-                    'segments': [fragment_text],
+                    "text": fragment_text,
+                    "paragraph_index": buffer_para,
+                    "before_attrs": buffer_before or {},
+                    "after_attrs": buffer_after or {},
+                    "order": (
+                        buffer_order
+                        if buffer_order is not None
+                        else fallback_seed + len(char_changes)
+                    ),
+                    "word_context": word_context_value,
+                    "segments": [fragment_text],
                 }
             )
             buffer_chars = []
@@ -2332,20 +2465,20 @@ def _diff_docx_formatting(
             buffer_start_idx = None
 
         for idx, (before_span, after_span) in enumerate(zip(base_spans, current_spans)):
-            if before_span['char'] != after_span['char']:
+            if before_span["char"] != after_span["char"]:
                 _flush_buffer()
                 return []
 
-            before_snapshot = before_span.get('snapshot') or {}
-            after_snapshot = after_span.get('snapshot') or {}
+            before_snapshot = before_span.get("snapshot") or {}
+            after_snapshot = after_span.get("snapshot") or {}
 
             if before_snapshot == after_snapshot:
                 _flush_buffer()
                 continue
 
-            paragraph_index = after_span.get('paragraph_index')
-            run_index = after_span.get('run_index')
-            char_offset = after_span.get('char_offset', 0)
+            paragraph_index = after_span.get("paragraph_index")
+            run_index = after_span.get("run_index")
+            char_offset = after_span.get("char_offset", 0)
             char_order = _doc_position_order(
                 paragraph_index, run_index, char_offset, fallback=fallback_seed + idx
             )
@@ -2367,7 +2500,7 @@ def _diff_docx_formatting(
             else:
                 buffer_order = max(buffer_order or 0, char_order)
 
-            buffer_chars.append(after_span['char'])
+            buffer_chars.append(after_span["char"])
 
         _flush_buffer()
         return char_changes
@@ -2379,49 +2512,49 @@ def _diff_docx_formatting(
 
     for tag, i1, i2, j1, j2 in matcher.get_opcodes():
         pairs: list[tuple[int, int]] = []
-        if tag == 'equal':
+        if tag == "equal":
             pairs = list(zip(range(i1, i2), range(j1, j2)))
-        elif tag == 'replace' and (i2 - i1) == (j2 - j1):
+        elif tag == "replace" and (i2 - i1) == (j2 - j1):
             for bi, cj in zip(range(i1, i2), range(j1, j2)):
-                if (baseline_runs[bi].get('text') or '') == (current_runs[cj].get('text') or ''):
+                if (baseline_runs[bi].get("text") or "") == (current_runs[cj].get("text") or ""):
                     pairs.append((bi, cj))
         if pairs:
             for bi, cj in pairs:
                 before_run = baseline_runs[bi]
                 after_run = current_runs[cj]
-                before_snapshot = _style_snapshot(before_run.get('styles', {}))
-                after_snapshot = _style_snapshot(after_run.get('styles', {}))
+                before_snapshot = _style_snapshot(before_run.get("styles", {}))
+                after_snapshot = _style_snapshot(after_run.get("styles", {}))
                 if before_snapshot != after_snapshot:
-                    text_span = after_run.get('text') or before_run.get('text') or ''
-                    current_text = after_run.get('text') or text_span or ''
+                    text_span = after_run.get("text") or before_run.get("text") or ""
+                    current_text = after_run.get("text") or text_span or ""
                     char_len = len(current_text)
                     char_offset = char_len - 1 if char_len > 0 else 0
-                    word_context = ''
+                    word_context = ""
                     order_value = _doc_position_order(
-                        after_run.get('paragraph_index'),
-                        after_run.get('run_index'),
+                        after_run.get("paragraph_index"),
+                        after_run.get("run_index"),
                         char_offset,
                         fallback=len(changes),
                     )
                     changes.append(
                         {
-                            'text': text_span,
-                            'paragraph_index': after_run.get('paragraph_index'),
-                            'before_attrs': before_snapshot,
-                            'after_attrs': after_snapshot,
-                            'order': order_value,
-                            'word_context': word_context,
-                            'segments': [text_span],
+                            "text": text_span,
+                            "paragraph_index": after_run.get("paragraph_index"),
+                            "before_attrs": before_snapshot,
+                            "after_attrs": after_snapshot,
+                            "order": order_value,
+                            "word_context": word_context,
+                            "segments": [text_span],
                         }
                     )
             continue
 
-        if tag == 'replace':
+        if tag == "replace":
             # Check if text content changed (not just formatting)
-            base_text = ''.join(run.get('text') or '' for run in baseline_runs[i1:i2])
-            current_text = ''.join(run.get('text') or '' for run in current_runs[j1:j2])
+            base_text = "".join(run.get("text") or "" for run in baseline_runs[i1:i2])
+            current_text = "".join(run.get("text") or "" for run in current_runs[j1:j2])
             text_changed = base_text != current_text
-            
+
             # Try character-level changes (only works when text is identical)
             char_changes = _char_level_changes(
                 baseline_runs[i1:i2], current_runs[j1:j2], fallback_seed=len(changes)
@@ -2433,14 +2566,14 @@ def _diff_docx_formatting(
                 # Compare formatting of baseline vs current runs
                 # Only report formatting if text also changed (otherwise it's handled above)
                 for base_run, curr_run in zip(baseline_runs[i1:i2], current_runs[j1:j2]):
-                    before_snapshot = _style_snapshot(base_run.get('styles', {}))
-                    after_snapshot = _style_snapshot(curr_run.get('styles', {}))
+                    before_snapshot = _style_snapshot(base_run.get("styles", {}))
+                    after_snapshot = _style_snapshot(curr_run.get("styles", {}))
                     if before_snapshot != after_snapshot:
                         # Formatting changed alongside text change
                         # Use current text and mark that text also changed
-                        para_idx = curr_run.get('paragraph_index')
-                        run_idx = curr_run.get('run_index')
-                        curr_text = curr_run.get('text') or ''
+                        para_idx = curr_run.get("paragraph_index")
+                        run_idx = curr_run.get("run_index")
+                        curr_text = curr_run.get("text") or ""
                         if curr_text:
                             char_len = len(curr_text)
                             char_offset = char_len - 1 if char_len > 0 else 0
@@ -2450,68 +2583,68 @@ def _diff_docx_formatting(
                             )
                             changes.append(
                                 {
-                                    'text': curr_text,
-                                    'paragraph_index': para_idx,
-                                    'before_attrs': before_snapshot,
-                                    'after_attrs': after_snapshot,
-                                    'order': order_value,
-                                    'word_context': '',
-                                    'has_text_changes': True,  # Flag indicating text also changed
-                                    'segments': [curr_text],
+                                    "text": curr_text,
+                                    "paragraph_index": para_idx,
+                                    "before_attrs": before_snapshot,
+                                    "after_attrs": after_snapshot,
+                                    "order": order_value,
+                                    "word_context": "",
+                                    "has_text_changes": True,  # Flag indicating text also changed
+                                    "segments": [curr_text],
                                 }
                             )
     for change in changes:
-        before_snapshot = change.get('before_attrs') or {}
-        after_snapshot = change.get('after_attrs') or {}
-        change['delta_signature'] = _formatting_delta_signature(before_snapshot, after_snapshot)
+        before_snapshot = change.get("before_attrs") or {}
+        after_snapshot = change.get("after_attrs") or {}
+        change["delta_signature"] = _formatting_delta_signature(before_snapshot, after_snapshot)
 
     merged: list[dict[str, Any]] = []
     for change in changes:
-        text = change.get('text') or ''
-        sig = change.get('delta_signature')
+        text = change.get("text") or ""
+        sig = change.get("delta_signature")
         same_group = (
             merged
-            and merged[-1].get('paragraph_index') == change.get('paragraph_index')
-            and merged[-1].get('delta_signature') == sig
+            and merged[-1].get("paragraph_index") == change.get("paragraph_index")
+            and merged[-1].get("delta_signature") == sig
         )
         if text.strip():
             if same_group:
-                merged[-1]['text'] = (merged[-1].get('text') or '') + text
-                merged[-1]['order'] = max(merged[-1].get('order', 0), change.get('order', 0))
-                if change.get('word_context') and not merged[-1].get('word_context'):
-                    merged[-1]['word_context'] = change.get('word_context')
-                incoming_segments = change.get('segments') or ([text] if text else [])
+                merged[-1]["text"] = (merged[-1].get("text") or "") + text
+                merged[-1]["order"] = max(merged[-1].get("order", 0), change.get("order", 0))
+                if change.get("word_context") and not merged[-1].get("word_context"):
+                    merged[-1]["word_context"] = change.get("word_context")
+                incoming_segments = change.get("segments") or ([text] if text else [])
                 if incoming_segments:
-                    existing_segments = list(merged[-1].get('segments') or [])
+                    existing_segments = list(merged[-1].get("segments") or [])
                     existing_segments.extend(incoming_segments)
-                    merged[-1]['segments'] = existing_segments
+                    merged[-1]["segments"] = existing_segments
             else:
                 new_change = dict(change)
-                incoming_segments = change.get('segments')
+                incoming_segments = change.get("segments")
                 if incoming_segments is None:
                     incoming_segments = [text] if text else []
                 else:
                     incoming_segments = list(incoming_segments)
-                new_change['segments'] = incoming_segments
+                new_change["segments"] = incoming_segments
                 merged.append(new_change)
         else:
             if same_group:
-                merged[-1]['text'] = (merged[-1].get('text') or '') + text
+                merged[-1]["text"] = (merged[-1].get("text") or "") + text
 
     def _build_paragraph_text_map(runs: list[dict[str, Any]]) -> dict[Any, str]:
         """Group consecutive run text into full paragraph strings."""
         paragraphs: dict[Any, list[str]] = {}
         for run in runs:
-            para_idx = run.get('paragraph_index')
+            para_idx = run.get("paragraph_index")
             if para_idx is None:
                 continue
-            run_text = run.get('text') or ''
+            run_text = run.get("text") or ""
             if not run_text:
                 continue
             if para_idx not in paragraphs:
                 paragraphs[para_idx] = []
             paragraphs[para_idx].append(run_text)
-        return {idx: ''.join(parts) for idx, parts in paragraphs.items()}
+        return {idx: "".join(parts) for idx, parts in paragraphs.items()}
 
     baseline_paragraph_texts = _build_paragraph_text_map(baseline_runs)
     current_paragraph_texts = _build_paragraph_text_map(current_runs)
@@ -2520,70 +2653,76 @@ def _diff_docx_formatting(
     def _get_full_paragraph_text(para_idx: Any) -> str:
         """Extract complete text from all runs in a paragraph"""
         if para_idx is None:
-            return ''
-        return current_paragraph_texts.get(para_idx, '')
-    
-    grouped: OrderedDict[
-        tuple[Any, tuple[tuple[str, Any, Any], ...]], dict[str, Any]
-    ] = OrderedDict()
+            return ""
+        return current_paragraph_texts.get(para_idx, "")
+
+    grouped: OrderedDict[tuple[Any, tuple[tuple[str, Any, Any], ...]], dict[str, Any]] = (
+        OrderedDict()
+    )
     for change in merged:
-        key = (change.get('paragraph_index'), change.get('delta_signature'))
+        para_idx = change.get("paragraph_index")
+        delta_sig = change.get("delta_signature")
+        # Skip changes with None keys - they can't be grouped properly
+        if para_idx is None or delta_sig is None:
+            continue
+        key = (para_idx, delta_sig)
         if key not in grouped:
             grouped_entry = dict(change)
-            grouped_entry['segments'] = list(change.get('segments') or [])
+            grouped_entry["segments"] = list(change.get("segments") or [])
             grouped[key] = grouped_entry
         else:
             # Concatenate text from all changes with same formatting - ensure we preserve all text
-            existing_text = grouped[key].get('text') or ''
-            new_text = change.get('text') or ''
+            existing_text = grouped[key].get("text") or ""
+            new_text = change.get("text") or ""
             # Simple concatenation - the merging phase should have already captured all relevant text
-            grouped[key]['text'] = existing_text + new_text
+            grouped[key]["text"] = existing_text + new_text
             # Use max to ensure we get the highest (newest) order value
-            grouped[key]['order'] = max(grouped[key].get('order', 0), change.get('order', 0))
+            grouped[key]["order"] = max(grouped[key].get("order", 0), change.get("order", 0))
             # Preserve has_text_changes flag if either change has it
-            if change.get('has_text_changes'):
-                grouped[key]['has_text_changes'] = True
-            if change.get('word_context') and not grouped[key].get('word_context'):
-                grouped[key]['word_context'] = change.get('word_context')
-            existing_segments = list(grouped[key].get('segments') or [])
-            incoming_segments = change.get('segments') or []
+            if change.get("has_text_changes"):
+                grouped[key]["has_text_changes"] = True
+            if change.get("word_context") and not grouped[key].get("word_context"):
+                grouped[key]["word_context"] = change.get("word_context")
+            existing_segments = list(grouped[key].get("segments") or [])
+            incoming_segments = change.get("segments") or []
             if incoming_segments:
                 existing_segments.extend(incoming_segments)
-                grouped[key]['segments'] = existing_segments
-    
+                grouped[key]["segments"] = existing_segments
+
     # For each change, decide if the paragraph's text actually changed and sync the sentence output.
     for change in grouped.values():
-        para_idx = change.get('paragraph_index')
+        para_idx = change.get("paragraph_index")
         current_para_text = _get_full_paragraph_text(para_idx)
         baseline_para_text = (
-            baseline_paragraph_texts.get(para_idx, '') if para_idx is not None else ''
+            baseline_paragraph_texts.get(para_idx, "") if para_idx is not None else ""
         )
-        
+
         # Normalize both texts for comparison (strip and normalize whitespace)
         # Only consider it a text change if the normalized content actually differs
-        current_normalized = ' '.join(current_para_text.split()) if current_para_text else ''
-        baseline_normalized = ' '.join(baseline_para_text.split()) if baseline_para_text else ''
-        
+        current_normalized = " ".join(current_para_text.split()) if current_para_text else ""
+        baseline_normalized = " ".join(baseline_para_text.split()) if baseline_para_text else ""
+
         # Only set has_text_changes if the actual text content changed (not just formatting)
         has_actual_text_changes = current_normalized != baseline_normalized
-        
+
         if has_actual_text_changes:
             # Use the full current paragraph text to show exactly what's in the document now
-            change['text'] = current_para_text
-            change['has_text_changes'] = True
-            change['segments'] = [current_para_text]
+            change["text"] = current_para_text
+            change["has_text_changes"] = True
+            change["segments"] = [current_para_text]
         else:
-            change['has_text_changes'] = False
-            if 'segments' not in change:
-                change['segments'] = [change.get('text', '')] if change.get('text') else []
+            change["has_text_changes"] = False
+            if "segments" not in change:
+                change["segments"] = [change.get("text", "")] if change.get("text") else []
 
     result = [
-        {k: v for k, v in change.items() if k != 'delta_signature'}
+        {k: v for k, v in change.items() if k != "delta_signature"}
         for change in grouped.values()
-        if (change.get('text') or '').strip()
+        if (change.get("text") or "").strip()
     ]
-    result.sort(key=lambda ch: ch.get('order', 0), reverse=True)
+    result.sort(key=lambda ch: ch.get("order", 0), reverse=True)
     return result
+
 
 # extract readable text from Office documents for diff viewing
 def _extract_text_from_office_doc(path: str) -> tuple[str | None, str]:
@@ -2620,8 +2759,8 @@ def _extract_text_from_office_doc(path: str) -> tuple[str | None, str]:
                             # preserve whitespace (Tab, Enter) by checking for <w:br/> and <w:tab/>
                             text_runs = re.findall(r"<w:t[^>]*>([^<]+)</w:t>", para)
                             # check for line breaks and tabs
-                            has_break = re.search(r"<w:br[^>]*/>", para)
-                            has_tab = re.search(r"<w:tab[^>]*/>", para)
+                            has_break: bool = bool(re.search(r"<w:br[^>]*/>", para))
+                            has_tab: bool = bool(re.search(r"<w:tab[^>]*/>", para))
 
                             if text_runs:
                                 # join text runs within a paragraph (preserves formatting within para)
@@ -2721,18 +2860,22 @@ def _extract_text_from_office_doc(path: str) -> tuple[str | None, str]:
                         try:
                             slide_xml = zf.read(slide_file).decode("utf-8", errors="replace")
                             slide_num = slide_file.split("/")[-1].replace(".xml", "")
-                            
+
                             # Extract paragraphs from slide (a:p tags) - same structure as DOCX
                             paragraphs = re.findall(r"<a:p[^>]*>(.*?)</a:p>", slide_xml, re.DOTALL)
-                            
+
                             if paragraphs:
                                 para_texts = []
                                 for para in paragraphs:
                                     # Extract all text runs within this paragraph (a:r tags with a:t)
-                                    text_runs = re.findall(r"<a:r[^>]*>.*?<a:t[^>]*>([^<]+)</a:t>.*?</a:r>", para, re.DOTALL)
+                                    text_runs = re.findall(
+                                        r"<a:r[^>]*>.*?<a:t[^>]*>([^<]+)</a:t>.*?</a:r>",
+                                        para,
+                                        re.DOTALL,
+                                    )
                                     # Also check for line breaks in PowerPoint (a:br tags)
                                     has_break = bool(re.search(r"<a:br[^>]*/>", para))
-                                    
+
                                     if text_runs:
                                         # Join text runs within a paragraph (preserves structure)
                                         para_text = "".join(html.unescape(t) for t in text_runs)
@@ -2741,7 +2884,7 @@ def _extract_text_from_office_doc(path: str) -> tuple[str | None, str]:
                                             para_text = para_text + "\n"
                                         if para_text.strip() or has_break:
                                             para_texts.append(para_text)
-                                
+
                                 if para_texts:
                                     # Join paragraphs with newlines to preserve structure (like DOCX)
                                     text = "\n".join(para_texts)
@@ -2792,7 +2935,7 @@ def _compute_char_diff(
 
     when word_level=True, groups changes by words for better readability.
     uses normalization to handle Unicode punctuation variants (curly vs straight apostrophes).
-    
+
     automatically uses character-level diffing for:
     - JSON files (detected by file_path ending in .json)
     - Lines without meaningful word boundaries (no spaces or very dense content)
@@ -2805,23 +2948,23 @@ def _compute_char_diff(
 
     # detect if we should use character-level diffing
     use_char_level = False
-    
+
     # check if file is JSON
     if file_path and file_path.lower().endswith(".json"):
         use_char_level = True
     elif word_level:
         # check if lines lack meaningful word boundaries
         # if a line has no spaces or very few spaces relative to its length, use character-level diffing
-        old_has_spaces = ' ' in old_line or '\t' in old_line
-        new_has_spaces = ' ' in new_line or '\t' in new_line
-        
+        old_has_spaces = " " in old_line or "\t" in old_line
+        new_has_spaces = " " in new_line or "\t" in new_line
+
         # if neither line has spaces, or if the line is long and has very few spaces, use character-level
         if not old_has_spaces and not new_has_spaces:
             use_char_level = True
         elif len(old_line) > 20 or len(new_line) > 20:
             # for longer lines, check if spaces are sparse (less than 1 space per 20 chars)
-            old_space_ratio = (old_line.count(' ') + old_line.count('\t')) / max(len(old_line), 1)
-            new_space_ratio = (new_line.count(' ') + new_line.count('\t')) / max(len(new_line), 1)
+            old_space_ratio = (old_line.count(" ") + old_line.count("\t")) / max(len(old_line), 1)
+            new_space_ratio = (new_line.count(" ") + new_line.count("\t")) / max(len(new_line), 1)
             if old_space_ratio < 0.05 and new_space_ratio < 0.05:
                 use_char_level = True
 
@@ -2929,7 +3072,9 @@ def _compute_char_diff(
 
 # compute line-by-line diff with character-level highlighting for modified lines
 # two-stage approach: Stage A (line anchors) + Stage B (word-level within changed lines)
-def _compute_line_diff(old_lines: list[str], new_lines: list[str], file_path: str | None = None) -> list[dict[str, Any]]:
+def _compute_line_diff(
+    old_lines: list[str], new_lines: list[str], file_path: str | None = None
+) -> list[dict[str, Any]]:
     """
     compute a line-by-line diff with character-level highlighting for modified lines.
     uses two-stage approach:
@@ -2939,7 +3084,7 @@ def _compute_line_diff(old_lines: list[str], new_lines: list[str], file_path: st
 
     returns a list of diff segments with type: 'equal', 'added', 'removed', 'modified'
     for modified lines, includes character-level differences.
-    
+
     :param old_lines: baseline lines
     :param new_lines: current lines
     :param file_path: optional file path for file type detection (e.g., JSON files use character-level diffing)
@@ -2975,7 +3120,7 @@ def _compute_line_diff(old_lines: list[str], new_lines: list[str], file_path: st
             # BUT: if a line is truly deleted (doesn't appear anywhere), it must still be shown
             deleted_lines = old_lines[i1:i2]
             deleted_normalized = old_normalized[i1:i2]
-            
+
             # Check if any of the deleted lines appear anywhere in new_lines
             # If they do, they're just shifted, not truly deleted
             # If they don't appear anywhere, they're truly deleted and must be shown
@@ -2995,7 +3140,7 @@ def _compute_line_diff(old_lines: list[str], new_lines: list[str], file_path: st
                     # Must show it in baseline with red/strikethrough
                     truly_deleted.append(deleted_lines[del_idx])
                     truly_deleted_indices.append(i1 + del_idx)
-            
+
             # Always show truly deleted lines (even if empty list, the check above ensures we only add truly deleted)
             if truly_deleted:
                 diff_segments.append(
@@ -3014,7 +3159,7 @@ def _compute_line_diff(old_lines: list[str], new_lines: list[str], file_path: st
             # BUT: if a line is truly added (doesn't appear anywhere), it must still be shown
             inserted_lines = new_lines[j1:j2]
             inserted_normalized = new_normalized[j1:j2]
-            
+
             # Check if any of the inserted lines appear anywhere in old_lines
             # If they do, they're just shifted, not truly added
             # If they don't appear anywhere, they're truly added and must be shown
@@ -3033,7 +3178,7 @@ def _compute_line_diff(old_lines: list[str], new_lines: list[str], file_path: st
                     # This line doesn't appear anywhere in old_lines, so it's truly added
                     truly_added.append(inserted_lines[ins_idx])
                     truly_added_indices.append(j1 + ins_idx)
-            
+
             # Always show truly added lines (even if empty list, the check above ensures we only add truly added)
             if truly_added:
                 # For PDFs: create separate segments for each added line to properly count and display them
@@ -3125,9 +3270,14 @@ def _compute_line_diff(old_lines: list[str], new_lines: list[str], file_path: st
                             # Check if old_line appears as a prefix of new_line
                             # and new_line has additional content after it
                             # Works for any content: "123" in "123456", "abc" in "abcdef", etc.
-                            if old_stripped and new_stripped and new_stripped.startswith(old_stripped) and len(new_stripped) > len(old_stripped):
+                            if (
+                                old_stripped
+                                and new_stripped
+                                and new_stripped.startswith(old_stripped)
+                                and len(new_stripped) > len(old_stripped)
+                            ):
                                 # Extract remaining content after the old_line prefix
-                                remaining = new_stripped[len(old_stripped):].lstrip()
+                                remaining = new_stripped[len(old_stripped) :].lstrip()
                                 # Treat as removal if there's any remaining non-whitespace content
                                 # This works for numbers, letters, symbols, anything
                                 if remaining and remaining.strip():
@@ -3146,7 +3296,11 @@ def _compute_line_diff(old_lines: list[str], new_lines: list[str], file_path: st
                                     # The frontend will display removed and added segments on separate rows
                                     # For PDFs, split on spaces to separate different text boxes (e.g., "polar @ 22")
                                     # First split by newlines, then by spaces within each line
-                                    remaining_lines = [line.strip() for line in remaining.split("\n") if line.strip()]
+                                    remaining_lines = [
+                                        line.strip()
+                                        for line in remaining.split("\n")
+                                        if line.strip()
+                                    ]
                                     if remaining_lines:
                                         # Add each remaining line as a separate "added" segment
                                         # For PDFs, further split each line on spaces to separate text boxes
@@ -3154,7 +3308,11 @@ def _compute_line_diff(old_lines: list[str], new_lines: list[str], file_path: st
                                         for rem_line in remaining_lines:
                                             # Split on spaces for PDFs to separate different text boxes
                                             # Reverse the order so parts appear in the correct sequence (last part first)
-                                            parts = [part.strip() for part in rem_line.split() if part.strip()]
+                                            parts = [
+                                                part.strip()
+                                                for part in rem_line.split()
+                                                if part.strip()
+                                            ]
                                             if len(parts) > 1:
                                                 # Multiple parts - reverse order and create separate segments for each
                                                 parts = list(reversed(parts))
@@ -3162,8 +3320,16 @@ def _compute_line_diff(old_lines: list[str], new_lines: list[str], file_path: st
                                                     diff_segments.append(
                                                         {
                                                             "type": "added",
-                                                            "new_start": j1 + line_idx + 1 + rem_line_idx + part_idx,
-                                                            "new_end": j1 + line_idx + 1 + rem_line_idx + part_idx,
+                                                            "new_start": j1
+                                                            + line_idx
+                                                            + 1
+                                                            + rem_line_idx
+                                                            + part_idx,
+                                                            "new_end": j1
+                                                            + line_idx
+                                                            + 1
+                                                            + rem_line_idx
+                                                            + part_idx,
                                                             "old_lines": [],
                                                             "new_lines": [part],
                                                         }
@@ -3174,7 +3340,10 @@ def _compute_line_diff(old_lines: list[str], new_lines: list[str], file_path: st
                                                 diff_segments.append(
                                                     {
                                                         "type": "added",
-                                                        "new_start": j1 + line_idx + 1 + rem_line_idx,
+                                                        "new_start": j1
+                                                        + line_idx
+                                                        + 1
+                                                        + rem_line_idx,
                                                         "new_end": j1 + line_idx + 1 + rem_line_idx,
                                                         "old_lines": [],
                                                         "new_lines": [rem_line],
@@ -3184,7 +3353,11 @@ def _compute_line_diff(old_lines: list[str], new_lines: list[str], file_path: st
                                     else:
                                         # Single remaining content - split on spaces for PDFs
                                         # Reverse the order so parts appear in the correct sequence (last part first)
-                                        parts = [part.strip() for part in remaining.split() if part.strip()]
+                                        parts = [
+                                            part.strip()
+                                            for part in remaining.split()
+                                            if part.strip()
+                                        ]
                                         if len(parts) > 1:
                                             # Multiple parts - reverse order and create separate segments for each
                                             parts = list(reversed(parts))
@@ -3210,7 +3383,7 @@ def _compute_line_diff(old_lines: list[str], new_lines: list[str], file_path: st
                                                 }
                                             )
                                     continue
-                        
+
                         # lines are different - use appropriate diff level (word or character)
                         # character-level diffing is automatically used for JSON files and lines without word boundaries
                         old_parts, new_parts = _compute_char_diff(
@@ -3588,34 +3761,37 @@ def _maybe_prune_baselines() -> None:
 
 
 # ---------------- Flask app build ----------------
-# build the Flask application with all routes and event processing logic
+# Build the Flask application with all routes and event processing logic
+# This is where all the API endpoints get registered and the app gets configured
 def build_app(event_bus) -> Flask:
     app = Flask(__name__)
 
-    # configure session security (httpOnly, sameSite, secure when HTTPS)
-    # sessions are NOT persistent - cookies expire when browser closes (session-only)
-    # combine the base secret with a per-run session key to invalidate old sessions on program restart
-    # this ensures users must login again each time the program launches
+    # Configure session security - httpOnly prevents XSS, sameSite prevents CSRF
+    # Sessions are NOT persistent - cookies expire when browser closes (session-only)
+    # We combine the base secret with a per-run session key to invalidate old sessions
+    # This means users have to log in again each time the program restarts
     # SESSION_SECRET is guaranteed to be str after validation in auth.py
     assert SESSION_SECRET is not None
     app.secret_key = SESSION_SECRET + _current_session_key
     app.config["SESSION_COOKIE_HTTPONLY"] = True  # prevent XSS attacks
     app.config["SESSION_COOKIE_SAMESITE"] = "Lax"  # CSRF protection
-    # secure cookies only over HTTPS (default to False for localhost, set to True in production with HTTPS)
-    # check if we're running on HTTPS by examining the host config or environment
+    # Secure cookies only over HTTPS (default False for localhost, True in production)
+    # Check if we're running on HTTPS via environment variable
     app.config["SESSION_COOKIE_SECURE"] = os.getenv("CUSTOSEYE_HTTPS", "false").lower() in (
         "true",
         "1",
         "yes",
     )
-    # session cookies expire when browser closes (non-persistent sessions)
-    # do not set PERMANENT_SESSION_LIFETIME - sessions will be session-only by default
+    # Session cookies expire when browser closes (non-persistent sessions)
+    # Don't set PERMANENT_SESSION_LIFETIME - sessions are session-only by default
     app.config["SESSION_COOKIE_NAME"] = "custoseye_session"  # custom session cookie name
 
-    # make sure our iterator type is clear for mypy
+    # Get an iterator for pulling events from the bus
+    # Type annotation helps mypy understand what we're working with
     _iter: Iterator[dict[str, Any]] = _bus_iterator(event_bus)
 
-    # publisher helper used to push live events immediately (for integrity events from API calls)
+    # Publisher helper - pushes live events immediately to the bus
+    # Used for integrity events from API calls so they show up right away
     def _publish(ev: dict[str, Any]) -> None:
         try:
             if hasattr(event_bus, "publish"):
@@ -3627,12 +3803,13 @@ def build_app(event_bus) -> Flask:
             # never break the request on failed publish
             pass
 
-    # emit an integrity event to the live event stream (for manual hash operations)
+    # Emit an integrity event to the live event stream
+    # Used when user manually hashes a file - makes the result show up in live events
     def _emit_integrity_event(path: str, status: str, rule: str) -> None:
         """
-        push an integrity-related event into the live event stream.
-        used by /api/integrity/hash so that users see CHANGED/OK immediately.
-        skips emitting events for OK statuses (baseline updated/deletion accepted)
+        Pushes an integrity-related event into the live event stream.
+        Used by /api/integrity/hash so users see CHANGED/OK immediately.
+        Skips emitting events for OK statuses (baseline updated/deletion accepted)
         since we update the existing CRITICAL entry instead.
         """
         s = (status or "").upper()
@@ -3659,7 +3836,8 @@ def build_app(event_bus) -> Flask:
         }
         _publish(ev)
 
-    # static asset routes (favicon and touch icons for web UI)
+    # Static asset routes - serve favicon and touch icons for the web UI
+    # These make the browser show our icon in tabs and bookmarks
     @app.get("/favicon.ico")
     def favicon():
         return app.send_static_file("assets/favicon.ico")
@@ -3676,7 +3854,9 @@ def build_app(event_bus) -> Flask:
     def apple_touch_icon():
         return app.send_static_file("assets/apple-touch-icon.png")
 
-    # main event processing pipeline: drain events from bus, process them, and add to buffer
+    # Main event processing pipeline - this is the heart of the dashboard
+    # Drains events from the bus, processes them (rules, trust scoring), deduplicates, and adds to buffer
+    # Called by API endpoints to make sure we have fresh data before responding
     def drain_into_buffer() -> int:
         with _DRAIN_LOCK:
             _maybe_reload_rules()
@@ -4035,14 +4215,15 @@ def build_app(event_bus) -> Flask:
         resp.headers["Content-Disposition"] = 'attachment; filename="custoseye_export.csv"'
         return resp
 
-    # process tree API: return the process tree built from process events
+    # Process tree API - returns the process tree built from process events
+    # The tree shows parent-child relationships between processes with trust verdicts
     @app.get("/api/proctree")
     @require_auth
     def proctree():
         """
-        return the compact process tree.
+        Returns the compact process tree.
 
-        query params:
+        Query params:
           as=json  -> download pretty JSON (custoseye_proctree.json)
           (none)   -> return JSON to the browser (not as attachment)
         """
@@ -4083,7 +4264,8 @@ def build_app(event_bus) -> Flask:
         # default inline JSON
         return jsonify(tree)
 
-    # about endpoint: return version and build info from VERSION.txt
+    # About endpoint - returns version and build info from VERSION.txt
+    # Shows in the About tab so users know what version they're running
     @app.get("/api/about")
     @require_auth
     def about():
@@ -4107,21 +4289,23 @@ def build_app(event_bus) -> Flask:
 
         # ---------------- integrity endpoints ----------------
 
-    # integrity targets API: get the watch list
+    # Integrity targets API - get the watch list
+    # Returns all files currently being monitored for changes
     @app.get("/api/integrity/targets")
     @require_auth
     def api_integrity_targets_get():
-        # return normalized list
+        # Return normalized list
         return jsonify(_read_integrity_targets())
 
-    # integrity targets API: add or update a file on the watch list
+    # Integrity targets API - add or update a file on the watch list
+    # When you add a file, it automatically computes the baseline if using sha256 rule
     @app.post("/api/integrity/targets")
     @require_auth
     def api_integrity_targets_post():
         """
-        body: { path, rule, note? }
-        rule: "sha256" | "mtime+size"
-        behavior: if rule == "sha256" and no baseline stored yet, auto-hash now to set baseline.
+        Body: { path, rule, note? }
+        Rule: "sha256" | "mtime+size"
+        Behavior: if rule == "sha256" and no baseline stored yet, auto-hash now to set baseline.
         """
         try:
             body: dict[str, Any] = cast(dict[str, Any], request.get_json(force=True) or {})
@@ -4443,7 +4627,7 @@ def build_app(event_bus) -> Flask:
             # get file modification time for last edit tracking
             file_stat = os.stat(norm_path)
             last_edited_at = int(file_stat.st_mtime)
-            
+
             # get first edit time from baseline_blob.created_at
             baseline_blob = target.get("baseline_blob")
             first_edited_at = None
@@ -4648,11 +4832,11 @@ def build_app(event_bus) -> Flask:
                             else []
                         )
                         images_current = _extract_images_from_pdf(path)
-                        
+
                         # For PDFs: Use hash/position-based matching (similar to non-.docx Office docs)
                         RESIZE_TOLERANCE_PX = 1  # pixel tolerance
                         RESIZE_TOLERANCE_PCT = 0.01  # 1% tolerance
-                        
+
                         baseline_img_map = {img["hash"]: img for img in images_baseline}
                         current_img_map = {img["hash"]: img for img in images_current}
                         baseline_hashes = set(baseline_img_map.keys())
@@ -4685,12 +4869,12 @@ def build_app(event_bus) -> Flask:
                         for img_hash in common_hashes:
                             baseline_img = baseline_img_map[img_hash]
                             current_img = current_img_map[img_hash]
-                            
+
                             baseline_width = baseline_img.get("width")
                             baseline_height = baseline_img.get("height")
                             current_width = current_img.get("width")
                             current_height = current_img.get("height")
-                            
+
                             if (
                                 baseline_width is not None
                                 and baseline_height is not None
@@ -4705,7 +4889,7 @@ def build_app(event_bus) -> Flask:
                                 height_pct_diff = (
                                     height_diff / baseline_height if baseline_height > 0 else 0
                                 )
-                                
+
                                 is_resized = (
                                     width_diff > RESIZE_TOLERANCE_PX
                                     or width_pct_diff > RESIZE_TOLERANCE_PCT
@@ -4713,7 +4897,7 @@ def build_app(event_bus) -> Flask:
                                     height_diff > RESIZE_TOLERANCE_PX
                                     or height_pct_diff > RESIZE_TOLERANCE_PCT
                                 )
-                                
+
                                 if is_resized:
                                     image_changes.append(
                                         {
@@ -4739,29 +4923,33 @@ def build_app(event_bus) -> Flask:
                         # For .docx files, use position-based matching to accurately identify which image changed
                         # For other file types, use hash/name-based matching
                         is_docx = (path or "").lower().endswith(".docx")
-                        
+
                         RESIZE_TOLERANCE_PX = 1  # pixel tolerance
                         RESIZE_TOLERANCE_PCT = 0.01  # 1% tolerance
-                        
+
                         if is_docx:
                             # For .docx: Use a more robust matching strategy
                             # Relationship IDs can change when Word regenerates the document
                             # So we need to match by hash + position, accounting for deletions
-                            
+
                             # Build maps by relationship ID (try this first, but it may not work if IDs changed)
                             baseline_by_rel_id = {}
                             current_by_rel_id = {}
-                            
+
                             # Build maps by hash
                             baseline_by_hash = {}
                             current_by_hash = {}
-                            
+
                             # Sort images by position for ordered matching
-                            baseline_sorted = sorted([img for img in images_baseline if img.get("position") is not None], 
-                                                   key=lambda x: x.get("position", 999999))
-                            current_sorted = sorted([img for img in images_current if img.get("position") is not None],
-                                                  key=lambda x: x.get("position", 999999))
-                            
+                            baseline_sorted = sorted(
+                                [img for img in images_baseline if img.get("position") is not None],
+                                key=lambda x: x.get("position", 999999),
+                            )
+                            current_sorted = sorted(
+                                [img for img in images_current if img.get("position") is not None],
+                                key=lambda x: x.get("position", 999999),
+                            )
+
                             for img in images_baseline:
                                 rel_id = img.get("rel_id")
                                 if rel_id:
@@ -4771,7 +4959,7 @@ def build_app(event_bus) -> Flask:
                                     if img_hash not in baseline_by_hash:
                                         baseline_by_hash[img_hash] = []
                                     baseline_by_hash[img_hash].append(img)
-                            
+
                             for img in images_current:
                                 rel_id = img.get("rel_id")
                                 if rel_id:
@@ -4781,28 +4969,30 @@ def build_app(event_bus) -> Flask:
                                     if img_hash not in current_by_hash:
                                         current_by_hash[img_hash] = []
                                     current_by_hash[img_hash].append(img)
-                            
+
                             # Track which images we've already processed
-                            processed_baseline = set()  # Track by ("rel_id", rel_id) or ("hash_pos", hash, pos) or index
+                            processed_baseline = (
+                                set()
+                            )  # Track by ("rel_id", rel_id) or ("hash_pos", hash, pos) or index
                             processed_current = set()
-                            
+
                             # First pass: Match by relationship ID (most reliable when it works)
                             baseline_rel_ids = set(baseline_by_rel_id.keys())
                             current_rel_ids = set(current_by_rel_id.keys())
-                            
+
                             common_rel_ids = baseline_rel_ids & current_rel_ids
                             for rel_id in common_rel_ids:
                                 baseline_img = baseline_by_rel_id[rel_id]
                                 current_img = current_by_rel_id[rel_id]
-                                
+
                                 processed_baseline.add(("rel_id", rel_id))
                                 processed_current.add(("rel_id", rel_id))
-                                
+
                                 baseline_width = baseline_img.get("width")
                                 baseline_height = baseline_img.get("height")
                                 current_width = current_img.get("width")
                                 current_height = current_img.get("height")
-                                
+
                                 # Check if dimensions changed beyond tolerance
                                 if (
                                     baseline_width is not None
@@ -4818,7 +5008,7 @@ def build_app(event_bus) -> Flask:
                                     height_pct_diff = (
                                         height_diff / baseline_height if baseline_height > 0 else 0
                                     )
-                                    
+
                                     is_resized = (
                                         width_diff > RESIZE_TOLERANCE_PX
                                         or width_pct_diff > RESIZE_TOLERANCE_PCT
@@ -4826,7 +5016,7 @@ def build_app(event_bus) -> Flask:
                                         height_diff > RESIZE_TOLERANCE_PX
                                         or height_pct_diff > RESIZE_TOLERANCE_PCT
                                     )
-                                    
+
                                     if is_resized:
                                         image_changes.append(
                                             {
@@ -4839,32 +5029,40 @@ def build_app(event_bus) -> Flask:
                                                 "type": "image",
                                             }
                                         )
-                            
+
                             # Second pass: Match by hash + ordered position (accounting for deletions)
                             # Only match if hash AND dimensions are the same (within tolerance)
                             # This prevents false resizes when images shift positions
                             baseline_idx = 0
                             current_idx = 0
-                            
+
                             # Track which specific images have been matched (by index to avoid duplicates)
                             matched_baseline_indices = set()
                             matched_current_indices = set()
-                            
-                            while baseline_idx < len(baseline_sorted) and current_idx < len(current_sorted):
+
+                            while baseline_idx < len(baseline_sorted) and current_idx < len(
+                                current_sorted
+                            ):
                                 baseline_img = baseline_sorted[baseline_idx]
                                 current_img = current_sorted[current_idx]
-                                
+
                                 baseline_rel_id = baseline_img.get("rel_id")
                                 current_rel_id = current_img.get("rel_id")
-                                
+
                                 # Skip if already processed by relationship ID
-                                if baseline_rel_id and ("rel_id", baseline_rel_id) in processed_baseline:
+                                if (
+                                    baseline_rel_id
+                                    and ("rel_id", baseline_rel_id) in processed_baseline
+                                ):
                                     baseline_idx += 1
                                     continue
-                                if current_rel_id and ("rel_id", current_rel_id) in processed_current:
+                                if (
+                                    current_rel_id
+                                    and ("rel_id", current_rel_id) in processed_current
+                                ):
                                     current_idx += 1
                                     continue
-                                
+
                                 # Skip if already matched in this pass
                                 if baseline_idx in matched_baseline_indices:
                                     baseline_idx += 1
@@ -4872,21 +5070,21 @@ def build_app(event_bus) -> Flask:
                                 if current_idx in matched_current_indices:
                                     current_idx += 1
                                     continue
-                                
+
                                 baseline_hash = baseline_img.get("hash")
                                 current_hash = current_img.get("hash")
-                                
+
                                 # If hashes match, check if dimensions are the same (within tolerance)
                                 if baseline_hash and current_hash and baseline_hash == current_hash:
                                     baseline_width = baseline_img.get("width")
                                     baseline_height = baseline_img.get("height")
                                     current_width = current_img.get("width")
                                     current_height = current_img.get("height")
-                                    
+
                                     # Check dimensions
                                     dimensions_match = False
                                     is_resized = False
-                                    
+
                                     if (
                                         baseline_width is not None
                                         and baseline_height is not None
@@ -4899,9 +5097,11 @@ def build_app(event_bus) -> Flask:
                                             width_diff / baseline_width if baseline_width > 0 else 0
                                         )
                                         height_pct_diff = (
-                                            height_diff / baseline_height if baseline_height > 0 else 0
+                                            height_diff / baseline_height
+                                            if baseline_height > 0
+                                            else 0
                                         )
-                                        
+
                                         # Dimensions match if within tolerance
                                         dimensions_match = (
                                             width_diff <= RESIZE_TOLERANCE_PX
@@ -4909,7 +5109,7 @@ def build_app(event_bus) -> Flask:
                                             and height_diff <= RESIZE_TOLERANCE_PX
                                             and height_pct_diff <= RESIZE_TOLERANCE_PCT
                                         )
-                                        
+
                                         # Resized if beyond tolerance
                                         is_resized = (
                                             width_diff > RESIZE_TOLERANCE_PX
@@ -4918,26 +5118,30 @@ def build_app(event_bus) -> Flask:
                                             height_diff > RESIZE_TOLERANCE_PX
                                             or height_pct_diff > RESIZE_TOLERANCE_PCT
                                         )
-                                    
+
                                     # Only match if dimensions are the same OR if resized (same image, different size)
                                     if dimensions_match or is_resized:
                                         # Mark as processed
                                         baseline_pos = baseline_img.get("position")
                                         current_pos = current_img.get("position")
-                                        
+
                                         if baseline_rel_id:
                                             processed_baseline.add(("rel_id", baseline_rel_id))
                                         elif baseline_pos is not None:
-                                            processed_baseline.add(("hash_pos", baseline_hash, baseline_pos))
-                                        
+                                            processed_baseline.add(
+                                                ("hash_pos", baseline_hash, baseline_pos)
+                                            )
+
                                         if current_rel_id:
                                             processed_current.add(("rel_id", current_rel_id))
                                         elif current_pos is not None:
-                                            processed_current.add(("hash_pos", current_hash, current_pos))
-                                        
+                                            processed_current.add(
+                                                ("hash_pos", current_hash, current_pos)
+                                            )
+
                                         matched_baseline_indices.add(baseline_idx)
                                         matched_current_indices.add(current_idx)
-                                        
+
                                         # Report resize if dimensions changed
                                         if is_resized:
                                             image_changes.append(
@@ -4951,7 +5155,7 @@ def build_app(event_bus) -> Flask:
                                                     "type": "image",
                                                 }
                                             )
-                                        
+
                                         # Both matched, advance both
                                         baseline_idx += 1
                                         current_idx += 1
@@ -4969,20 +5173,25 @@ def build_app(event_bus) -> Flask:
                                     # Advance the one with lower position (earlier in document)
                                     baseline_pos = baseline_img.get("position", 999999)
                                     current_pos = current_img.get("position", 999999)
-                                    
+
                                     if baseline_pos < current_pos:
                                         # Baseline image was deleted
                                         baseline_idx += 1
                                     else:
                                         # Current image was added
                                         current_idx += 1
-                            
+
                             # Mark remaining baseline images as removed (only if not already matched)
                             while baseline_idx < len(baseline_sorted):
                                 baseline_img = baseline_sorted[baseline_idx]
                                 baseline_rel_id = baseline_img.get("rel_id")
-                                if (not (baseline_rel_id and ("rel_id", baseline_rel_id) in processed_baseline) and
-                                    baseline_idx not in matched_baseline_indices):
+                                if (
+                                    not (
+                                        baseline_rel_id
+                                        and ("rel_id", baseline_rel_id) in processed_baseline
+                                    )
+                                    and baseline_idx not in matched_baseline_indices
+                                ):
                                     image_changes.append(
                                         {
                                             "change": "removed",
@@ -4991,13 +5200,18 @@ def build_app(event_bus) -> Flask:
                                         }
                                     )
                                 baseline_idx += 1
-                            
+
                             # Mark remaining current images as added (only if not already matched)
                             while current_idx < len(current_sorted):
                                 current_img = current_sorted[current_idx]
                                 current_rel_id = current_img.get("rel_id")
-                                if (not (current_rel_id and ("rel_id", current_rel_id) in processed_current) and
-                                    current_idx not in matched_current_indices):
+                                if (
+                                    not (
+                                        current_rel_id
+                                        and ("rel_id", current_rel_id) in processed_current
+                                    )
+                                    and current_idx not in matched_current_indices
+                                ):
                                     image_changes.append(
                                         {
                                             "change": "added",
@@ -5006,11 +5220,15 @@ def build_app(event_bus) -> Flask:
                                         }
                                     )
                                 current_idx += 1
-                            
+
                             # Also handle images without position info (fallback)
-                            baseline_no_pos = [img for img in images_baseline if img.get("position") is None]
-                            current_no_pos = [img for img in images_current if img.get("position") is None]
-                            
+                            baseline_no_pos = [
+                                img for img in images_baseline if img.get("position") is None
+                            ]
+                            current_no_pos = [
+                                img for img in images_current if img.get("position") is None
+                            ]
+
                             for img in baseline_no_pos:
                                 rel_id = img.get("rel_id")
                                 if not (rel_id and ("rel_id", rel_id) in processed_baseline):
@@ -5021,7 +5239,7 @@ def build_app(event_bus) -> Flask:
                                             "type": "image",
                                         }
                                     )
-                            
+
                             for img in current_no_pos:
                                 rel_id = img.get("rel_id")
                                 if not (rel_id and ("rel_id", rel_id) in processed_current):
@@ -5032,7 +5250,7 @@ def build_app(event_bus) -> Flask:
                                             "type": "image",
                                         }
                                     )
-                            
+
                             # Sort image changes: newest first (by position descending, then by change type)
                             # Resized/added/removed should show newest (highest position) at top
                             def sort_key(change):
@@ -5040,9 +5258,11 @@ def build_app(event_bus) -> Flask:
                                 pos = img.get("position", -1)
                                 change_type = change.get("change", "")
                                 # Order: resized > added > removed (for same position)
-                                type_order = {"resized": 3, "added": 2, "removed": 1}.get(change_type, 0)
+                                type_order = {"resized": 3, "added": 2, "removed": 1}.get(
+                                    change_type, 0
+                                )
                                 return (-pos, -type_order)  # Negative for descending
-                            
+
                             image_changes.sort(key=sort_key)
                         else:
                             # For non-.docx Office files (PPTX, XLSX): Use hash/name-based matching (existing logic)
@@ -5080,16 +5300,16 @@ def build_app(event_bus) -> Flask:
                             # Check for resizes by comparing images with same hash
                             common_hashes = baseline_hashes & current_hashes
                             processed_resize_hashes = set()
-                            
+
                             for img_hash in common_hashes:
                                 baseline_img = baseline_img_map[img_hash]
                                 current_img = current_img_map[img_hash]
-                                
+
                                 baseline_width = baseline_img.get("width")
                                 baseline_height = baseline_img.get("height")
                                 current_width = current_img.get("width")
                                 current_height = current_img.get("height")
-                                
+
                                 if (
                                     baseline_width is not None
                                     and baseline_height is not None
@@ -5104,7 +5324,7 @@ def build_app(event_bus) -> Flask:
                                     height_pct_diff = (
                                         height_diff / baseline_height if baseline_height > 0 else 0
                                     )
-                                    
+
                                     is_resized = (
                                         width_diff > RESIZE_TOLERANCE_PX
                                         or width_pct_diff > RESIZE_TOLERANCE_PCT
@@ -5112,7 +5332,7 @@ def build_app(event_bus) -> Flask:
                                         height_diff > RESIZE_TOLERANCE_PX
                                         or height_pct_diff > RESIZE_TOLERANCE_PCT
                                     )
-                                    
+
                                     if is_resized:
                                         processed_resize_hashes.add(img_hash)
                                         image_changes.append(
@@ -5126,7 +5346,7 @@ def build_app(event_bus) -> Flask:
                                                 "type": "image",
                                             }
                                         )
-                            
+
                             # Also check by name for cases where hash might differ but it's the same image renamed
                             common_names = set(baseline_img_by_name.keys()) & set(
                                 current_img_by_name.keys()
@@ -5179,9 +5399,9 @@ def build_app(event_bus) -> Flask:
                                         )
                                 # also check if hash is same but dimensions are missing in one version
                                 elif baseline_img.get("hash") == current_img.get("hash"):
-                                    if (baseline_width is not None or baseline_height is not None) and (
-                                        current_width is not None or current_height is not None
-                                    ):
+                                    if (
+                                        baseline_width is not None or baseline_height is not None
+                                    ) and (current_width is not None or current_height is not None):
                                         if (
                                             baseline_width is not None
                                             and baseline_height is not None
@@ -5191,7 +5411,9 @@ def build_app(event_bus) -> Flask:
                                             width_diff = abs(current_width - baseline_width)
                                             height_diff = abs(current_height - baseline_height)
                                             width_pct_diff = (
-                                                width_diff / baseline_width if baseline_width > 0 else 0
+                                                width_diff / baseline_width
+                                                if baseline_width > 0
+                                                else 0
                                             )
                                             height_pct_diff = (
                                                 height_diff / baseline_height
@@ -5218,7 +5440,9 @@ def build_app(event_bus) -> Flask:
                                                         "new_width": current_width,
                                                         "new_height": current_height,
                                                         "type": "image",
-                                                        "slide_number": img_data.get("slide_number"),
+                                                        "slide_number": img_data.get(
+                                                            "slide_number"
+                                                        ),
                                                     }
                                                 )
                                         else:
@@ -5237,16 +5461,18 @@ def build_app(event_bus) -> Flask:
                                                         "type": "image",
                                                     }
                                                 )
-                            
+
                             # Sort image changes: newest first (by position/slide descending, then by change type)
                             def sort_key_non_docx(change):
                                 img = change.get("image", {})
                                 # For PPTX, use slide_number; for others, use position or hash as fallback
                                 pos = img.get("slide_number") or img.get("position", -1)
                                 change_type = change.get("change", "")
-                                type_order = {"resized": 3, "added": 2, "removed": 1}.get(change_type, 0)
+                                type_order = {"resized": 3, "added": 2, "removed": 1}.get(
+                                    change_type, 0
+                                )
                                 return (-pos, -type_order)  # Negative for descending
-                            
+
                             image_changes.sort(key=sort_key_non_docx)
 
                         # prepare formatting deltas for Office documents
@@ -5515,13 +5741,14 @@ def build_app(event_bus) -> Flask:
         except Exception as e:
             return jsonify({"ok": False, "error": str(e)}), 500
 
-    # integrity baseline download API: download stored baseline snapshot file
+    # Integrity baseline download API - download stored baseline snapshot file
+    # Lets users download the original baseline file to compare with current version
     @app.get("/api/integrity/baseline/download")
     @require_auth
     def api_integrity_baseline_download():
         """
-        download the stored baseline blob for a given path, if present and valid.
-        query: ?path=<watch-list path>
+        Downloads the stored baseline blob for a given path, if present and valid.
+        Query: ?path=<watch-list path>
         """
         try:
             path = (request.args.get("path") or "").strip()
@@ -5548,14 +5775,16 @@ def build_app(event_bus) -> Flask:
         except Exception as e:
             return jsonify({"ok": False, "error": str(e)}), 500
 
-    # integrity browse API: Windows-only file picker dialog for selecting files to watch
+    # Integrity browse API - Windows-only file picker dialog for selecting files to watch
+    # Uses tkinter to show a native Windows file dialog
+    # Only works on Windows, returns error on other platforms
     @app.post("/api/integrity/browse")
     @require_auth
     def api_integrity_browse():
         """
-        windows-only file picker via tkinter. returns {"path": "..."} or {} if cancelled.
-        we keep it very small and guarded. it will no-op on non-Windows.
-        sets app icon and enables DPI awareness for crisp rendering.
+        Windows-only file picker via tkinter. Returns {"path": "..."} or {} if cancelled.
+        We keep it very small and guarded. It will no-op on non-Windows.
+        Sets app icon and enables DPI awareness for crisp rendering.
         """
         try:
             if sys.platform != "win32":
@@ -5611,11 +5840,13 @@ def build_app(event_bus) -> Flask:
     return app
 
 
-# global shutdown flag for graceful shutdown
+# Global shutdown flag for graceful shutdown
+# Used to signal that the app should stop accepting new requests
 _shutdown_requested = False
 
 
-# run the dashboard: start the Flask app with optional Waitress server
+# Run the dashboard - start the Flask app with optional Waitress server
+# Waitress is a production WSGI server, way better than Flask's dev server
 def run_dashboard(event_bus) -> None:
     global _shutdown_requested
     app = build_app(event_bus)
@@ -5641,10 +5872,11 @@ def run_dashboard(event_bus) -> None:
             pass  # expected when shutting down
 
 
-# standalone mode (optional): if you run "python -m dashboard.app"
-# creates a minimal event bus and starts agents + dashboard for testing
+# Standalone mode - if you run "python -m dashboard.app" directly
+# Creates a minimal event bus and starts agents + dashboard for testing
+# Useful for development and testing without the full console app
 if __name__ == "__main__":
-    # minimal pub/sub bus for standalone dashboard
+    # Minimal pub/sub bus for standalone dashboard
     import queue
 
     class FanoutEventBus:

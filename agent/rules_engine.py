@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """
 goal: evaluates JSON-defined rules against events to determine alert level and reason. loads rules from
 a JSON file and matches events based on various criteria like source type, process names, executable

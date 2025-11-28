@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """
 goal: periodically scans network connections on the system and publishes snapshots of listening ports
 and remote endpoints. Uses psutil to get system-wide network state and publishes compact events

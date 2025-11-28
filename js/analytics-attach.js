@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 // js/analytics-attach.js
 // goal: loads Google Analytics 4 only after user consent, tracks file downloads, and shows
 //       a private debug badge with GitHub release download stats when ?debug=1 is in the URL.

@@ -1,7 +1,13 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 <!--
-  goal: CustosEye dashboard, a single-page web application for viewing live security events, process tree, and file integrity monitoring.
-  contains all HTML, CSS, and JavaScript inline. polls the backend API for events and renders them in real-time.
-  supports tabs for Live Events, Process Tree, Integrity monitoring, and About page.
+  CustosEye dashboard - single-page web app for monitoring system security
+  This file contains everything: HTML structure, CSS styles, and JavaScript logic all inline
+  Main features:
+  - Live Events tab: real-time stream of security events (process, network, integrity) with filtering and export
+  - Process Tree tab: hierarchical view of running processes with trust verdicts and CSC classifications
+  - Integrity tab: file change monitoring with diff viewer, supports SHA-256 and mtime+size rules
+  - About tab: version info and system stats
+  The app polls the backend API continuously and caches data in sessionStorage for instant display
 -->
 <!doctype html>
 <html lang="en">
@@ -14,10 +20,10 @@
   <link rel="icon" type="image/png" sizes="16x16" href="/static/assets/favicon-16x16.png?v=2">
   <link rel="apple-touch-icon" href="/static/assets/apple-touch-icon.png?v=2">
   <link rel="preload" href="/static/assets/logo_warning.svg" as="image" type="image/svg+xml">
-  <link rel="preload" href="/static/assets/goodbye.svg" as="image" type="image/svg+xml">
   <link rel="preload" href="/static/assets/logo.svg" as="image" type="image/svg+xml">
   <style>
-    /* CSS styles: theme variables, layout, and component styling */
+    /* CSS theme variables - define colors and spacing used throughout the app */
+    /* Dark theme is default, light theme kicks in via media query if user prefers it */
     :root {
       --bg:#0b0f14; --panel:#141a22; --text:#e7eef7; --muted:#9ab;
       --chip-info:#2a6df1; --chip-warning:#e6a700; --chip-critical:#d43c3c; --chip-border:rgba(255,255,255,0.2);
@@ -34,14 +40,23 @@
         --tab:#f1f4f8; --tabOn:#e5ebf3;
       }
     }
+    /* Reset box-sizing so padding doesn't break layouts */
     * { box-sizing: border-box; }
+    
+    /* Base body styles - sets up the dark theme background and readable font */
     body { margin:0; background:var(--bg); color:var(--text); font:14px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial; }
+    
+    /* Sticky header stays at top when scrolling, has blur effect for modern look */
     header { position:sticky; top:0; z-index:5; backdrop-filter: blur(6px); background:linear-gradient(180deg,rgba(0,0,0,0.2),transparent); border-bottom:1px solid var(--border); }
+    
+    /* Main content wrapper - centers content and limits max width for readability */
     .wrap { max-width:1100px; margin:0 auto; padding:16px; }
+    
+    /* Title and subtitle styles for section headers */
     .title { display:flex; align-items:center; gap:10px; margin:4px 0 10px; font-weight:700; letter-spacing:.2px; font-size:18px; }
     .subtitle { color:var(--muted); font-size:12px; }
     
-    /* Header brand styling */
+    /* Header brand area - logo and title group at top left */
     .header-brand {
       display: flex;
       align-items: center;
@@ -76,7 +91,10 @@
       font-weight: 400;
       letter-spacing: 0.2px;
     }
+    /* Panel container - rounded card style used for content sections */
     .panel { background:var(--panel); border:1px solid var(--border); border-radius:12px; padding:12px; box-shadow:0 6px 20px rgba(0,0,0,0.15); }
+    
+    /* Tab navigation - horizontal row of clickable tabs */
     .tabs { 
       display:flex; 
       gap:10px; 
@@ -113,6 +131,8 @@
       transform:translateY(-1px);
       box-shadow:0 3px 10px color-mix(in oklab, var(--accent) 25%, transparent);
     }
+    
+    /* Controls bar - contains filter chips, search input, and action buttons */
     .controls { 
       display:flex; 
       flex-wrap:wrap; 
@@ -124,6 +144,8 @@
       border-radius:12px; 
       box-shadow:0 2px 8px rgba(0,0,0,0.08);
     }
+    /* Filter chip buttons - used for level filters (Info/Warning/Critical) and pause toggle */
+    /* These are pill-shaped buttons that can be toggled on/off */
     .chip { 
       display:inline-flex; 
       align-items:center; 
@@ -159,10 +181,13 @@
       border-radius:999px; 
       box-shadow:0 0 0 2px rgba(255,255,255,0.3) inset;
     }
+    /* Colored dots inside chips - visual indicator for each level type */
     .chip.info .dot { background:var(--chip-info); }
     .chip.warning .dot { background:var(--chip-warning); }
     .chip.critical .dot { background:var(--chip-critical); }
     .chip.ok .dot { background:var(--ok); }
+    
+    /* Text input fields - search box and form inputs */
     .input { 
       background:var(--input); 
       border:1px solid var(--border); 
@@ -178,6 +203,8 @@
       border-color:var(--accent);
       box-shadow:0 0 0 3px color-mix(in oklab, var(--accent) 15%, transparent);
     }
+    
+    /* Action buttons - primary buttons for actions like Export, Refresh, Save */
     .btn { 
       background:var(--accent); 
       color:white; 
@@ -198,6 +225,8 @@
       transform:translateY(0);
       box-shadow:0 1px 2px rgba(0,0,0,0.1);
     }
+    
+    /* Controls group - groups related controls with a visual separator */
     .controls-group {
       display:flex;
       gap:10px;
@@ -209,6 +238,8 @@
       border-left:none;
       padding-left:0;
     }
+    
+    /* Event list container - holds all the event rows, shows loading state when updating */
     .list { 
       margin-top:16px; 
       background:var(--panel);
@@ -218,7 +249,10 @@
       box-shadow:0 2px 8px rgba(0,0,0,0.08);
       transition:opacity 0.2s ease-in-out; 
     }
+    /* Dim the list slightly when data is being refreshed */
     .list.updating { opacity:0.7; }
+    
+    /* Event row - each row shows one security event with level badge, timestamp, and details */
     .row { 
       display:grid; 
       grid-template-columns:108px 100px 1fr; 
@@ -280,14 +314,17 @@
       background: color-mix(in oklab, var(--chip-critical) 18%, transparent);
       border-color: color-mix(in oklab, var(--chip-critical) 30%, transparent);
     }
+    
+    /* Utility classes for text styling */
     .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace; font-size:12px; }
     .muted { color:var(--muted); }
     .count { font-weight:600; }
     .nowrap { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-    /* event content: allows wrapping with proper line spacing and word breaking for long text */
+    
+    /* Event content area - allows long text to wrap properly instead of overflowing */
     .event-content { overflow-wrap: anywhere; word-break: break-word; white-space: normal; line-height: 1.5; }
 
-    /* process tree */
+    /* Process Tree tab styles */
     .tree { margin-top:12px; }
     .treebar { 
       display:flex; 
@@ -332,6 +369,8 @@
       transform:translateY(0);
       box-shadow:0 1px 2px rgba(0,0,0,0.1);
     }
+    
+    /* Treebar group - groups related buttons with separator */
     .treebar-group {
       display:flex;
       gap:8px;
@@ -343,6 +382,8 @@
       border-left:none;
       padding-left:0;
     }
+    
+    /* Trust level pill - shows trust verdict (low/medium/high) for processes */
     .pill { 
       display:inline-block; 
       padding:4px 10px; 
@@ -368,6 +409,8 @@
       background:color-mix(in oklab, var(--trust-high) 12%, transparent);
       border-color: color-mix(in oklab, var(--trust-high) 50%, var(--border)); 
     }
+    
+    /* Process tree root container - holds the hierarchical process tree */
     #treeRoot {
       background:var(--panel);
       border:1px solid var(--border);
@@ -375,6 +418,8 @@
       padding:16px;
       box-shadow:0 2px 8px rgba(0,0,0,0.08);
     }
+    
+    /* Tree node - each process in the tree, can be expanded/collapsed */
     .tree-node {
       margin:6px 0;
       padding:10px 12px;
@@ -388,6 +433,8 @@
       border-color:color-mix(in oklab, var(--accent) 30%, var(--border));
       box-shadow:0 2px 6px rgba(0,0,0,0.1);
     }
+    
+    /* Tree node leaf - child processes indented under parent */
     .tree-node-leaf {
       margin:6px 0 6px 20px;
       padding:10px 12px;
@@ -400,6 +447,8 @@
       background:color-mix(in oklab, var(--accent) 5%, var(--rowAlt));
       border-color:color-mix(in oklab, var(--accent) 30%, var(--border));
     }
+    
+    /* Details element - native HTML collapsible sections used for tree nodes */
     details { 
       margin:6px 0;
     }
@@ -428,7 +477,10 @@
     details > summary > * {
       flex-shrink:0;
     }
+    /* Hide default browser disclosure triangle */
     summary::-webkit-details-marker { display:none; }
+    
+    /* Custom caret icon - shows expand/collapse state for tree nodes */
     .caret { 
       display:inline-flex;
       align-items:center;
@@ -469,7 +521,7 @@
       border-left:2px solid color-mix(in oklab, var(--accent) 20%, var(--border));
     }
 
-    /* integrity tab */
+    /* Integrity tab styles - file monitoring interface */
     .grid { display:grid; gap:16px; grid-template-columns: 1fr; }
     .card { 
       background:var(--panel); 
@@ -478,12 +530,17 @@
       padding:16px; 
       box-shadow: 0 1px 3px rgba(0,0,0,0.05);
     }
+    
+    /* Table styles - used for integrity targets list */
     .tbl { 
       width:100%; 
       border-collapse: separate; 
       border-spacing: 0;
     }
-    .tbl tbody tr:last-child td { border-bottom:none; } /* avoid a double line */
+    /* Remove bottom border from last row to avoid double line */
+    .tbl tbody tr:last-child td { border-bottom:none; }
+    
+    /* Table header cells */
     .tbl th { 
       padding:12px 10px; 
       border-bottom:2px solid var(--border); 
@@ -496,6 +553,8 @@
       letter-spacing:0.5px;
       font-size:11px;
     }
+    
+    /* Table data cells */
     .tbl td { 
       padding:14px 10px; 
       border-bottom:1px solid color-mix(in oklab, var(--border) 50%, transparent); 
@@ -506,6 +565,8 @@
     .tbl tbody tr:hover td {
       background:color-mix(in oklab, var(--accent) 3%, transparent);
     }
+    
+    /* Status badge - shows integrity check result (OK/WARN/CHANGED/ERR) */
     .badge { 
       display:inline-block; 
       padding:5px 12px; 
@@ -536,7 +597,8 @@
       background:color-mix(in oklab, var(--bad) 12%, transparent);
       border-color: color-mix(in oklab, var(--bad) 40%, var(--border)); 
     }
-    /* Special styling for CHANGED badge - balanced padding for centered text */
+    
+    /* CHANGED badge gets extra padding for better visual balance */
     .badge.bad.changed {
       padding: 5px 14px;
       text-align: center;
@@ -1213,36 +1275,49 @@
   </div>
 
   <script>
-    /* JavaScript: application state, rendering, and API polling */
+    /* JavaScript: main application logic
+     * Handles state management, rendering, API polling, and user interactions
+     * All tabs share the same data cache but only render when active
+     */
     
-    // application state: current tab, filter settings, search query, etc
+    // Application state - tracks current tab, filter settings, search queries, etc
+    // This object is the single source of truth for UI state
     const state = { tab:"live", levels:{info:true,warning:true,critical:true}, paused:false, q:"", timer:null, forceCollapsed:false,treeQ:"" };
-    // sync initial from buttons (prevents drift)
+    // Sync initial filter state from HTML buttons to prevent state drift
+    // Reads the data-on attributes from the filter chips and syncs to state object
     document.querySelectorAll('#bar-live .chip[data-level]').forEach(btn => {
       const lvl = btn.getAttribute('data-level');
       const on  = btn.getAttribute('data-on') === 'true';
       state.levels[lvl] = on;
     });
-    // reflect pressed state for screen readers
+    
+    // Set ARIA pressed state for screen readers - tells assistive tech which filters are active
     document.querySelectorAll('#bar-live .chip[data-level]').forEach(btn => {
       const on = btn.getAttribute('data-on') === 'true';
       btn.setAttribute('aria-pressed', on ? 'true' : 'false');
     });
 
+    // DOM element references - cache these for performance
     const listEl = document.getElementById('live'), searchEl = document.getElementById('search');
     const countEl = document.getElementById('count'), totalEl = document.getElementById('total');
     const pauseBtn = document.getElementById('pause'), pauseText = document.getElementById('pauseText');
-    // on init
+    
+    // Restore pause state from localStorage on page load
+    // This way if user refreshes, their pause preference is remembered
     const savedPaused = localStorage.getItem('custoseye.paused');
     if (savedPaused !== null) state.paused = savedPaused === 'true';
     pauseBtn.setAttribute('data-on', state.paused ? 'true' : 'false');
     pauseText.textContent = state.paused ? 'Paused' : 'Live';
 
+    // More DOM references for other tabs
     const treeEl = document.getElementById('treeRoot'), aboutEl = document.getElementById('about');
 
-    // preserve which process tree nodes are expanded when refreshing
+    // Track which process tree nodes are expanded - preserves state when tree refreshes
+    // Uses a Set to store unique keys for each expanded node
     const openKeys = new Set();
 
+    // Capture which tree nodes are currently expanded before re-rendering
+    // Scans all details elements and saves their keys if they're open
     function captureOpenKeys() {
     openKeys.clear();
     document.querySelectorAll('#treeRoot details[data-k]').forEach(d => {
@@ -1250,12 +1325,16 @@
     });
     }
 
+    // Restore expanded state after re-rendering the tree
+    // Re-opens any nodes that were open before the refresh
     function restoreOpenKeys() {
     document.querySelectorAll('#treeRoot details[data-k]').forEach(d => {
         if (openKeys.has(d.dataset.k)) d.setAttribute('open', '');
     });
     }
 
+    // Listen for expand/collapse events on tree nodes to keep openKeys in sync
+    // When user manually expands/collapses, update our tracking set
     document.getElementById('treeRoot').addEventListener('toggle', (e) => {
     const d = e.target;
     if (d.tagName !== 'DETAILS') return;
@@ -1264,7 +1343,7 @@
     if (d.open) openKeys.add(k); else openKeys.delete(k);
     });
 
-    // integrity monitoring UI element references
+    // Integrity tab UI element references - all the form inputs and buttons
     const iBar = document.getElementById('bar-integrity');
     const iPath = document.getElementById('i-path');
     const iRule = document.getElementById('i-rule');
@@ -1276,11 +1355,11 @@
     const iPreview = document.getElementById('i-preview');
     const iTbody = document.getElementById('i-tbody');
 
-    // tab switching: show/hide panels and restore saved tab selection
+    // Tab navigation setup - handles switching between Live Events, Process Tree, Integrity, About
     const tabs = [...document.querySelectorAll('.tab')];
     const tablist = document.querySelector('.tabs');
     
-    // function to sync ARIA attributes for accessibility
+    // Sync ARIA attributes for screen readers - tells assistive tech which tab is active
     function syncTabAttrs(){
       tabs.forEach(tab=>{
         const on = tab.classList.contains('on');
@@ -1291,7 +1370,8 @@
       });
     }
     
-    // tab click handler: switches between tabs
+    // Main tab switching function - shows the selected tab and hides others
+    // Also saves the selection to localStorage and triggers rendering
     function switchTab(t) {
         document.querySelectorAll('.tab').forEach(x => x.classList.remove('on'));
         t.classList.add('on'); 
@@ -1306,14 +1386,15 @@
 
         if (state.tab === 'integrity') loadTargets();
 
-        // render from caches; background poller keeps data fresh
+        // Render the active tab using cached data - background poller keeps it fresh
         renderActive();
         
-        // update ARIA attributes after tab switch
+        // Update ARIA attributes after tab switch for screen readers
         syncTabAttrs();
     }
     
-    // set up tab accessibility and keyboard navigation
+    // Set up keyboard navigation and accessibility for tabs
+    // Handles arrow keys to move between tabs, Enter/Space to activate
     function setupTabsA11y(){
       tablist.setAttribute('role','tablist');
       
@@ -1353,7 +1434,8 @@
     const savedTab = localStorage.getItem('custoseye.tab');
     if (savedTab) document.querySelector(`.tab[data-tab="${savedTab}"]`)?.click();
 
-    // live events filter buttons: toggle info/warning/critical visibility
+    // Filter chip buttons - clicking toggles visibility of that event level
+    // Updates state and re-renders the filtered list
     document.querySelectorAll('#bar-live .chip[data-level]').forEach(btn => {
       btn.addEventListener('click', () => {
         const lvl = btn.getAttribute('data-level');
@@ -1367,7 +1449,8 @@
       });
     });
 
-    // pause/resume button: stops or resumes background polling
+    // Pause/resume button - stops or starts the background polling loop
+    // Saves preference to localStorage so it persists across page refreshes
     pauseBtn.addEventListener('click', () => {
       state.paused = !state.paused;
       localStorage.setItem('custoseye.paused', String(state.paused));
@@ -1375,7 +1458,8 @@
       pauseText.textContent = state.paused ? 'Paused' : 'Live';
     });
 
-    // search input: filter events by text search with debouncing
+    // Search input with debouncing - waits 120ms after user stops typing before filtering
+    // This prevents filtering on every keystroke which would be slow
     function debounce(fn, ms){ let h; return (...a)=>{ clearTimeout(h); h=setTimeout(()=>fn(...a), ms); }; }
     searchEl.addEventListener('input', debounce(e => {
       state.q = e.target.value.toLowerCase().trim();
@@ -1385,7 +1469,8 @@
     }, 120));
     document.getElementById('refresh').addEventListener('click', fetchData);
 
-    // export button: download filtered events as CSV or JSON
+    // Export button - downloads the currently filtered events in chosen format
+    // Respects current level filters and search query
     document.getElementById('export').addEventListener('click', () => {
       const fmt = document.getElementById('exportFmt')?.value || 'csv';
       const includeInfo = '1';
@@ -1395,9 +1480,11 @@
       window.location.href = url;
     });
 
-    function safe(v){ return esc(v ?? ''); }   // reused escape from about tab
+    // Helper to safely escape values for display (prevents XSS)
+    function safe(v){ return esc(v ?? ''); }
 
-    // render a single event row in the live events list
+    // Render a single event row - converts event object to HTML
+    // Shows level badge, timestamp, reason, source, and process info
     function row(ev) {
       const lvl   = (ev.level || 'info').toLowerCase();
       const reason= esc(ev.reason || 'event');
@@ -1420,8 +1507,8 @@
         ? `path=${nameOrPath}`
         : `pid=${pid} name=${nameOrPath}`;
 
-      // Check if this event was accepted (marked safe) or hash verified
-      // Accepted events have the acceptance text appended to the reason with a checkmark
+      // Check if this event was marked as safe by the user
+      // Accepted events show a checkmark and green text to indicate they're intentional
       const isAccepted = ev.accepted === true || (reason.includes('✔ Marked Safe')) || (reason.includes('✔ Hash verified'));
       
       // Parse the reason to separate the original reason from the acceptance text
@@ -1453,7 +1540,8 @@
         </div>`;
     }
 
-    // simple hash function for quick data comparison
+    // Simple hash function - creates a string representation of data for comparison
+    // Used to detect if events have actually changed before re-rendering (performance optimization)
     function hashData(data) {
       if (!Array.isArray(data)) return JSON.stringify(data);
       // for events, create a hash based on key fields that matter
@@ -1462,25 +1550,32 @@
       }).join('||');
     }
     
+    // Main render function for live events - filters by level and search query
+    // Only re-renders if data actually changed (performance optimization)
     function render(data) {
+    // First filter by level (info/warning/critical) based on active filter chips
     const byLevel = data.filter(ev => state.levels[(ev.level || 'info').toLowerCase()]);
     const q = state.q;
+    
+    // Then filter by search query if one is active
+    // Searches across reason, source, name, pid, path, cmdline, and CSC fields
     const byQuery = q ? byLevel.filter(ev => {
         // include CSC fields (csc_verdict, csc_class, csc_confidence) in search
         const s = (ev.reason||'')+' '+(ev.source||'')+' '+(ev.name||'')+' '+(ev.pid||'')+' '+(ev.path||'')+' '+(ev.cmdline||'')+' '+(ev.csc_verdict||'')+' '+(ev.csc_class||'')+' '+(ev.csc_confidence||'');
         return s.toLowerCase().includes(q);
     }) : byLevel;
 
-    // check if data has actually changed by comparing hash
+    // Performance optimization: check if data actually changed before re-rendering
+    // Compares hash of current filtered data vs last rendered data
     const currentHash = hashData(byQuery);
     const lastHash = __lastRenderedEvents ? hashData(__lastRenderedEvents) : null;
     
-    // only update if data has changed
+    // Skip rendering if nothing changed - saves CPU and prevents flicker
     if (currentHash === lastHash && __lastRenderedEvents) {
       return; // data hasn't changed, skip rendering
     }
     
-    // store current filtered data for next comparison
+    // Store current filtered data for next comparison
     __lastRenderedEvents = byQuery;
 
     const prevCount = countEl.textContent;
@@ -1501,7 +1596,8 @@
     }
     }
 
-    // fetch events and other data from the backend API
+    // Fetch events from backend API - called by polling loop and refresh button
+    // Updates the global __data cache and triggers rendering if live tab is active
     async function fetchData() {
       try {
         const includeInfo = '1';
@@ -1545,7 +1641,8 @@
       }
     }
 
-      // tooltip manager: shows helpful hints when hovering over UI elements
+      // Tooltip system - shows helpful hints when hovering or focusing elements with data-tip
+      // Uses event delegation for performance and handles positioning automatically
   (function () {
     const TOOLTIP_ATTR = 'data-tip';
     let tipEl = null;
@@ -3103,18 +3200,21 @@
       return summaryHTML + `<div class="small">No differences found.</div>`;
     }
 
-  // background caches: store API data so all tabs stay fresh even when not visible
+  // Background data caches - store API responses so all tabs have fresh data
+  // Even when a tab isn't visible, we keep its data updated in the background
   let __events = [];
   let __tree = [];
   let __targets = [];
   let __about = null;
   
-  // store last rendered data to detect changes and avoid unnecessary re-renders
+  // Last rendered data snapshots - used to detect if data actually changed
+  // Prevents unnecessary re-renders when nothing has changed (performance optimization)
   let __lastRenderedEvents = null;
   let __lastRenderedTargets = null;
   let __lastRenderedTree = null;
 
-  // cache data in sessionStorage for instant display when navigating back
+  // Save data to sessionStorage - allows instant display when user refreshes page
+  // Data persists for the browser session but clears when tab closes
   function saveDataCache() {
     try {
       sessionStorage.setItem('custoseye.events', JSON.stringify(__events));
@@ -3128,7 +3228,8 @@
     }
   }
 
-  // load cached data from sessionStorage for instant display
+  // Load cached data from sessionStorage on page load
+  // Shows data immediately while background poller fetches fresh data
   function loadDataCache() {
     try {
       const cachedEvents = sessionStorage.getItem('custoseye.events');
@@ -3158,7 +3259,8 @@
     }
   }
 
-  // render only the currently active tab using cached data
+  // Render the currently active tab - only renders what's visible
+  // Uses cached data that's kept fresh by background polling
   function renderActive() {
     if (state.tab === 'live') {
       render(__events || []);
@@ -4184,10 +4286,11 @@
       }
     }));
 
-    // background polling: continuously fetch data and update all tabs (but only render the active one)
-    let inFlight = false;
-    let lastTreeAt = 0;
-    let pollCtrl = null;
+    // Background polling system - continuously fetches data from API
+    // Updates all tab caches but only renders the active tab (performance optimization)
+    let inFlight = false;  // prevents multiple simultaneous requests
+    let lastTreeAt = 0;     // timestamp of last tree fetch (tree updates less frequently)
+    let pollCtrl = null;   // AbortController for canceling requests
 
     // check if we're in preview mode (loaded in iframe for login background)
     const isPreview = window.self !== window.top || window.location.pathname === '/preview';
@@ -5001,7 +5104,6 @@
             gap: 16px;
           ">
             <img src="/static/assets/logo.svg" alt="" style="width:112px; height:112px;" />
-            <img src="/static/assets/goodbye.svg" alt="" style="width:92px; height:92px;" />
           </div>
           <h1 style="
             font-size: 28px;

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 # ruff: noqa: E501
 """
 goal: evaluate process trustworthiness and return categorical verdicts (malicious, suspicious, caution, trusted, unknown)

@@ -54,6 +54,8 @@ coverage.xml
 # build directories and package artifacts (generated during build process)
 build/
 dist/
+release/
+installer_output/
 *.egg-info/
 *.egg
 *.spec

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """
 goal: continuously monitors file integrity by checking SHA256 hashes against expected values.
 only emits events when a file's status changes (missing -> ok, ok -> mismatch, etc).
@@ -227,7 +228,9 @@ class IntegrityChecker:
                     # File was deleted or storage became unavailable - emit deletion event immediately
                     # Only emit if transitioning from a previously known state to missing
                     prev_status = self._last_status.get(path)
-                    if prev_status is not None and prev_status != "missing":  # only emit if not already in missing state and was previously tracked
+                    if (
+                        prev_status is not None and prev_status != "missing"
+                    ):  # only emit if not already in missing state and was previously tracked
                         self._last_status[path] = "missing"  # update status to missing
                         self.publish(
                             {

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 // js/consent.js
 // goal: cookie consent modal for analytics opt-in. shows a modal on first visit if no consent
 //       choice is stored, allows users to accept or decline analytics cookies, stores the choice

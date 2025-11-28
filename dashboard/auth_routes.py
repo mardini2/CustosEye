@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """
 goal: authentication routes for CustosEye. handles login, signup, logout, 2FA setup, and password reset.
       protects routes with CSRF tokens and enforces authentication requirements.

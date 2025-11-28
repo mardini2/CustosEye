@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """
 goal: authentication and authorization module for CustosEye. handles user accounts, password hashing,
       TOTP 2FA, session management, CSRF protection, and brute-force protection. enforces single-admin
