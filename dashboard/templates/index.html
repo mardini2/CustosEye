@@ -401,23 +401,56 @@
     }
 
     /* integrity tab */
-    .grid { display:grid; gap:10px; grid-template-columns: 1fr; }
-    .card { background:var(--panel); border:1px solid var(--border); border-radius:12px; padding:12px; }
-    .tbl { width:100%; border-collapse: collapse; border-bottom:1px solid var(--border); }
+    .grid { display:grid; gap:16px; grid-template-columns: 1fr; }
+    .card { 
+      background:var(--panel); 
+      border:1px solid var(--border); 
+      border-radius:12px; 
+      padding:16px; 
+      box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+    }
+    .tbl { 
+      width:100%; 
+      border-collapse: separate; 
+      border-spacing: 0;
+    }
     .tbl tbody tr:last-child td { border-bottom:none; } /* avoid a double line */
-    .tbl th, .tbl td { padding:8px; border-bottom:1px solid var(--border); text-align:left; font-size:12px; }
+    .tbl th { 
+      padding:12px 10px; 
+      border-bottom:2px solid var(--border); 
+      text-align:left; 
+      font-size:12px; 
+      font-weight:600;
+      color:var(--text);
+      background:var(--panel);
+      text-transform:uppercase;
+      letter-spacing:0.5px;
+      font-size:11px;
+    }
+    .tbl td { 
+      padding:14px 10px; 
+      border-bottom:1px solid color-mix(in oklab, var(--border) 50%, transparent); 
+      text-align:left; 
+      font-size:13px;
+      transition: background-color 0.15s ease;
+    }
+    .tbl tbody tr:hover td {
+      background:color-mix(in oklab, var(--accent) 3%, transparent);
+    }
     .badge { 
       display:inline-block; 
-      padding:4px 10px; 
-      border-radius:999px; 
+      padding:5px 12px; 
+      border-radius:6px; 
       border:1px solid var(--border); 
       font-size:11px; 
       font-weight:600;
+      letter-spacing:0.3px;
       background:color-mix(in oklab, var(--accent) 8%, transparent);
       color:var(--accent);
       border-color:color-mix(in oklab, var(--accent) 30%, var(--border));
-      margin-left:6px;
+      margin:0;
       transition:all 0.2s ease;
+      white-space: nowrap;
     }
     .badge.ok { 
       color:var(--good); 
@@ -434,6 +467,11 @@
       background:color-mix(in oklab, var(--bad) 12%, transparent);
       border-color: color-mix(in oklab, var(--bad) 40%, var(--border)); 
     }
+    /* Special styling for CHANGED badge - balanced padding for centered text */
+    .badge.bad.changed {
+      padding: 5px 14px;
+      text-align: center;
+    }
     .small { font-size:11px; color:var(--muted); }
     .hint { color:var(--muted); font-size:12px; }
 
@@ -441,16 +479,18 @@
     .tbl { table-layout: fixed; width: 100%; }
 
     /* Column sizing (adjust to taste) */
-    .tbl th:nth-child(1), .tbl td:nth-child(1) { width: 32%; } /* Path */
+    .tbl th:nth-child(1), .tbl td:nth-child(1) { width: 30%; } /* Path */
     .tbl th:nth-child(2), .tbl td:nth-child(2) { width: 10%; } /* Rule */
-    .tbl th:nth-child(3), .tbl td:nth-child(3) { width: 34%; } /* Baseline */
-    .tbl th:nth-child(4), .tbl td:nth-child(4) { width: 8%;  } /* Last result */
+    .tbl th:nth-child(3), .tbl td:nth-child(3) { width: 32%; } /* Baseline */
+    .tbl th:nth-child(4), .tbl td:nth-child(4) { width: 12%; min-width: 100px; overflow: visible; } /* Last result */
     .tbl th:nth-child(5), .tbl td:nth-child(5) { width: 16%; } /* Actions */
     .row-actions { display:flex; flex-wrap:wrap; gap:8px; max-width:100%; }
     .row-actions .btn { white-space:nowrap; }
     .tbl th, .tbl td { vertical-align: top; overflow: hidden; text-overflow: ellipsis; }
     /* Allow buttons to wrap without being clipped */
     .tbl td:nth-child(5) { overflow: visible; }
+    /* Allow status cell content to be visible (badges shouldn't clip) */
+    .tbl td:nth-child(4) { overflow: visible; }
     /* Give Actions a floor so it never collapses too small */
     .tbl td:nth-child(5) { min-width: 110px; position: relative; }
 
@@ -492,10 +532,127 @@
 
     /* Status cell: badge on first line, note on second */
     .status {
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-    align-items: flex-start;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      align-items: flex-start;
+      min-width: 0;
+    }
+    .status .badge {
+      margin: 0;
+    }
+    .status .small.muted {
+      font-size: 11px;
+      line-height: 1.4;
+      color: var(--muted);
+      margin-top: 2px;
+    }
+
+    /* Integrity controls styling */
+    .integrity-controls {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    .integrity-controls-row {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+    .integrity-controls-row .input {
+      flex: 1;
+      min-width: 200px;
+    }
+    .integrity-controls-row .input#i-path {
+      flex: 2;
+      min-width: 300px;
+    }
+    .integrity-controls-row .input#i-rule {
+      flex: 0 0 180px;
+      min-width: 180px;
+    }
+    .integrity-controls-row .input#i-note {
+      flex: 1;
+      min-width: 200px;
+    }
+    .integrity-controls-row .btn {
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+    .integrity-hint-row {
+      margin-top: 4px;
+    }
+
+    /* About tab styling */
+    .about-container {
+      max-width: 800px;
+      margin: 0 auto;
+      padding: 24px;
+    }
+    .about-header {
+      text-align: center;
+      margin-bottom: 40px;
+      padding-bottom: 32px;
+      border-bottom: 2px solid var(--border);
+    }
+    .about-title {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 16px;
+      margin-bottom: 12px;
+    }
+    .about-logo {
+      width: 64px;
+      height: 64px;
+      object-fit: contain;
+      filter: drop-shadow(0 2px 8px rgba(0,0,0,0.2));
+    }
+    .about-name {
+      font-size: 36px;
+      font-weight: 700;
+      margin: 0;
+      color: var(--text);
+      letter-spacing: -0.5px;
+    }
+    .about-subtitle {
+      font-size: 16px;
+      color: var(--muted);
+      font-weight: 400;
+    }
+    .about-info-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 20px;
+      margin-top: 32px;
+    }
+    .about-info-card {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 20px;
+      transition: all 0.2s ease;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    }
+    .about-info-card:hover {
+      border-color: var(--accent);
+      box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+      transform: translateY(-2px);
+    }
+    .about-info-label {
+      font-size: 12px;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      font-weight: 600;
+      margin-bottom: 8px;
+    }
+    .about-info-value {
+      font-size: 18px;
+      font-weight: 600;
+      color: var(--text);
+      word-break: break-all;
     }
 
     /* Disabled button styles */
@@ -867,17 +1024,23 @@
         <div class="grid">
           <!-- integrity controls: file picker, path input, rule selection, hash preview -->
           <div class="card">
-            <div class="controls" style="gap:8px">
-            <button class="btn" id="i-browse" data-tip="Pick a file (File Explorer)">Browse (Windows)</button>
-            <input id="i-path" class="input" placeholder="File path (or use Browse)" style="min-width:360px" data-tip="Target file to watch" />
-            <select id="i-rule" class="input" style="min-width:160px" data-tip="Choose exact hash or mtime+size rule">
-                <option value="sha256">Exact SHA-256</option>
-                <option value="mtime+size">mtime + size</option>
-            </select>
-            <input id="i-note" class="input" placeholder="Note (optional)" style="min-width:200px" data-tip="Optional label for the target" />
-            <button class="btn" id="i-hash" data-tip="Compute a preview hash/attributes">Hash Now</button>
-            <button class="btn" id="i-add"  data-tip="Save target to the watch list">Save</button>
-            <span class="hint" id="i-hint" aria-live="polite"></span>
+            <div class="integrity-controls">
+              <div class="integrity-controls-row">
+                <button class="btn" id="i-browse" data-tip="Pick a file (File Explorer)">Browse (Windows)</button>
+                <input id="i-path" class="input" placeholder="File path (or use Browse)" data-tip="Target file to watch" />
+              </div>
+              <div class="integrity-controls-row">
+                <select id="i-rule" class="input" data-tip="Choose exact hash or mtime+size rule">
+                  <option value="sha256">Exact SHA-256</option>
+                  <option value="mtime+size">mtime + size</option>
+                </select>
+                <input id="i-note" class="input" placeholder="Note (optional)" data-tip="Optional label for the target" />
+                <button class="btn" id="i-hash" data-tip="Compute a preview hash/attributes">Hash Now</button>
+                <button class="btn" id="i-add" data-tip="Save target to the watch list">Save</button>
+              </div>
+              <div class="integrity-hint-row">
+                <span class="hint" id="i-hint" aria-live="polite"></span>
+              </div>
             </div>
             <div class="small" id="i-preview" aria-live="polite"></div>
           </div>
@@ -2923,11 +3086,30 @@
         return; // Just return if no data, don't show error
       }
       aboutEl.innerHTML = `
-        <div class="mono"><b>CustosEye</b></div>
-        <div class="muted">Local-only dashboard for monitoring.</div>
-        <div class="mono" style="margin-top:6px">Version: ${a.version || 'dev'}</div>
-        <div class="mono">Build: ${a.build || '-'}</div>
-        <div class="mono">Buffer size: ${a.buffer_max}</div>
+        <div class="about-container">
+          <div class="about-header">
+            <div class="about-title">
+              <img src="/static/assets/logo.svg" alt="CustosEye" class="about-logo" />
+              <h1 class="about-name">CustosEye</h1>
+            </div>
+            <div class="about-subtitle">Local-only security monitoring dashboard</div>
+          </div>
+          
+          <div class="about-info-grid">
+            <div class="about-info-card">
+              <div class="about-info-label">Version</div>
+              <div class="about-info-value mono">${a.version || 'dev'}</div>
+            </div>
+            <div class="about-info-card">
+              <div class="about-info-label">Build</div>
+              <div class="about-info-value mono">${a.build || '-'}</div>
+            </div>
+            <div class="about-info-card">
+              <div class="about-info-label">Buffer Capacity</div>
+              <div class="about-info-value mono">${a.buffer_max || '-'}</div>
+            </div>
+          </div>
+        </div>
       `;
     }
  }
@@ -3382,12 +3564,17 @@
         
         // Check if file is deleted
         const isDeleted = statusMain.toUpperCase().includes('DELETED') || statusMain.toUpperCase().includes('MISSING');
+        const isChanged = statusMain.toUpperCase().startsWith('CHANGED');
         const badgeCls = statusMain.toUpperCase().startsWith('OK') ? 'ok' : (status ? 'bad' : '');
+        // Add 'changed' class for CHANGED badge to get balanced padding
+        const changedClass = isChanged ? ' changed' : '';
         const statusHTML = status
           ? `<div class="status">
-              <span class="badge ${badgeCls}">${statusMain}</span>
+              <div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap;">
+                <span class="badge ${badgeCls}${changedClass}">${statusMain}</span>
+                ${isDeleted ? `<span class="badge bad">DELETED</span>` : ''}
+              </div>
               ${statusNote ? `<span class="small muted">${statusNote}</span>` : ''}
-              ${isDeleted ? `<span class="badge" style="background:var(--bad); margin-left:8px;">DELETED</span>` : ''}
             </div>`
           : '';
         const statusCell = `<td>${statusHTML}</td>`;
