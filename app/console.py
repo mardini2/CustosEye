@@ -30,13 +30,13 @@ except ImportError:
 # This makes sure first-time users do not need to manually run setup_env.py
 if not os.getenv("CUSTOSEYE_SESSION_SECRET") or not os.getenv("CUSTOSEYE_PASSWORD_PEPPER"):
     import secrets
-    
+
     # Resolve base directory (works for both dev and packaged exe)
     if getattr(sys, "frozen", False):
         base_dir = Path(sys.executable).parent
     else:
         base_dir = Path(__file__).resolve().parents[1]
-    
+
     env_file = base_dir / ".env"
     if not env_file.exists():
         # Generate secrets like setup_env.py does
@@ -61,6 +61,7 @@ CUSTOSEYE_TOTP_ISSUER=CustosEye
             # Reload .env file now that we created it
             try:
                 from dotenv import load_dotenv
+
                 load_dotenv()
             except ImportError:
                 pass

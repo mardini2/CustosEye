@@ -156,21 +156,30 @@ jobs:
             
             # Handle dev builds - extract commit hash or use dev version
             if ($version -match '^dev-(.+)$') {
-              # For dev builds, use a version format that Inno Setup accepts
-              # Extract commit hash if available
+              # For dev builds, convert commit hash to numeric build number
+              # Inno Setup VersionInfoVersion requires numeric format (major.minor.build)
               $commitHash = $matches[1]
               if ($commitHash.Length -ge 7) {
-                $version = "0.0.0.$($commitHash.Substring(0,7))"
+                # Convert first 7 hex characters to decimal for build number
+                # This ensures it's always numeric and fits in a reasonable range
+                $hexPart = $commitHash.Substring(0, 7)
+                try {
+                  $buildNumber = [Convert]::ToInt32($hexPart, 16) % 65535  # Limit to 16-bit range
+                  $version = "0.0.$buildNumber"
+                } catch {
+                  # Fallback if conversion fails
+                  $version = "0.0.0"
+                }
               } else {
-                $version = "0.0.0-dev"
+                $version = "0.0.0"
               }
             } else {
               # Clean version string - keep numbers, dots, and dashes for pre-release
               $version = $version -replace '[^0-9.\-]', ''
             }
             
-            # Ensure we have a valid version format (at least major.minor)
-            if ([string]::IsNullOrWhiteSpace($version) -or $version -notmatch '^\d+\.\d+') {
+            # Ensure we have a valid version format (at least major.minor, can have build)
+            if ([string]::IsNullOrWhiteSpace($version) -or $version -notmatch '^\d+\.\d+(\.\d+)?$') {
               $version = "0.2.0"
             }
           } else {
