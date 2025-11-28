@@ -1,4 +1,4 @@
-# CustosEye
+# 𖣐 CustosEye 𖣐
 
 CustosEye is a local-first system monitoring tool that watches your processes, network connections, and file integrity. Everything runs on your machine - no cloud, no telemetry, no external connections. It uses a trust scoring engine to evaluate processes and presents everything through a web dashboard.
 
@@ -290,7 +290,7 @@ tests/            Pytest test suite
 
 ---
 
-## License
+## 𖦹 License ꩜
 
 GPL-3.0 - See LICENSE.md for full license text.
 

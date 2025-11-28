@@ -114,55 +114,89 @@
 
       <h4 style="margin-top: 20px; margin-bottom: 10px; font-size: 1.05rem;">1. Collection</h4>
       <p style="margin-bottom: 16px; line-height: 1.6;">
-        Three monitoring agents run continuously in the background:
+        Three monitoring agents run continuously in the background, publishing events to an event bus:
       </p>
       <ul style="margin-bottom: 16px; line-height: 1.8; padding-left: 20px;">
-        <li><strong>Process monitor:</strong> scans running processes periodically (default every few seconds)</li>
-        <li><strong>Network scanner:</strong> captures listening ports and active connections</li>
-        <li><strong>Integrity checker:</strong> compares watched files against their baseline hashes or metadata</li>
+        <li><strong>Process monitor:</strong> Scans running processes periodically, tracking executable paths, file hashes, code signatures, parent processes, memory usage, command lines, and whether processes are running as services or with elevated privileges</li>
+        <li><strong>Network scanner:</strong> Captures listening ports and active network connections, identifying which processes are making connections</li>
+        <li><strong>Integrity checker:</strong> Compares watched files against their baseline hashes (SHA-256) or metadata (mtime+size) every split second for faster detection</li>
       </ul>
 
-      <h4 style="margin-top: 20px; margin-bottom: 10px; font-size: 1.05rem;">2. Trust Scoring</h4>
+      <h4 style="margin-top: 20px; margin-bottom: 10px; font-size: 1.05rem;">2. Trust Scoring (CSC v2)</h4>
       <p style="margin-bottom: 16px; line-height: 1.6;">
         Each process is evaluated using a trust scoring engine (CSC v2) that considers multiple signals:
       </p>
       <ul style="margin-bottom: 16px; line-height: 1.8; padding-left: 20px;">
-        <li>Where the executable is located (system directories are more trusted than temp folders)</li>
-        <li>Whether the file has a valid code signature and who signed it</li>
-        <li>Process name characteristics (suspicious-looking names reduce trust)</li>
-        <li>File age and size (very new or tiny binaries outside system paths are flagged)</li>
-        <li>Network behavior (listening on risky ports is suspicious)</li>
-        <li>Parent process context (processes launched by script interpreters get a small penalty)</li>
-        <li>Elevation and service status (elevated processes or services from user directories are suspicious)</li>
-        <li>Local prevalence (processes seen frequently on your machine earn trust over time)</li>
+        <li><strong>Path context:</strong> System directories are trusted, temp/downloads are suspicious</li>
+        <li><strong>Code signing:</strong> Valid signatures boost trust, especially from known publishers</li>
+        <li><strong>Name heuristics:</strong> High entropy names, hex-like strings, misspellings of system processes reduce trust</li>
+        <li><strong>File characteristics:</strong> Very new or tiny binaries outside system dirs are flagged</li>
+        <li><strong>Network behavior:</strong> Listening on ports (especially risky ones) is suspicious</li>
+        <li><strong>Parent context:</strong> Processes launched by script interpreters get penalized</li>
+        <li><strong>Elevation/service:</strong> Elevated processes or services from user directories are highly suspicious</li>
+        <li><strong>Prevalence:</strong> Processes seen frequently on your machine earn trust over time (with time decay)</li>
       </ul>
       <p style="margin-bottom: 16px; line-height: 1.6;">
         These signals are combined into a score, which is then mapped to a categorical verdict:
         <strong>trusted</strong>, <strong>caution</strong>, <strong>suspicious</strong>, <strong>malicious</strong>, or <strong>unknown</strong>.
-        The engine also assigns a class (like "system", "popular_app", "service", "dev_tool") to help categorize processes.
+        The engine also assigns a class (like "system", "service", "dev_tool", "game", "utility") to help categorize processes.
+        The engine produces confidence scores and human-readable reasons for each verdict.
       </p>
 
       <h4 style="margin-top: 20px; margin-bottom: 10px; font-size: 1.05rem;">3. Rules Engine</h4>
       <p style="margin-bottom: 16px; line-height: 1.6;">
-        Events are tagged with severity levels (Info, Warning, Critical) based on configurable rules.
-        Rules can match on process names, paths, network ports, or other event properties. You can
-        customize these rules to match your environment and priorities.
+        The rules engine (<code style="background: rgba(0,0,0,0.3); padding: 2px 6px; border-radius: 4px;">data/rules.json</code>)
+        applies severity levels (Info, Warning, Critical) and contextual reasons to events. Rules are evaluated in order, the first match wins.
+        Rules can match on:
+      </p>
+      <ul style="margin-bottom: 16px; line-height: 1.8; padding-left: 20px;">
+        <li>Source type (process, network, integrity)</li>
+        <li>Process names or executable paths</li>
+        <li>Listening ports</li>
+        <li>Remote connections</li>
+        <li>And more</li>
+      </ul>
+      <p style="margin-bottom: 16px; line-height: 1.6;">
+        Rules hot-reload automatically when you edit the file. The engine also deduplicates events within a short window
+        to reduce noise while preserving important state changes.
       </p>
 
-      <h4 style="margin-top: 20px; margin-bottom: 10px; font-size: 1.05rem;">4. Presentation</h4>
+      <h4 style="margin-top: 20px; margin-bottom: 10px; font-size: 1.05rem;">4. Event Processing and Storage</h4>
       <p style="margin-bottom: 16px; line-height: 1.6;">
-        Processed events are displayed in the web dashboard with filters, search, and export options.
-        The dashboard shows a live feed of events, a process tree view with trust scores, and an
-        integrity monitoring interface for managing watched files.
+        The dashboard subscribes to the event bus and processes events in a background thread. Events get:
       </p>
+      <ul style="margin-bottom: 16px; line-height: 1.8; padding-left: 20px;">
+        <li>Tagged with severity levels by the rules engine</li>
+        <li>Scored by the CSC trust engine (for process events)</li>
+        <li>Deduplicated to reduce noise</li>
+        <li>Stored in a ring buffer (oldest events drop when full)</li>
+      </ul>
+      <p style="margin-bottom: 16px; line-height: 1.6;">
+        For file integrity events, the dashboard computes diffs when changes are detected. It uses chunk-based hashing
+        to find what changed, extracts text from various file types (text files, Office documents, PDFs), and performs
+        character/word/line-level diffs. Baseline storage optionally stores full file snapshots, auto-pruning to stay
+        under size limits.
+      </p>
+
+      <h4 style="margin-top: 20px; margin-bottom: 10px; font-size: 1.05rem;">5. Presentation</h4>
+      <p style="margin-bottom: 16px; line-height: 1.6;">
+        Processed events are displayed in the web dashboard (accessible at <code style="background: rgba(0,0,0,0.3); padding: 2px 6px; border-radius: 4px;">http://127.0.0.1:8765/</code>
+        with authentication required). The dashboard includes:
+      </p>
+      <ul style="margin-bottom: 16px; line-height: 1.8; padding-left: 20px;">
+        <li><strong>Live Events tab:</strong> Real-time stream with filters by level (Info, Warning, Critical), search by process name or path, pause/resume, and export to CSV, JSON, JSONL, or XLSX</li>
+        <li><strong>Process Tree tab:</strong> Hierarchical view of all running processes showing parent-child relationships, trust verdicts, and process classes. Search and expand/collapse nodes</li>
+        <li><strong>Integrity tab:</strong> Manage files you want to monitor, add files with SHA-256 or mtime+size rules, view diffs when changes are detected</li>
+        <li><strong>About tab:</strong> Version information, build details, buffer size, and runtime stats</li>
+      </ul>
 
       <!-- diagram placeholder -->
-      <div style="margin-top: 24px; margin-bottom: 16px;">
-        <!--
-          Image placeholder: if you want to add a diagram showing the data flow, place it here.
-          Suggested location: assets/img/methodology-flow.png
-          Suggested dimensions: 1200x600px, showing: Collection → Trust Scoring → Rules Engine → Dashboard
-        -->
+      <div style="margin-top: 24px; margin-bottom: 16px; padding: 24px; background: rgba(0,0,0,0.2); border-radius: 8px; border: 1px dashed rgba(255,255,255,0.2);">
+        <p style="margin: 0; color: #9aa3b2; font-size: 0.9rem; text-align: center;">
+          [IMAGE: architecture diagram placeholder]<br>
+          Suggested: Data flow diagram showing Collection → Trust Scoring → Rules Engine → Event Processing → Dashboard<br>
+          Dimensions: 1200x600px, showing agents, event bus, dashboard, and data storage
+        </p>
       </div>
 
       <h3 style="margin-top: 24px; margin-bottom: 12px; font-size: 1.2rem;">Assumptions and Limitations</h3>
@@ -178,10 +212,10 @@
           but may miss sophisticated threats that don't match known patterns.</li>
         <li><strong>No real-time blocking:</strong> CustosEye is a monitoring tool, not an active security
           product. It reports what it sees but doesn't block or quarantine processes.</li>
-        <li><strong>Windows focus:</strong> Currently designed for Windows systems. Process and network
-          monitoring may work differently on other platforms.</li>
+        <li><strong>Windows focus:</strong> Currently designed for Windows 10 or 11. Process and network
+          monitoring uses Windows-specific APIs and may not work on other platforms.</li>
         <li><strong>File integrity modes:</strong> The "mtime+size" mode is faster but less secure than
-          SHA-256 hashing. It can miss changes that don't affect file size or modification time.</li>
+          SHA-256 hashing. It might miss changes that don't affect file size or modification time.</li>
         <li><strong>Prevalence learning:</strong> The trust engine learns from what it sees on your machine,
           but this means it may be less accurate on a fresh system or when new software is first installed.</li>
       </ul>

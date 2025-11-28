@@ -78,9 +78,20 @@
       <h2 style="margin-bottom: 16px">About CustosEye</h2>
 
       <p style="margin-bottom: 16px; line-height: 1.6;">
-        CustosEye is a local-first security monitoring tool that gives you visibility into what's happening on your system.
-        It watches your processes, monitors file integrity, and tracks network activity—all without sending data anywhere.
+        CustosEye is a local-first system monitoring tool that watches your processes, network connections, and file integrity.
+        Everything runs on your machine, no cloud, no telemetry, no external connections. It uses a trust scoring engine (CSC v2)
+        to evaluate processes and presents everything through a web dashboard that you access locally.
       </p>
+
+      <h3 style="margin-top: 24px; margin-bottom: 12px; font-size: 1.2rem;">What It Monitors</h3>
+      <p style="margin-bottom: 16px; line-height: 1.6;">
+        CustosEye continuously monitors three core areas:
+      </p>
+      <ul style="margin-bottom: 16px; line-height: 1.8; padding-left: 20px;">
+        <li><strong>Process monitoring:</strong> Tracks all running processes, their parent relationships, memory usage, command lines, and network connections. Each process gets evaluated by a trust scoring engine that looks at where it came from, whether it's signed, what it's doing, and how often you've seen it before.</li>
+        <li><strong>Network monitoring:</strong> Scans active network connections to see what's listening on ports and what outbound connections processes are making.</li>
+        <li><strong>File integrity monitoring:</strong> Watches specific files you care about and alerts you when they change. Supports two modes: SHA-256 hashing for exact change detection, or mtime+size for lighter monitoring. Can show you what changed with a diff viewer that works on any text files including Office documents, JSONs and PDFs.</li>
+      </ul>
 
       <h3 style="margin-top: 24px; margin-bottom: 12px; font-size: 1.2rem;">The Problem</h3>
       <p style="margin-bottom: 16px; line-height: 1.6;">
@@ -90,16 +101,19 @@
 
       <h3 style="margin-top: 24px; margin-bottom: 12px; font-size: 1.2rem;">The Solution</h3>
       <p style="margin-bottom: 16px; line-height: 1.6;">
-        CustosEye runs entirely on your machine. No cloud, no telemetry, no mystery. It uses a local trust engine to
-        evaluate process behavior, monitors file changes via hash checks, and gives you a simple web dashboard to see
-        everything at a glance.
+        CustosEye runs entirely on your machine. No cloud, no telemetry, no mystery. It uses a local trust scoring engine (CSC v2)
+        to evaluate process behavior based on code signing, path context, network behavior, and local prevalence. It monitors file changes
+        via hash checks or metadata tracking, and gives you a web dashboard with authentication (login with optional 2FA) to see
+        everything at a glance. All data flows into real-time event feeds, process trees, and export capabilities, all accessible locally.
       </p>
 
       <h3 style="margin-top: 24px; margin-bottom: 12px; font-size: 1.2rem;">Why It Exists</h3>
       <p style="margin-bottom: 16px; line-height: 1.6;">
-        Built out of frustration with existing tools that were either too heavy, too intrusive, or too opaque. CustosEye
-        is designed to be portable, private, and transparent—just download and run. Your data stays on your machine, and
-        you control what gets monitored.
+        Most existing tools are either too heavy, too intrusive, or too opaque. CustosEye
+        is designed to be portable, private, and transparent, just download and run. Your data stays on your machine in the
+        <code style="background: rgba(0,0,0,0.3); padding: 2px 6px; border-radius: 4px;">data/</code> directory, and you control what gets monitored.
+        The dashboard serves only on <code style="background: rgba(0,0,0,0.3); padding: 2px 6px; border-radius: 4px;">127.0.0.1</code> (localhost),
+        ensuring no external network exposure.
       </p>
     </section>
   </main>

@@ -86,8 +86,10 @@
       <h3 style="margin-top: 24px; margin-bottom: 12px; font-size: 1.2rem;">Transparency About Data Usage</h3>
       <p style="margin-bottom: 16px; line-height: 1.6;">
         CustosEye is designed to be transparent about what data it collects and how it uses that data.
-        The software monitors processes, network activity, and file integrity on your system, and all
-        of this data stays on your machine. Nothing is sent to external servers or cloud services.
+        The software monitors processes (including executable paths, hashes, code signatures, parent relationships,
+        memory usage, command lines), network activity (listening ports and active connections), and file integrity
+        (for files you choose to monitor). All of this data stays on your machine in the <code style="background: rgba(0,0,0,0.3); padding: 2px 6px; border-radius: 4px;">data/</code> directory.
+        Nothing is sent to external servers or cloud services. The dashboard serves only on <code style="background: rgba(0,0,0,0.3); padding: 2px 6px; border-radius: 4px;">127.0.0.1</code> (localhost).
       </p>
       <p style="margin-bottom: 16px; line-height: 1.6;">
         For details on what data is collected and how it's processed, see our
@@ -96,9 +98,11 @@
 
       <h3 style="margin-top: 24px; margin-bottom: 12px; font-size: 1.2rem;">Respect for User Privacy and Consent</h3>
       <p style="margin-bottom: 16px; line-height: 1.6;">
-        CustosEye runs entirely locally on your machine. You control what gets monitored, and you can
-        stop monitoring at any time by closing the application. The software doesn't require internet
-        access for core features, and it doesn't collect or transmit personal information.
+        CustosEye runs entirely locally on your machine. You control what gets monitored, you choose which files
+        to watch for integrity changes, and you can stop monitoring at any time by closing the application.
+        The software doesn't require internet access for core features, and it doesn't collect or transmit personal
+        information. The dashboard requires authentication (login with optional 2FA) to access, and session secrets
+        are auto-generated per installation.
       </p>
       <p style="margin-bottom: 16px; line-height: 1.6;">
         For information about how this website handles privacy and consent, see our
@@ -109,43 +113,49 @@
       <h3 style="margin-top: 24px; margin-bottom: 12px; font-size: 1.2rem;">Security and Safe Handling of Data</h3>
       <p style="margin-bottom: 16px; line-height: 1.6;">
         CustosEye is designed with security in mind. All data collected by the software stays on your
-        machine and is stored in local files. The web dashboard runs locally on your computer and
-        doesn't expose data to external networks unless you explicitly configure it to do so.
+        machine and is stored in local files in the <code style="background: rgba(0,0,0,0.3); padding: 2px 6px; border-radius: 4px;">data/</code> directory.
+        The web dashboard runs locally on your computer at <code style="background: rgba(0,0,0,0.3); padding: 2px 6px; border-radius: 4px;">http://127.0.0.1:8765/</code>
+        and doesn't expose data to external networks. Authentication is required to access the dashboard,
+        with optional 2FA support for additional security.
       </p>
       <p style="margin-bottom: 16px; line-height: 1.6;">
-        File integrity monitoring uses SHA-256 hashing by default, which provides strong cryptographic
-        guarantees. The software doesn't store sensitive data in plain text, and configuration files
-        are stored in a local data directory that you control.
+        File integrity monitoring supports SHA-256 hashing (for exact change detection) or mtime+size tracking
+        (for lighter monitoring). SHA-256 provides strong cryptographic guarantees. The software stores configuration
+        files (rules, trust weights, integrity targets, trust database, etc.) in a local data directory that you control.
+        Exports are manual and local only, no automatic data transmission.
       </p>
 
       <h3 style="margin-top: 24px; margin-bottom: 12px; font-size: 1.2rem;">Avoiding Manipulative or Misleading Behavior</h3>
       <p style="margin-bottom: 16px; line-height: 1.6;">
         CustosEye is designed to be honest about what it does and what it doesn't do. The trust scoring
-        engine provides categorical verdicts (trusted, caution, suspicious, malicious, unknown) with
-        confidence scores and reasons, so you can understand why a process was classified a certain way.
+        engine (CSC v2) provides categorical verdicts (trusted, caution, suspicious, malicious, unknown) with
+        confidence scores and human-readable reasons, so you can understand why a process was classified a certain way.
+        The dashboard shows trust verdicts, process classes, and detailed event information with clear severity levels
+        (Info, Warning, Critical) assigned by the rules engine.
       </p>
       <p style="margin-bottom: 16px; line-height: 1.6;">
         The software doesn't use fear-based messaging or false positives to encourage upgrades or
-        subscriptions. It's a monitoring tool that presents information clearly and lets you make
-        your own decisions.
+        subscriptions. It's a monitoring tool that presents information clearly through real-time event feeds,
+        process trees, and integrity monitoring, letting you make your own decisions. All features are available
+        without any premium tiers or paywalls.
       </p>
 
       <h3 style="margin-top: 24px; margin-bottom: 12px; font-size: 1.2rem;">Responsible Use and Clear Disclosure of Limitations</h3>
       <p style="margin-bottom: 16px; line-height: 1.6;">
         CustosEye is a monitoring tool, not an active security product. It reports what it sees but
-        doesn't block or quarantine processes. The trust scoring engine uses heuristics and local
-        prevalence, not behavioral analysis or machine learning, so it may miss sophisticated threats
+        doesn't block or quarantine processes. The trust scoring engine (CSC v2) uses heuristics and local
+        prevalence, not behavioral analysis or machine learning, so it might miss sophisticated threats
         that don't match known patterns.
       </p>
       <p style="margin-bottom: 16px; line-height: 1.6;">
         Important limitations to be aware of:
       </p>
       <ul style="margin-bottom: 16px; line-height: 1.8; padding-left: 20px;">
-        <li>CustosEye doesn't use threat intelligence feeds or cloud-based reputation services</li>
-        <li>Trust scores are based entirely on local signals and your system's history</li>
-        <li>The software may be less accurate on a fresh system or when new software is first installed</li>
-        <li>File integrity monitoring in "mtime+size" mode is faster but less secure than SHA-256 hashing</li>
-        <li>The software is currently designed for Windows systems</li>
+        <li>CustosEye doesn't use threat intelligence feeds or cloud-based reputation services, trust scores are based entirely on local signals and your system's history</li>
+        <li>The software may be less accurate on a fresh system or when new software is first installed, as the prevalence database builds over time</li>
+        <li>File integrity monitoring in "mtime+size" mode is faster but less secure than SHA-256 hashing, it might miss changes that don't affect file size or modification time</li>
+        <li>The software is currently designed for Windows 10 or 11 systems</li>
+        <li>No real-time blocking, CustosEye monitors and reports but doesn't take automatic action</li>
       </ul>
       <p style="margin-bottom: 16px; line-height: 1.6;">
         For more details on limitations and assumptions, see our

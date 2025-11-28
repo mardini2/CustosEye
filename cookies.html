@@ -76,21 +76,37 @@
   <main class="wrap">
     <!-- cookie settings card: accept/decline buttons and status display -->
     <section class="card">
-      <h2 style="margin-bottom:8px">Cookie settings</h2>
+      <h2 class="hero-title" style="margin-bottom: 16px">Cookie Settings</h2>
 
-      <!-- neutral copy; no details about intent -->
-      <p class="muted" style="margin-bottom:16px">
-        Your choice helps us provide a better site experience. You can change this any time below.
+      <p style="margin-bottom: 24px; line-height: 1.6;">
+        This website uses Google Analytics 4 (GA4) to understand how visitors use the site. Analytics is only loaded
+        after you explicitly consent. You can change your preference at any time using the controls below.
       </p>
 
-      <!-- accept/decline buttons for cookie consent -->
-      <div class="btn-row" style="margin-top:8px">
-        <button class="btn btn-primary" id="accept-cookies">Accept cookies</button>
-        <button class="btn btn-ghost" id="decline-cookies">Decline</button>
+      <!-- current status display -->
+      <div style="padding: 16px; background: rgba(0,0,0,0.2); border-radius: 8px; border: 1px solid rgba(255,255,255,0.1); margin-bottom: 24px;">
+        <h3 style="margin-bottom: 8px; font-size: 1rem; color: #c8d0dd;">Current Status</h3>
+        <div id="cookie-status" style="font-size: 1.1rem; font-weight: 500;"></div>
       </div>
 
-      <!-- where we reflect the current stored state (shows "accepted", "declined", or "no choice") -->
-      <div id="cookie-status" class="muted" style="margin-top:12px"></div>
+      <!-- accept/decline buttons for cookie consent -->
+      <div style="display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 24px;">
+        <button class="btn btn-primary" id="accept-cookies" style="flex: 1; min-width: 150px;">Accept Analytics Cookies</button>
+        <button class="btn btn-ghost" id="decline-cookies" style="flex: 1; min-width: 150px;">Decline Analytics Cookies</button>
+      </div>
+
+      <!-- information section -->
+      <div style="margin-top: 32px; padding-top: 24px; border-top: 1px solid rgba(255,255,255,0.1);">
+        <h3 style="margin-bottom: 12px; font-size: 1.1rem;">What This Means</h3>
+        <ul style="margin-bottom: 16px; line-height: 1.8; padding-left: 20px;">
+          <li><strong>If you accept:</strong> Google Analytics will collect standard web analytics data (page views, navigation paths, device type, general location). This helps us understand how visitors use the site.</li>
+          <li><strong>If you decline:</strong> No analytics code runs and no data is sent to Google. The website functions normally without analytics tracking.</li>
+        </ul>
+        <p style="margin-bottom: 16px; line-height: 1.6; font-size: 0.9rem; color: #9aa3b2;">
+          Your choice is stored in your browser's local storage and persists across visits. 
+          For more details, see our <a href="privacy.html" style="color: #8b5cf6;">Privacy Policy</a>.
+        </p>
+      </div>
     </section>
   </main>
 
@@ -116,9 +132,13 @@
     // helper to show the current choice (reads from localStorage and displays status)
     function setStatusText() {
       const v = localStorage.getItem(KEY);
-      statusEl.textContent = v
-        ? (v === 'granted' ? 'Status: accepted' : 'Status: declined')
-        : 'Status: no choice stored yet';
+      if (v === 'granted') {
+        statusEl.innerHTML = '<span style="color: #4ade80;">✓ Analytics cookies accepted</span>';
+      } else if (v === 'denied') {
+        statusEl.innerHTML = '<span style="color: #f87171;">✗ Analytics cookies declined</span>';
+      } else {
+        statusEl.innerHTML = '<span style="color: #9aa3b2;">No preference set yet</span>';
+      }
     }
 
     // Accept => store 'granted', notify any listeners, update status
