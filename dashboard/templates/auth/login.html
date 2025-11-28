@@ -146,7 +146,7 @@
   </style>
 </head>
 <body>
-  <iframe id="dashboardPreview" class="dashboard-background" src="/preview" title="Dashboard Preview"></iframe>
+  <iframe id="dashboardPreview" class="dashboard-background" src="/preview" title="Dashboard Preview" loading="eager"></iframe>
   <div class="auth-overlay">
   <div class="auth-container">
     <div style="text-align:center; margin-bottom:32px;">
@@ -206,29 +206,16 @@
   </div>
   
   <script>
-    // handle iframe loading for smooth background transition - lazy load to improve initial page load
+    // handle iframe loading for smooth background transition
     const dashboardPreview = document.getElementById('dashboardPreview');
     if (dashboardPreview) {
-      // Delay iframe loading to improve initial page load time
-      // Show content immediately, load background iframe after page is interactive
-      const loadIframe = () => {
-        if (!dashboardPreview.src) {
-          dashboardPreview.src = '/preview';
-        }
-        // fade in iframe when loaded to prevent freeze/lag feeling
-        dashboardPreview.addEventListener('load', function() {
-          this.classList.add('loaded');
-        }, { once: true });
-        // if iframe is already loaded (cached), show it immediately
-        if (dashboardPreview.complete || dashboardPreview.readyState === 'complete') {
-          dashboardPreview.classList.add('loaded');
-        }
-      };
-      
-      if (window.requestIdleCallback) {
-        requestIdleCallback(loadIframe, { timeout: 1000 });
-      } else {
-        setTimeout(loadIframe, 500); // Fallback delay
+      // fade in iframe when loaded to prevent freeze/lag feeling
+      dashboardPreview.addEventListener('load', function() {
+        this.classList.add('loaded');
+      }, { once: true });
+      // if iframe is already loaded (cached), show it immediately
+      if (dashboardPreview.complete || dashboardPreview.readyState === 'complete') {
+        dashboardPreview.classList.add('loaded');
       }
     }
     

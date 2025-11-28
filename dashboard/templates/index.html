@@ -40,6 +40,42 @@
     .wrap { max-width:1100px; margin:0 auto; padding:16px; }
     .title { display:flex; align-items:center; gap:10px; margin:4px 0 10px; font-weight:700; letter-spacing:.2px; font-size:18px; }
     .subtitle { color:var(--muted); font-size:12px; }
+    
+    /* Header brand styling */
+    .header-brand {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+    }
+    .header-logo {
+      width: 42px;
+      height: 42px;
+      border-radius: 10px;
+      opacity: 0.95;
+      filter: drop-shadow(0 2px 6px rgba(0,0,0,0.2));
+      transition: transform 0.2s ease;
+    }
+    .header-logo:hover {
+      transform: scale(1.05);
+    }
+    .header-title-group {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      line-height: 1.2;
+    }
+    .header-title {
+      font-size: 22px;
+      font-weight: 700;
+      letter-spacing: -0.3px;
+      color: var(--text);
+    }
+    .header-subtitle {
+      font-size: 12px;
+      color: var(--muted);
+      font-weight: 400;
+      letter-spacing: 0.2px;
+    }
     .panel { background:var(--panel); border:1px solid var(--border); border-radius:12px; padding:12px; box-shadow:0 6px 20px rgba(0,0,0,0.15); }
     .tabs { 
       display:flex; 
@@ -1042,9 +1078,12 @@
   <header>
     <div class="wrap">
       <div class="title" style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
-        <div style="display:flex; align-items:center; gap:10px;">
-          <img src="/favicon.ico" alt="" style="width:35px;height:35px;border-radius:4px;opacity:.9" />
-          CustosEye <span class="subtitle">local dashboard</span>
+        <div class="header-brand">
+          <img src="/static/assets/logo.svg" alt="CustosEye" class="header-logo" />
+          <div class="header-title-group">
+            <span class="header-title">CustosEye</span>
+            <span class="header-subtitle">local dashboard</span>
+          </div>
         </div>
         <div style="display:flex; align-items:center; gap:8px;">
           <a href="/auth/enable-2fa" class="btn btn-2fa" data-tip="Enable or manage 2FA">2FA</a>
@@ -4627,7 +4666,10 @@
       
       confirmOk.addEventListener('click', () => {
         closeModal();
-        if (confirmCancel) confirmCancel.style.display = 'flex';
+        // Only restore cancel button if it was a confirm dialog, not an alert
+        if (confirmCancel && currentModalType === 'confirm') {
+          confirmCancel.style.display = 'flex';
+        }
         if (confirmResolve) {
           confirmResolve(true);
           confirmResolve = null;
@@ -4636,7 +4678,10 @@
       
       confirmCancel.addEventListener('click', () => {
         closeModal();
-        if (confirmCancel) confirmCancel.style.display = 'flex';
+        // Only restore cancel button if it was a confirm dialog, not an alert
+        if (confirmCancel && currentModalType === 'confirm') {
+          confirmCancel.style.display = 'flex';
+        }
         if (confirmResolve) {
           confirmResolve(currentModalType === 'alert' ? true : false);
           confirmResolve = null;
