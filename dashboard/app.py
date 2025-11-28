@@ -852,45 +852,271 @@ def _extract_text_from_pdf(path: str) -> tuple[str | None, str]:
     """
     Extract readable text from PDF files.
     Returns (content, error_message) where content is None on error.
-    Uses simple text extraction - for better results, consider using PyPDF2 or pdfplumber.
+    Only extracts visible, human-readable text - filters out all PDF internals.
     """
     try:
         p = _norm_user_path(path)
 
-        # simple PDF text extraction - look for readable text streams
-        # this is a basic implementation; for production, consider using PyPDF2 or pdfplumber
         with open(p, "rb") as f:
             content = f.read()
 
-        # try to extract text from PDF streams (basic approach)
-        # look for text objects in PDF format
         import re
 
-        # extract text from PDF streams (basic regex approach)
-        # this is a simple fallback, proper PDF parsing would be better
         text_parts: list[str] = []
 
-        # look for text in PDF streams
-        stream_matches = re.findall(rb"stream\s+(.*?)\s+endstream", content, re.DOTALL)
-        for stream in stream_matches[:20]:  # limit to first 20 streams
+        # Helper function to check if text is readable (mostly printable ASCII)
+        def is_readable_text(text: str) -> bool:
+            if not text or len(text.strip()) == 0:
+                return False
+            # Check that at least 60% of non-whitespace characters are printable ASCII
+            # This allows letters, numbers, and special characters (!@#$%^&*()[]{} etc.)
+            non_whitespace = re.sub(r"\s", "", text)
+            if len(non_whitespace) == 0:
+                return False
+            printable_count = sum(1 for c in non_whitespace if 32 <= ord(c) <= 126)
+            if printable_count / len(non_whitespace) < 0.6:
+                return False
+            # Filter out common PDF internals that might slip through
+            if re.search(r"endstream|endobj|stream|obj\s|/XObject|/Image|/Subtype|/Tx\s|BMC|EMC|/Font|/Type", text):
+                return False
+            # Allow any text that has printable ASCII characters (letters, numbers, or special characters)
+            # Don't require alphanumeric - special characters alone are valid (e.g., "!@#$", "()[]")
+            # Just ensure it's not mostly non-printable binary data
+            return True
+
+        # Pattern 1: Extract text from (text) Tj objects (most common)
+        # Be more careful - only match if it's followed by Tj and preceded by reasonable context
+        text_obj_matches = re.finditer(rb"\((.*?)\)\s*Tj", content)
+        for match in text_obj_matches:
             try:
-                # try to decode as text
-                text = stream.decode("utf-8", errors="replace")
-                # extract printable text
+                match_bytes = match.group(1)
+                # Skip if the match is too long (likely binary data)
+                if len(match_bytes) > 1000:
+                    continue
+                # Skip if it contains too many null bytes or control chars (binary data)
+                if match_bytes.count(b"\x00") > len(match_bytes) * 0.1:
+                    continue
+                
+                # Decode and handle PDF escape sequences
+                text = match_bytes.decode("latin-1", errors="replace")
+                
+                # Handle PDF escape sequences: \n, \r, \t, \\(, \\), \\, \ddd (octal)
+                text_bytes = text.encode("latin-1")
+                # Handle \n, \r, \t
+                text_bytes = re.sub(rb"\\([nrt])", lambda m: {"n": b"\n", "r": b"\r", "t": b"\t"}.get(m.group(1).decode(), m.group(0)), text_bytes)
+                text = text_bytes.decode("latin-1", errors="replace")
+                # Handle \\(, \\), \\
+                text_bytes = text.encode("latin-1")
+                text_bytes = re.sub(rb"\\([()\\\\])", lambda m: m.group(1), text_bytes)
+                text = text_bytes.decode("latin-1", errors="replace")
+                # Handle octal escapes \ddd (1-3 digits)
+                text_bytes = text.encode("latin-1")
+                text_bytes = re.sub(rb"\\([0-7]{1,3})", lambda m: chr(int(m.group(1), 8)).encode("latin-1"), text_bytes)
+                text = text_bytes.decode("latin-1", errors="replace")
+                
+                # Clean up and keep only printable text (including special characters !@#$%^&*()[]{} etc.)
+                # \x20-\x7E covers all printable ASCII: space through ~ (includes all special chars)
                 text = re.sub(r"[^\x20-\x7E\n\r\t]", "", text)
-                if len(text.strip()) > 10:  # only keep substantial text
-                    text_parts.append(text.strip())
+                
+                # Only keep if it's readable text
+                # Preserve original text (don't strip) to maintain line structure
+                if is_readable_text(text):
+                    # Preserve newlines in the text itself
+                    text_parts.append(text)
+            except Exception:
+                continue
+
+        # Pattern 2: Extract text from [text] TJ objects (array format)
+        array_matches = re.finditer(rb"\[(.*?)\]\s*TJ", content, re.DOTALL)
+        for match in array_matches:
+            try:
+                match_content = match.group(1)
+                # Extract individual text strings from the array
+                inner_texts = re.findall(rb"\((.*?)\)", match_content)
+                for inner_match in inner_texts:
+                    try:
+                        # Skip if too long or contains too many nulls
+                        if len(inner_match) > 1000 or inner_match.count(b"\x00") > len(inner_match) * 0.1:
+                            continue
+                            
+                        text = inner_match.decode("latin-1", errors="replace")
+                        # Handle escape sequences (same as Pattern 1)
+                        text_bytes = text.encode("latin-1")
+                        text_bytes = re.sub(rb"\\([nrt])", lambda m: {"n": b"\n", "r": b"\r", "t": b"\t"}.get(m.group(1).decode(), m.group(0)), text_bytes)
+                        text = text_bytes.decode("latin-1", errors="replace")
+                        text_bytes = text.encode("latin-1")
+                        text_bytes = re.sub(rb"\\([()\\\\])", lambda m: m.group(1), text_bytes)
+                        text = text_bytes.decode("latin-1", errors="replace")
+                        text_bytes = text.encode("latin-1")
+                        text_bytes = re.sub(rb"\\([0-7]{1,3})", lambda m: chr(int(m.group(1), 8)).encode("latin-1"), text_bytes)
+                        text = text_bytes.decode("latin-1", errors="replace")
+                        # Clean up and keep only printable text (including special characters !@#$%^&*()[]{} etc.)
+                        # \x20-\x7E covers all printable ASCII: space through ~ (includes all special chars)
+                        text = re.sub(r"[^\x20-\x7E\n\r\t]", "", text)
+                        
+                        # Only keep if it's readable text
+                        # Preserve original text (don't strip) to maintain line structure
+                        if is_readable_text(text):
+                            # Preserve newlines in the text itself
+                            text_parts.append(text)
+                    except Exception:
+                        continue
             except Exception:
                 continue
 
         if text_parts:
-            # join with line breaks
-            return "\n".join(text_parts), ""
+            # Preserve line breaks and structure
+            # Each text part may contain newlines - preserve them
+            # Join parts intelligently: if a part ends with newline, keep it; otherwise add space
+            result_parts = []
+            for i, part in enumerate(text_parts):
+                # Check if part contains newlines (preserve them)
+                if "\n" in part:
+                    # Part has internal line breaks - preserve them
+                    result_parts.append(part)
+                else:
+                    # Part is a single line - join with previous part appropriately
+                    if i > 0:
+                        prev_part = result_parts[-1]
+                        # If previous part ends with newline, don't add space (new line)
+                        if prev_part.endswith("\n"):
+                            result_parts.append(part)
+                        # If previous part ends with punctuation, don't add space
+                        elif prev_part.endswith((".", "!", "?", ",", ";", ":")):
+                            result_parts.append(part)
+                        # If current part starts with punctuation, don't add space
+                        elif part.startswith((".", "!", "?", ",", ";", ":", ")")):
+                            result_parts.append(part)
+                        # Otherwise add space between words
+                        else:
+                            result_parts.append(" ")
+                            result_parts.append(part)
+                    else:
+                        result_parts.append(part)
+            
+            result = "".join(result_parts)
+            
+            # Clean up excessive whitespace but preserve line breaks
+            result = re.sub(r" {2,}", " ", result)  # Multiple spaces to single space
+            result = re.sub(r"\n{3,}", "\n\n", result)  # Multiple newlines to double newline
+            
+            # Split into lines and clean each line
+            lines = result.split("\n")
+            cleaned_lines = []
+            for line in lines:
+                line_stripped = line.strip()
+                # Keep empty lines (they represent paragraph breaks)
+                if len(line_stripped) == 0:
+                    # Only add empty line if previous line had content (avoid multiple empty lines)
+                    if cleaned_lines and cleaned_lines[-1].strip():
+                        cleaned_lines.append("")
+                    continue
+                # Skip lines that look like PDF internals
+                if (
+                    line_stripped.startswith(("endstream", "endobj", "stream", "obj"))
+                    or re.search(r"^\d+\s+\d+\s+obj", line_stripped)
+                    or re.search(r"^<</[A-Z]", line_stripped)
+                    or re.search(r"/XObject|/Image|/Subtype|/Tx\s|BMC|EMC", line_stripped)
+                    or not is_readable_text(line_stripped)
+                ):
+                    continue
+                # Keep the line (preserve original line structure)
+                cleaned_lines.append(line.rstrip())  # Remove trailing spaces but keep line
+            
+            result = "\n".join(cleaned_lines)
+            # Remove trailing empty lines but keep internal structure
+            result = result.rstrip()
+            if result:
+                return result, ""
 
         return None, "No readable text found in PDF (consider using PyPDF2 for better extraction)"
 
     except Exception as e:
         return None, f"Error extracting text from PDF: {e}"
+
+
+# extract embedded images from PDF files for diff viewing
+def _extract_images_from_pdf(path: str) -> list[dict[str, Any]]:
+    """
+    extract image metadata from PDF files, including dimensions.
+    returns list of image info dicts with name, hash, width, height, position.
+    """
+    images: list[dict[str, Any]] = []
+    try:
+        p = _norm_user_path(path)
+
+        with open(p, "rb") as f:
+            content = f.read()
+
+        import re
+
+        # Find image XObjects in PDF
+        # PDF images are typically stored as XObject streams with /Subtype /Image
+        # Pattern: find object definitions that contain /Subtype /Image
+        obj_pattern = rb"(\d+)\s+(\d+)\s+obj\s+(.*?)\s+endobj"
+        obj_matches = re.findall(obj_pattern, content, re.DOTALL)
+
+        image_position = 0
+        for obj_num, gen_num, obj_content in obj_matches:
+            # Check if this object is an image
+            if b"/Subtype" in obj_content and b"/Image" in obj_content:
+                try:
+                    # Extract image stream
+                    stream_match = re.search(rb"stream\s+(.*?)\s+endstream", obj_content, re.DOTALL)
+                    if not stream_match:
+                        continue
+
+                    stream_data = stream_match.group(1)
+                    
+                    # Compute hash for the image
+                    img_hash = hashlib.sha256(stream_data).hexdigest()[:16]
+
+                    # Try to extract dimensions from the object dictionary
+                    width = None
+                    height = None
+                    # Look for /Width and /Height in the object dictionary
+                    width_match = re.search(rb"/Width\s+(\d+)", obj_content)
+                    height_match = re.search(rb"/Height\s+(\d+)", obj_content)
+                    if width_match:
+                        width = int(width_match.group(1))
+                    if height_match:
+                        height = int(height_match.group(1))
+
+                    # Try to determine image format from /Filter or /Subtype
+                    image_format = "unknown"
+                    if b"/DCTDecode" in obj_content or b"/DCT" in obj_content:
+                        image_format = "JPEG"
+                    elif b"/FlateDecode" in obj_content:
+                        # Could be PNG or other format, check for PNG signature
+                        if stream_data[:8] == b"\x89PNG\r\n\x1a\n":
+                            image_format = "PNG"
+                        else:
+                            image_format = "Flate"
+                    elif b"/CCITTFaxDecode" in obj_content:
+                        image_format = "CCITT"
+                    elif b"/JBIG2Decode" in obj_content:
+                        image_format = "JBIG2"
+
+                    images.append(
+                        {
+                            "name": f"Image_{obj_num}_{image_position}",
+                            "hash": img_hash,
+                            "width": width,
+                            "height": height,
+                            "size": len(stream_data),
+                            "format": image_format,
+                            "position": image_position,
+                            "object_id": f"{obj_num}_{gen_num}",
+                        }
+                    )
+                    image_position += 1
+                except Exception:
+                    continue
+
+    except Exception:
+        pass
+
+    return images
 
 
 # extract embedded images from Office documents (docx/xlsx/pptx) for diff viewing
@@ -2810,15 +3036,54 @@ def _compute_line_diff(old_lines: list[str], new_lines: list[str], file_path: st
             
             # Always show truly added lines (even if empty list, the check above ensures we only add truly added)
             if truly_added:
-                diff_segments.append(
-                    {
-                        "type": "added",
-                        "new_start": truly_added_indices[0] + 1,
-                        "new_end": truly_added_indices[-1] + 1,
-                        "old_lines": [],
-                        "new_lines": truly_added,
-                    }
-                )
+                # For PDFs: create separate segments for each added line to properly count and display them
+                # This ensures each addition is counted separately, not as a single +1
+                is_pdf = file_path and file_path.lower().endswith(".pdf")
+                if is_pdf:
+                    # Create individual segments for each added line so they're properly counted
+                    # This ensures accurate counting and better display for PDF additions
+                    # For PDFs, split lines on spaces to separate different text boxes
+                    # This handles cases like "polar @ 22" where each part is from a separate text box
+                    for added_line, added_line_idx in zip(truly_added, truly_added_indices):
+                        # Split the line on spaces to separate different text boxes
+                        # Each space-separated part gets its own segment
+                        # Reverse the order so parts appear in the correct sequence (last part first)
+                        parts = [part.strip() for part in added_line.split() if part.strip()]
+                        if len(parts) > 1:
+                            # Multiple parts - reverse order and create separate segments for each
+                            parts = list(reversed(parts))
+                            for part_idx, part in enumerate(parts):
+                                diff_segments.append(
+                                    {
+                                        "type": "added",
+                                        "new_start": added_line_idx + 1 + part_idx,
+                                        "new_end": added_line_idx + 1 + part_idx,
+                                        "old_lines": [],
+                                        "new_lines": [part],
+                                    }
+                                )
+                        else:
+                            # Single part or no spaces - keep as one segment
+                            diff_segments.append(
+                                {
+                                    "type": "added",
+                                    "new_start": added_line_idx + 1,
+                                    "new_end": added_line_idx + 1,
+                                    "old_lines": [],
+                                    "new_lines": [added_line],
+                                }
+                            )
+                else:
+                    # For non-PDFs: use the original grouped approach (more efficient for large files)
+                    diff_segments.append(
+                        {
+                            "type": "added",
+                            "new_start": truly_added_indices[0] + 1,
+                            "new_end": truly_added_indices[-1] + 1,
+                            "old_lines": [],
+                            "new_lines": truly_added,
+                        }
+                    )
         elif tag == "replace":
             # Stage B: within changed lines, use word-level diff with Jaccard similarity check
             # this prevents full-line replacements when only a few words differ
@@ -2846,6 +3111,106 @@ def _compute_line_diff(old_lines: list[str], new_lines: list[str], file_path: st
                             }
                         )
                     else:
+                        # Special handling for PDFs: if old_line appears as a prefix of new_line
+                        # and new_line has additional content, treat it as: old_line was removed,
+                        # and only show the new content in current. This handles cases where text
+                        # was removed from PDF but still appears in extraction.
+                        # Also preserves separate lines for edits from different text boxes.
+                        is_pdf = file_path and file_path.lower().endswith(".pdf")
+                        if is_pdf and old_line is not None and new_line is not None:
+                            # Handle any content type: letters, numbers, symbols, etc.
+                            # Don't require old_line to have letters - numbers-only lines are valid
+                            old_stripped = old_line.strip() if old_line else ""
+                            new_stripped = new_line.strip() if new_line else ""
+                            # Check if old_line appears as a prefix of new_line
+                            # and new_line has additional content after it
+                            # Works for any content: "123" in "123456", "abc" in "abcdef", etc.
+                            if old_stripped and new_stripped and new_stripped.startswith(old_stripped) and len(new_stripped) > len(old_stripped):
+                                # Extract remaining content after the old_line prefix
+                                remaining = new_stripped[len(old_stripped):].lstrip()
+                                # Treat as removal if there's any remaining non-whitespace content
+                                # This works for numbers, letters, symbols, anything
+                                if remaining and remaining.strip():
+                                    # Show old_line as removed - this will appear on its own line in the diff
+                                    diff_segments.append(
+                                        {
+                                            "type": "removed",
+                                            "old_start": i1 + line_idx + 1,
+                                            "old_end": i1 + line_idx + 1,
+                                            "old_lines": [old_line],
+                                            "new_lines": [],
+                                        }
+                                    )
+                                    # Always create a separate "added" segment for the remaining content
+                                    # This ensures removals and additions from different text boxes appear on separate lines
+                                    # The frontend will display removed and added segments on separate rows
+                                    # For PDFs, split on spaces to separate different text boxes (e.g., "polar @ 22")
+                                    # First split by newlines, then by spaces within each line
+                                    remaining_lines = [line.strip() for line in remaining.split("\n") if line.strip()]
+                                    if remaining_lines:
+                                        # Add each remaining line as a separate "added" segment
+                                        # For PDFs, further split each line on spaces to separate text boxes
+                                        rem_line_idx = 0
+                                        for rem_line in remaining_lines:
+                                            # Split on spaces for PDFs to separate different text boxes
+                                            # Reverse the order so parts appear in the correct sequence (last part first)
+                                            parts = [part.strip() for part in rem_line.split() if part.strip()]
+                                            if len(parts) > 1:
+                                                # Multiple parts - reverse order and create separate segments for each
+                                                parts = list(reversed(parts))
+                                                for part_idx, part in enumerate(parts):
+                                                    diff_segments.append(
+                                                        {
+                                                            "type": "added",
+                                                            "new_start": j1 + line_idx + 1 + rem_line_idx + part_idx,
+                                                            "new_end": j1 + line_idx + 1 + rem_line_idx + part_idx,
+                                                            "old_lines": [],
+                                                            "new_lines": [part],
+                                                        }
+                                                    )
+                                                rem_line_idx += len(parts) - 1
+                                            else:
+                                                # Single part or no spaces - keep as one segment
+                                                diff_segments.append(
+                                                    {
+                                                        "type": "added",
+                                                        "new_start": j1 + line_idx + 1 + rem_line_idx,
+                                                        "new_end": j1 + line_idx + 1 + rem_line_idx,
+                                                        "old_lines": [],
+                                                        "new_lines": [rem_line],
+                                                    }
+                                                )
+                                            rem_line_idx += 1
+                                    else:
+                                        # Single remaining content - split on spaces for PDFs
+                                        # Reverse the order so parts appear in the correct sequence (last part first)
+                                        parts = [part.strip() for part in remaining.split() if part.strip()]
+                                        if len(parts) > 1:
+                                            # Multiple parts - reverse order and create separate segments for each
+                                            parts = list(reversed(parts))
+                                            for part_idx, part in enumerate(parts):
+                                                diff_segments.append(
+                                                    {
+                                                        "type": "added",
+                                                        "new_start": j1 + line_idx + 1 + part_idx,
+                                                        "new_end": j1 + line_idx + 1 + part_idx,
+                                                        "old_lines": [],
+                                                        "new_lines": [part],
+                                                    }
+                                                )
+                                        else:
+                                            # Single part - show as added on separate line
+                                            diff_segments.append(
+                                                {
+                                                    "type": "added",
+                                                    "new_start": j1 + line_idx + 1,
+                                                    "new_end": j1 + line_idx + 1,
+                                                    "old_lines": [],
+                                                    "new_lines": [remaining],
+                                                }
+                                            )
+                                    continue
+                        
                         # lines are different - use appropriate diff level (word or character)
                         # character-level diffing is automatically used for JSON files and lines without word boundaries
                         old_parts, new_parts = _compute_char_diff(
@@ -2928,17 +3293,49 @@ def _compute_line_diff(old_lines: list[str], new_lines: list[str], file_path: st
                             )
                     elif sect_tag == "insert":
                         # lines added
+                        # For PDFs, split on spaces to separate different text boxes
+                        is_pdf = file_path and file_path.lower().endswith(".pdf")
                         for line_idx in range(sect_j2 - sect_j1):
                             new_line = new_section[sect_j1 + line_idx]
-                            diff_segments.append(
-                                {
-                                    "type": "added",
-                                    "new_start": j1 + sect_j1 + line_idx + 1,
-                                    "new_end": j1 + sect_j1 + line_idx + 1,
-                                    "old_lines": [],
-                                    "new_lines": [new_line],
-                                }
-                            )
+                            if is_pdf:
+                                # Split the line on spaces to separate different text boxes
+                                # Reverse the order so parts appear in the correct sequence (last part first)
+                                parts = [part.strip() for part in new_line.split() if part.strip()]
+                                if len(parts) > 1:
+                                    # Multiple parts - reverse order and create separate segments for each
+                                    parts = list(reversed(parts))
+                                    for part_idx, part in enumerate(parts):
+                                        diff_segments.append(
+                                            {
+                                                "type": "added",
+                                                "new_start": j1 + sect_j1 + line_idx + 1 + part_idx,
+                                                "new_end": j1 + sect_j1 + line_idx + 1 + part_idx,
+                                                "old_lines": [],
+                                                "new_lines": [part],
+                                            }
+                                        )
+                                else:
+                                    # Single part or no spaces - keep as one segment
+                                    diff_segments.append(
+                                        {
+                                            "type": "added",
+                                            "new_start": j1 + sect_j1 + line_idx + 1,
+                                            "new_end": j1 + sect_j1 + line_idx + 1,
+                                            "old_lines": [],
+                                            "new_lines": [new_line],
+                                        }
+                                    )
+                            else:
+                                # Non-PDF: keep as single segment
+                                diff_segments.append(
+                                    {
+                                        "type": "added",
+                                        "new_start": j1 + sect_j1 + line_idx + 1,
+                                        "new_end": j1 + sect_j1 + line_idx + 1,
+                                        "old_lines": [],
+                                        "new_lines": [new_line],
+                                    }
+                                )
                     elif sect_tag == "replace":
                         # lines replaced - apply Jaccard similarity check
                         for line_idx in range(min(sect_i2 - sect_i1, sect_j2 - sect_j1)):
@@ -4243,6 +4640,100 @@ def build_app(event_bus) -> Flask:
                             else []
                         )
                         images_current = _extract_images_from_office_doc(path)
+                    elif is_pdf:
+                        # extract images from both PDF versions
+                        images_baseline = (
+                            _extract_images_from_pdf(stored_path)
+                            if stored_path and os.path.exists(stored_path)
+                            else []
+                        )
+                        images_current = _extract_images_from_pdf(path)
+                        
+                        # For PDFs: Use hash/position-based matching (similar to non-.docx Office docs)
+                        RESIZE_TOLERANCE_PX = 1  # pixel tolerance
+                        RESIZE_TOLERANCE_PCT = 0.01  # 1% tolerance
+                        
+                        baseline_img_map = {img["hash"]: img for img in images_baseline}
+                        current_img_map = {img["hash"]: img for img in images_current}
+                        baseline_hashes = set(baseline_img_map.keys())
+                        current_hashes = set(current_img_map.keys())
+
+                        # added images (new hash)
+                        for img_hash in current_hashes - baseline_hashes:
+                            img_data = current_img_map[img_hash].copy()
+                            image_changes.append(
+                                {
+                                    "change": "added",
+                                    "image": img_data,
+                                    "type": "image",
+                                }
+                            )
+
+                        # removed images (hash no longer exists)
+                        for img_hash in baseline_hashes - current_hashes:
+                            img_data = baseline_img_map[img_hash].copy()
+                            image_changes.append(
+                                {
+                                    "change": "removed",
+                                    "image": img_data,
+                                    "type": "image",
+                                }
+                            )
+
+                        # Check for resizes by comparing images with same hash
+                        common_hashes = baseline_hashes & current_hashes
+                        for img_hash in common_hashes:
+                            baseline_img = baseline_img_map[img_hash]
+                            current_img = current_img_map[img_hash]
+                            
+                            baseline_width = baseline_img.get("width")
+                            baseline_height = baseline_img.get("height")
+                            current_width = current_img.get("width")
+                            current_height = current_img.get("height")
+                            
+                            if (
+                                baseline_width is not None
+                                and baseline_height is not None
+                                and current_width is not None
+                                and current_height is not None
+                            ):
+                                width_diff = abs(current_width - baseline_width)
+                                height_diff = abs(current_height - baseline_height)
+                                width_pct_diff = (
+                                    width_diff / baseline_width if baseline_width > 0 else 0
+                                )
+                                height_pct_diff = (
+                                    height_diff / baseline_height if baseline_height > 0 else 0
+                                )
+                                
+                                is_resized = (
+                                    width_diff > RESIZE_TOLERANCE_PX
+                                    or width_pct_diff > RESIZE_TOLERANCE_PCT
+                                ) or (
+                                    height_diff > RESIZE_TOLERANCE_PX
+                                    or height_pct_diff > RESIZE_TOLERANCE_PCT
+                                )
+                                
+                                if is_resized:
+                                    image_changes.append(
+                                        {
+                                            "change": "resized",
+                                            "image": current_img,
+                                            "old_width": baseline_width,
+                                            "old_height": baseline_height,
+                                            "new_width": current_width,
+                                            "new_height": current_height,
+                                            "type": "image",
+                                        }
+                                    )
+                    if is_office:
+                        # extract images from both versions
+                        images_baseline = (
+                            _extract_images_from_office_doc(stored_path)
+                            if stored_path and os.path.exists(stored_path)
+                            else []
+                        )
+                        images_current = _extract_images_from_office_doc(path)
 
                         # compare images to detect add/remove/replace/resize
                         # For .docx files, use position-based matching to accurately identify which image changed
@@ -4554,7 +5045,7 @@ def build_app(event_bus) -> Flask:
                             
                             image_changes.sort(key=sort_key)
                         else:
-                            # For non-.docx files (PPTX, XLSX): Use hash/name-based matching (existing logic)
+                            # For non-.docx Office files (PPTX, XLSX): Use hash/name-based matching (existing logic)
                             baseline_img_map = {img["hash"]: img for img in images_baseline}
                             current_img_map = {img["hash"]: img for img in images_current}
                             baseline_img_by_name = {img["name"]: img for img in images_baseline}
