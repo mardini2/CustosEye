@@ -52,15 +52,26 @@
       to { opacity:1; transform:translateY(0); }
     }
     .auth-container {
-      background:var(--panel); border:1px solid var(--border); border-radius:12px;
-      padding:32px; max-width:400px; width:100%; box-shadow:0 6px 20px rgba(0,0,0,0.15);
+      background:var(--panel); border:1px solid var(--border); border-radius:16px;
+      padding:40px; max-width:440px; width:100%; box-shadow:0 8px 24px rgba(0,0,0,0.2);
       will-change:transform, opacity;
+      position: relative;
     }
     .auth-title {
-      font-size:24px; font-weight:700; margin:0 0 8px; text-align:center;
+      font-size:28px; font-weight:700; margin:0 0 8px; text-align:center;
+      letter-spacing:-0.5px;
     }
     .auth-subtitle {
-      color:var(--muted); font-size:13px; text-align:center; margin:0 0 24px;
+      color:var(--muted); font-size:14px; text-align:center; margin:0 0 32px;
+    }
+    .auth-logo {
+      width: 80px;
+      height: 80px;
+      border-radius: 16px;
+      opacity: 0.95;
+      margin: 0 auto 20px;
+      display: block;
+      filter: drop-shadow(0 4px 12px rgba(0,0,0,0.2));
     }
     .form-group {
       margin-bottom:16px;
@@ -70,10 +81,15 @@
     }
     .form-input {
       width:100%; background:var(--input); border:1px solid var(--border);
-      padding:10px 12px; border-radius:8px; color:var(--text); font-size:14px;
+      padding:12px 14px; border-radius:10px; color:var(--text); font-size:14px;
+      transition: all 0.2s ease;
     }
     .form-input:focus {
       outline:2px solid var(--accent); outline-offset:2px; border-color:var(--accent);
+      box-shadow: 0 0 0 3px color-mix(in oklab, var(--accent) 20%, transparent);
+    }
+    .form-input:hover:not(:focus) {
+      border-color: color-mix(in oklab, var(--accent) 30%, var(--border));
     }
     .password-wrapper {
       position:relative;
@@ -93,11 +109,24 @@
     }
     .btn {
       width:100%; background:var(--accent); color:white; border:0;
-      padding:12px; border-radius:8px; cursor:pointer; font-size:14px; font-weight:500;
+      padding:14px; border-radius:10px; cursor:pointer; font-size:15px; font-weight:600;
       margin-top:8px;
+      transition: all 0.2s ease;
+      box-shadow: 0 2px 8px color-mix(in oklab, var(--accent) 30%, transparent);
     }
-    .btn:hover { opacity:0.9; }
-    .btn:disabled { opacity:0.6; cursor:not-allowed; }
+    .btn:hover { 
+      opacity:0.95; 
+      transform: translateY(-1px);
+      box-shadow: 0 4px 12px color-mix(in oklab, var(--accent) 40%, transparent);
+    }
+    .btn:active {
+      transform: translateY(0);
+    }
+    .btn:disabled { 
+      opacity:0.6; 
+      cursor:not-allowed;
+      transform: none;
+    }
     .error {
       background:rgba(212,60,60,0.1); border:1px solid var(--bad);
       color:var(--bad); padding:10px; border-radius:8px; font-size:13px; margin-bottom:16px;
@@ -120,8 +149,8 @@
   <iframe id="dashboardPreview" class="dashboard-background" src="/preview" title="Dashboard Preview"></iframe>
   <div class="auth-overlay">
   <div class="auth-container">
-    <div style="text-align:center; margin-bottom:24px;">
-      <img src="/favicon.ico" alt="CustosEye" style="width:80px;height:80px;border-radius:12px;opacity:.95; margin-bottom:16px;" />
+    <div style="text-align:center; margin-bottom:32px;">
+      <img src="/static/assets/logo.svg" alt="CustosEye" class="auth-logo" />
       <h1 class="auth-title" style="margin-bottom:4px;">CustosEye</h1>
       <p class="auth-subtitle">Sign in to your account</p>
     </div>
@@ -171,22 +200,35 @@
       <a href="/auth/forgot-username">Forgot username?</a>
     </div>
     
-    <div style="text-align:center; margin-top:24px; padding-top:24px; border-top:1px solid var(--border);">
-      <button id="shutdownBtn" class="btn" style="background:var(--bad); padding:8px 16px; font-size:13px; width:auto; display:inline-block;">Shutdown CustosEye</button>
+    <div style="text-align:center; margin-top:32px; padding-top:24px; border-top:1px solid var(--border);">
+      <button id="shutdownBtn" class="btn" style="background:var(--bad); padding:10px 20px; font-size:13px; font-weight:500; width:auto; display:inline-block; box-shadow: 0 2px 8px color-mix(in oklab, var(--bad) 30%, transparent);">Shutdown CustosEye</button>
     </div>
   </div>
   
   <script>
-    // handle iframe loading for smooth background transition
+    // handle iframe loading for smooth background transition - lazy load to improve initial page load
     const dashboardPreview = document.getElementById('dashboardPreview');
     if (dashboardPreview) {
-      // fade in iframe when loaded to prevent freeze/lag feeling
-      dashboardPreview.addEventListener('load', function() {
-        this.classList.add('loaded');
-      });
-      // if iframe is already loaded (cached), show it immediately
-      if (dashboardPreview.complete || dashboardPreview.readyState === 'complete') {
-        dashboardPreview.classList.add('loaded');
+      // Delay iframe loading to improve initial page load time
+      // Show content immediately, load background iframe after page is interactive
+      const loadIframe = () => {
+        if (!dashboardPreview.src) {
+          dashboardPreview.src = '/preview';
+        }
+        // fade in iframe when loaded to prevent freeze/lag feeling
+        dashboardPreview.addEventListener('load', function() {
+          this.classList.add('loaded');
+        }, { once: true });
+        // if iframe is already loaded (cached), show it immediately
+        if (dashboardPreview.complete || dashboardPreview.readyState === 'complete') {
+          dashboardPreview.classList.add('loaded');
+        }
+      };
+      
+      if (window.requestIdleCallback) {
+        requestIdleCallback(loadIframe, { timeout: 1000 });
+      } else {
+        setTimeout(loadIframe, 500); // Fallback delay
       }
     }
     

@@ -40,6 +40,7 @@
       border:none; transform:scale(1.1);
       opacity:0; transition:opacity 0.4s ease-in-out;
       will-change:opacity;
+      loading:lazy;
     }
     .dashboard-background.loaded {
       opacity:1;
@@ -152,12 +153,48 @@
     .hidden {
       display:none !important;
     }
+    .close-btn {
+      position: absolute;
+      top: 16px;
+      right: 16px;
+      width: 36px;
+      height: 36px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--input);
+      color: var(--text);
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: all 0.2s ease;
+      z-index: 10;
+    }
+    .close-btn:hover {
+      background: var(--panel);
+      border-color: var(--accent);
+      color: var(--accent);
+      transform: scale(1.05);
+    }
+    .close-btn:focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: 2px;
+    }
+    .auth-container {
+      position: relative;
+    }
   </style>
 </head>
 <body>
-  <iframe id="dashboardPreview" class="dashboard-background" src="/preview" title="Dashboard Preview"></iframe>
+  <iframe id="dashboardPreview" class="dashboard-background" loading="lazy" title="Dashboard Preview"></iframe>
   <div class="auth-overlay">
   <div class="auth-container" data-totp-enabled="{% if totp_enabled %}true{% else %}false{% endif %}">
+    <button id="close2faBtn" class="close-btn" aria-label="Close 2FA page" title="Close and return to dashboard">
+      <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <line x1="15" y1="5" x2="5" y2="15"></line>
+        <line x1="5" y1="5" x2="15" y2="15"></line>
+      </svg>
+    </button>
     {% if totp_enabled %}
     <!-- 2FA already enabled - show status/verification page -->
     <h1 class="auth-title">Two-Factor Authentication</h1>
@@ -195,7 +232,15 @@
         <button id="disable2faBtn" class="btn" style="background:var(--bad); width:100%; margin-bottom:4px;">Disable 2FA</button>
         <span style="color:var(--bad); font-size:12px; font-weight:500;">(not recommended)</span>
       </div>
-      <a href="/" style="color:var(--accent); text-decoration:none; font-size:13px;">← Back to Dashboard</a>
+      <div style="text-align:center;">
+        <a href="/" style="color:var(--accent); text-decoration:none; font-size:13px; display:inline-flex; align-items:center; gap:6px;">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M10 2 L6 6 L10 10" stroke="currentColor" fill="none"/>
+            <path d="M6 6 L14 6" stroke="currentColor" fill="none"/>
+          </svg>
+          Back to Dashboard
+        </a>
+      </div>
     </div>
     
     <!-- custom confirmation Modal -->
@@ -319,17 +364,39 @@
       fadeOutAndNavigate(url);
     };
     
-    // handle iframe loading for smooth background transition
+    // handle iframe loading for smooth background transition - lazy load to improve initial page load
     const dashboardPreview = document.getElementById('dashboardPreview');
     if (dashboardPreview) {
-      // fade in iframe when loaded to prevent freeze/lag feeling
-      dashboardPreview.addEventListener('load', function() {
-        this.classList.add('loaded');
-      });
-      // if iframe is already loaded (cached), show it immediately
-      if (dashboardPreview.complete || dashboardPreview.readyState === 'complete') {
-        dashboardPreview.classList.add('loaded');
+      // Delay iframe loading to improve initial page load time
+      // Show content immediately, load background iframe after page is interactive
+      // Use requestIdleCallback if available, otherwise use a short delay
+      const loadIframe = () => {
+        if (!dashboardPreview.src) {
+          dashboardPreview.src = '/preview';
+        }
+        // fade in iframe when loaded to prevent freeze/lag feeling
+        dashboardPreview.addEventListener('load', function() {
+          this.classList.add('loaded');
+        }, { once: true });
+        // if iframe is already loaded (cached), show it immediately
+        if (dashboardPreview.complete || dashboardPreview.readyState === 'complete') {
+          dashboardPreview.classList.add('loaded');
+        }
+      };
+      
+      if (window.requestIdleCallback) {
+        requestIdleCallback(loadIframe, { timeout: 1000 });
+      } else {
+        setTimeout(loadIframe, 500); // Fallback delay
       }
+    }
+    
+    // Close button functionality
+    const close2faBtn = document.getElementById('close2faBtn');
+    if (close2faBtn) {
+      close2faBtn.addEventListener('click', () => {
+        fadeOutAndNavigate('/');
+      });
     }
     
     // check if 2FA is enabled (read from data attribute)
