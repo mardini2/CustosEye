@@ -115,12 +115,12 @@ class IntegrityChecker:
 
                 # missing file - emit immediately when file is deleted or missing
                 # Check for missing files BEFORE checking for hash requirement
-                # This ensures deletion events are always emitted, even for files without hashes
+                # This makes sure deletion events are always emitted, even for files without hashes
                 file_exists = os.path.exists(path)
                 if not file_exists:  # check if the file actually exists
                     # File is missing - check if we need to emit a deletion event
                     # We emit only if the file was previously existing (status was not "missing")
-                    # This ensures we don't emit false deletion events on initial discovery
+                    # This makes sure we don't emit false deletion events on initial discovery
                     prev_status = self._last_status.get(path)
                     should_emit_deletion = prev_status is not None and prev_status != "missing"
 
@@ -149,7 +149,7 @@ class IntegrityChecker:
                     not expected
                 ):  # skip this entry if hash is missing (but we already checked for missing files above)
                     # File exists but has no hash - emit event if status changed (e.g., missing -> ok)
-                    # This ensures files without hashes can still trigger deletion events and reappearance notifications
+                    # This makes sure files without hashes can still trigger deletion events and reappearance notifications
                     self._emit_if_changed(
                         path,
                         "ok",  # file exists but can't be verified (no hash)

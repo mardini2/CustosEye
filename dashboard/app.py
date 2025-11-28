@@ -396,7 +396,7 @@ def _fingerprint_base(ev: dict) -> str:
 
 # Check if the current event is "worse" than the previous one
 # Higher severity or worse verdict means we should show the new one even if it's a duplicate
-# This ensures critical events don't get hidden by deduplication
+# This makes sure critical events don't get hidden by deduplication
 def _is_worse(prev: dict, cur: dict) -> bool:
     pl = _SEV_RANK.get(str(prev.get("level", "info")).lower(), 0)
     cl = _SEV_RANK.get(str(cur.get("level", "info")).lower(), 0)
@@ -454,7 +454,7 @@ def _coalesce_or_admit(ev: dict) -> bool:
     prev: dict[str, Any] = hit["ref"]
 
     # If the new event is worse (higher severity, worse verdict), replace the old one
-    # This ensures critical stuff doesn't get hidden
+    # This makes sure critical stuff doesn't get hidden
     if _is_worse(prev, ev):
         ev["seen"] = 1
         RECENT_MAP[fp] = {"ref": ev, "seen": 1, "last_seen": now}
@@ -1908,7 +1908,7 @@ def _extract_formatting_from_office_doc(path: str) -> list[dict[str, Any]]:
                                     )
                                 styles = _resolve_pptx_run_styles(run_xml, defaults)
                                 # Use composite key (slide_idx << 16) | para_idx as paragraph_index
-                                # This ensures each paragraph on each slide has a unique identifier
+                                # This makes sure each paragraph on each slide has a unique identifier
                                 # This prevents formatting-only changes from being reported as text changes
                                 composite_para_idx = (slide_idx << 16) | para_idx
                                 entries.append(
@@ -2993,7 +2993,7 @@ def _compute_char_diff(
 
         # use autojunk=False for better matching of similar sequences
         # SequenceMatcher will match words based on normalized comparison
-        # this ensures apostrophe variants (what's vs whats) are matched correctly
+        # this makes sure apostrophe variants (what's vs whats) are matched correctly
         matcher = SequenceMatcher(None, old_normalized, new_normalized, autojunk=False)
 
         for tag, i1, i2, j1, j2 in matcher.get_opcodes():
@@ -3141,7 +3141,7 @@ def _compute_line_diff(
                     truly_deleted.append(deleted_lines[del_idx])
                     truly_deleted_indices.append(i1 + del_idx)
 
-            # Always show truly deleted lines (even if empty list, the check above ensures we only add truly deleted)
+            # Always show truly deleted lines (even if empty list, the check above makes sure we only add truly deleted)
             if truly_deleted:
                 diff_segments.append(
                     {
@@ -3179,14 +3179,14 @@ def _compute_line_diff(
                     truly_added.append(inserted_lines[ins_idx])
                     truly_added_indices.append(j1 + ins_idx)
 
-            # Always show truly added lines (even if empty list, the check above ensures we only add truly added)
+            # Always show truly added lines (even if empty list, the check above makes sure we only add truly added)
             if truly_added:
                 # For PDFs: create separate segments for each added line to properly count and display them
-                # This ensures each addition is counted separately, not as a single +1
+                # This makes sure each addition is counted separately, not as a single +1
                 is_pdf = file_path and file_path.lower().endswith(".pdf")
                 if is_pdf:
                     # Create individual segments for each added line so they're properly counted
-                    # This ensures accurate counting and better display for PDF additions
+                    # This makes sure accurate counting and better display for PDF additions
                     # For PDFs, split lines on spaces to separate different text boxes
                     # This handles cases like "polar @ 22" where each part is from a separate text box
                     for added_line, added_line_idx in zip(truly_added, truly_added_indices):
@@ -3292,7 +3292,7 @@ def _compute_line_diff(
                                         }
                                     )
                                     # Always create a separate "added" segment for the remaining content
-                                    # This ensures removals and additions from different text boxes appear on separate lines
+                                    # This makes sure removals and additions from different text boxes appear on separate lines
                                     # The frontend will display removed and added segments on separate rows
                                     # For PDFs, split on spaces to separate different text boxes (e.g., "polar @ 22")
                                     # First split by newlines, then by spaces within each line

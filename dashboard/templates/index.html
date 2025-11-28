@@ -3718,7 +3718,7 @@
     // render integrity targets table with status, actions, and baseline info
     function renderTargets(list) {
       // CRITICAL: always filter out optimistically removed items before rendering
-      // This ensures removed items can never reappear until server confirms removal
+      // This makes sure removed items can never reappear until server confirms removal
       const visibleList = getVisibleTargets(list);
       
       // use stable hash for change detection (sorted, deterministic)

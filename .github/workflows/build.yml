@@ -29,6 +29,9 @@ jobs:
 
       - name: Lint, typecheck, test
         shell: pwsh
+        env:
+          CUSTOSEYE_SESSION_SECRET: "ci-test-session-secret-64-chars-12345678901234567890123456789012"
+          CUSTOSEYE_PASSWORD_PEPPER: "ci-test-password-pepper-64-chars-12345678901234567890123456789012"
         run: |
           python -m black --check app agent algorithm dashboard tests
           python -m ruff check app agent algorithm dashboard tests

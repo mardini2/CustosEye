@@ -36,7 +36,7 @@ the engine also learns over time. every time it sees a process, it records the h
 when evaluating a process, it checks how many times it has seen this exact hash or this executable name before, but with a twist:
 older sightings count less than recent ones. this means if you used Chrome yesterday it still counts as common, but if you used
 some random tool six months ago, the engine has mostly forgotten about it. this time-decay prevents the database from growing
-forever and ensures the engine adapts to changes in your system over time.
+forever and makes sure the engine adapts to changes in your system over time.
 
 the confidence score reflects how sure the engine is about the verdict. verdicts near the boundaries (like a score right at -0.5)
 get lower confidence because the process could easily fall into a different category. verdicts far from boundaries (like a score

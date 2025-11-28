@@ -20,7 +20,7 @@ def generate_secret(length: int = 32) -> str:
 def setup_env() -> None:
     """
     main setup function. checks if .env exists, and if not, creates it with auto-generated secrets.
-    this ensures every dev gets unique secrets without manual work.
+    this makes sure every dev gets unique secrets without manual work.
     """
     env_file = Path(".env")
     

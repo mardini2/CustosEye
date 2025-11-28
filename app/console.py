@@ -26,6 +26,48 @@ try:
 except ImportError:
     pass  # python-dotenv is optional, but recommended
 
+# Auto-generate .env file if it doesn't exist and secrets are missing (for end users)
+# This makes sure first-time users do not need to manually run setup_env.py
+if not os.getenv("CUSTOSEYE_SESSION_SECRET") or not os.getenv("CUSTOSEYE_PASSWORD_PEPPER"):
+    import secrets
+    
+    # Resolve base directory (works for both dev and packaged exe)
+    if getattr(sys, "frozen", False):
+        base_dir = Path(sys.executable).parent
+    else:
+        base_dir = Path(__file__).resolve().parents[1]
+    
+    env_file = base_dir / ".env"
+    if not env_file.exists():
+        # Generate secrets like setup_env.py does
+        session_secret = secrets.token_hex(32)  # 64-char hex string
+        password_pepper = secrets.token_hex(32)  # 64-char hex string
+        env_content = f"""# =========================================
+# CustosEye Environment Variables
+# =========================================
+# auto-generated on first run - keep this file secure and never commit it!
+
+# required: secret key for Flask sessions (auto-generated)
+CUSTOSEYE_SESSION_SECRET={session_secret}
+
+# required: additional secret for password hashing (auto-generated)
+CUSTOSEYE_PASSWORD_PEPPER={password_pepper}
+
+# optional: issuer name for TOTP QR codes (defaults to "CustosEye" if not set)
+CUSTOSEYE_TOTP_ISSUER=CustosEye
+"""
+        try:
+            env_file.write_text(env_content, encoding="utf-8")
+            # Reload .env file now that we created it
+            try:
+                from dotenv import load_dotenv
+                load_dotenv()
+            except ImportError:
+                pass
+        except Exception:
+            # If we ca not write .env, the import will fail with a clear error from auth.py
+            pass
+
 from agent.integrity_check import IntegrityChecker  # agent that monitors file integrity
 from agent.monitor import ProcessMonitor  # agent that monitors running processes
 from agent.network_scan import NetworkSnapshot  # agent that scans network connections

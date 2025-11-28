@@ -188,7 +188,7 @@
   aboutContainer.addEventListener('mouseenter', () => {
     if (!clickBlockActive && !aboutContainer.classList.contains('click-just-happened')) {
       cancelCloseTimer();
-      // ensure class is set so submenu stays open even when mouse leaves (during grace period)
+      // make sure class is set so submenu stays open even when mouse leaves (during grace period)
       toggleSubmenu(true);
     }
   });
