@@ -83,10 +83,18 @@
         after you explicitly consent. You can change your preference at any time using the controls below.
       </p>
 
-      <!-- current status display -->
-      <div style="padding: 16px; background: rgba(0,0,0,0.2); border-radius: 8px; border: 1px solid rgba(255,255,255,0.1); margin-bottom: 24px;">
-        <h3 style="margin-bottom: 8px; font-size: 1rem; color: #c8d0dd;">Current Status</h3>
-        <div id="cookie-status" style="font-size: 1.1rem; font-weight: 500;"></div>
+      <!-- current status display - terminal design -->
+      <div style="margin-bottom: 24px;">
+        <h3 style="margin-bottom: 12px; font-size: 1rem; color: #c8d0dd;">Current Status</h3>
+        <div style="background: #0a0e27; border: 1px solid rgba(139, 92, 246, 0.3); border-radius: 8px; padding: 20px; font-family: 'Consolas', 'Monaco', 'Courier New', monospace; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.05);">
+          <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 12px;">
+            <span style="color: #8b5cf6; font-weight: 600;">$</span>
+            <span style="color: #9aa3b2;">custoseye --cookie-status</span>
+          </div>
+          <div id="cookie-status" style="color: #4ade80; font-size: 0.95rem; line-height: 1.6; min-height: 24px;">
+            <span style="color: #6b7280;">[</span><span style="color: #9ca3af;">LOADING</span><span style="color: #6b7280;">]</span> Checking consent status...
+          </div>
+        </div>
       </div>
 
       <!-- accept/decline buttons for cookie consent -->
@@ -133,11 +141,11 @@
     function setStatusText() {
       const v = localStorage.getItem(KEY);
       if (v === 'granted') {
-        statusEl.innerHTML = '<span style="color: #4ade80;">✓ Analytics cookies accepted</span>';
+        statusEl.innerHTML = '<span style="color: #6b7280;">[</span><span style="color: #4ade80;">✓ GRANTED</span><span style="color: #6b7280;">]</span> <span style="color: #4ade80;">Analytics cookies: ENABLED</span><br><span style="color: #9ca3af; font-size: 0.85rem;">→ Google Analytics will track page views and navigation</span>';
       } else if (v === 'denied') {
-        statusEl.innerHTML = '<span style="color: #f87171;">✗ Analytics cookies declined</span>';
+        statusEl.innerHTML = '<span style="color: #6b7280;">[</span><span style="color: #f87171;">✗ DENIED</span><span style="color: #6b7280;">]</span> <span style="color: #f87171;">Analytics cookies: DISABLED</span><br><span style="color: #9ca3af; font-size: 0.85rem;">→ No analytics tracking, all data stays local</span>';
       } else {
-        statusEl.innerHTML = '<span style="color: #9aa3b2;">No preference set yet</span>';
+        statusEl.innerHTML = '<span style="color: #6b7280;">[</span><span style="color: #fbbf24;">⚠ PENDING</span><span style="color: #6b7280;">]</span> <span style="color: #fbbf24;">No preference set</span><br><span style="color: #9ca3af; font-size: 0.85rem;">→ Use buttons below to set your preference</span>';
       }
     }
 

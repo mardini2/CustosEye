@@ -190,13 +190,31 @@
         <li><strong>About tab:</strong> Version information, build details, buffer size, and runtime stats</li>
       </ul>
 
-      <!-- diagram placeholder -->
-      <div style="margin-top: 24px; margin-bottom: 16px; padding: 24px; background: rgba(0,0,0,0.2); border-radius: 8px; border: 1px dashed rgba(255,255,255,0.2);">
-        <p style="margin: 0; color: #9aa3b2; font-size: 0.9rem; text-align: center;">
-          [IMAGE: architecture diagram placeholder]<br>
-          Suggested: Data flow diagram showing Collection → Trust Scoring → Rules Engine → Event Processing → Dashboard<br>
-          Dimensions: 1200x600px, showing agents, event bus, dashboard, and data storage
-        </p>
+      <!-- architecture diagram with zoom and pan -->
+      <div style="margin-top: 24px; margin-bottom: 16px;">
+        <div style="background: rgba(0,0,0,0.2); border-radius: 8px; border: 1px solid rgba(255,255,255,0.1); overflow: hidden;">
+          <!-- controls -->
+          <div style="padding: 12px 16px; background: rgba(0,0,0,0.3); border-bottom: 1px solid rgba(255,255,255,0.1); display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
+            <span style="color: #9aa3b2; font-size: 0.9rem; margin-right: auto;">Architecture Diagram:</span>
+            <button id="zoom-in-btn" style="background: rgba(139, 92, 246, 0.2); border: 1px solid rgba(139, 92, 246, 0.4); color: #e5e7eb; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-size: 0.9rem; transition: background 0.2s;" onmouseover="this.style.background='rgba(139, 92, 246, 0.3)'" onmouseout="this.style.background='rgba(139, 92, 246, 0.2)'">Zoom In</button>
+            <button id="zoom-out-btn" style="background: rgba(139, 92, 246, 0.2); border: 1px solid rgba(139, 92, 246, 0.4); color: #e5e7eb; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-size: 0.9rem; transition: background 0.2s;" onmouseover="this.style.background='rgba(139, 92, 246, 0.3)'" onmouseout="this.style.background='rgba(139, 92, 246, 0.2)'">Zoom Out</button>
+            <button id="reset-zoom-btn" style="background: rgba(139, 92, 246, 0.2); border: 1px solid rgba(139, 92, 246, 0.4); color: #e5e7eb; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-size: 0.9rem; transition: background 0.2s;" onmouseover="this.style.background='rgba(139, 92, 246, 0.3)'" onmouseout="this.style.background='rgba(139, 92, 246, 0.2)'">Reset</button>
+            <span id="zoom-level" style="color: #9aa3b2; font-size: 0.85rem; min-width: 60px; text-align: right;">100%</span>
+          </div>
+          <!-- SVG container -->
+          <div id="svg-container" style="position: relative; width: 100%; height: 600px; overflow: hidden; background: rgb(35, 32, 48); cursor: grab; touch-action: none;" onmousedown="handleMouseDown(event)" onmousemove="handleMouseMove(event)" onmouseup="handleMouseUp(event)" onmouseleave="handleMouseUp(event)" onwheel="handleWheel(event)">
+            <div id="svg-wrapper" style="position: absolute; top: 0; left: 0; transform-origin: 0 0;">
+              <object id="architecture-svg" data="assets/custoseye-architecture.svg" type="image/svg+xml" width="6928" height="1683" style="display: block; max-width: none; pointer-events: none;">
+                <p style="color: #9aa3b2; padding: 20px; text-align: center;">Unable to load architecture diagram. Please check that the file exists.</p>
+              </object>
+            </div>
+          </div>
+          <div style="padding: 8px 16px; background: rgba(0,0,0,0.2); border-top: 1px solid rgba(255,255,255,0.1);">
+            <p style="margin: 0; color: #9aa3b2; font-size: 0.85rem; text-align: center;">
+              Use mouse wheel to zoom, click and drag to pan. Shows data flow: Collection → Trust Scoring → Rules Engine → Event Processing → Dashboard
+            </p>
+          </div>
+        </div>
       </div>
 
       <h3 style="margin-top: 24px; margin-bottom: 12px; font-size: 1.2rem;">Assumptions and Limitations</h3>
@@ -253,5 +271,286 @@
 
   <!-- GA attaches only after consent -->
   <script src="js/analytics-attach.js?v=2" defer></script>
+
+  <!-- SVG zoom and pan functionality -->
+  <script>
+    (function() {
+      let scale = 1;
+      let panX = 0;
+      let panY = 0;
+      let initialScale = 1;
+      let initialPanX = 0;
+      let initialPanY = 0;
+      let svgWidth = 6928.32;  // Store SVG dimensions
+      let svgHeight = 1683;
+      let isDragging = false;
+      let startX = 0;
+      let startY = 0;
+      let startPanX = 0;
+      let startPanY = 0;
+      const minScale = 0.1;
+      const maxScale = 5;
+      const zoomStep = 0.1;
+
+      const container = document.getElementById('svg-container');
+      const wrapper = document.getElementById('svg-wrapper');
+      const svgImg = document.getElementById('architecture-svg');
+      const zoomLevel = document.getElementById('zoom-level');
+      const zoomInBtn = document.getElementById('zoom-in-btn');
+      const zoomOutBtn = document.getElementById('zoom-out-btn');
+      const resetBtn = document.getElementById('reset-zoom-btn');
+
+      function constrainPan() {
+        const containerRect = container.getBoundingClientRect();
+        const containerWidth = containerRect.width;
+        const containerHeight = containerRect.height;
+        
+        // Calculate scaled dimensions
+        const scaledWidth = svgWidth * scale;
+        const scaledHeight = svgHeight * scale;
+        
+        // Calculate bounds - ensure at least 20% of the diagram is always visible
+        const minVisibleRatio = 0.2;
+        const maxPanX = containerWidth - (scaledWidth * minVisibleRatio);
+        const minPanX = -(scaledWidth * (1 - minVisibleRatio));
+        const maxPanY = containerHeight - (scaledHeight * minVisibleRatio);
+        const minPanY = -(scaledHeight * (1 - minVisibleRatio));
+        
+        // If diagram is smaller than container, center it
+        if (scaledWidth <= containerWidth) {
+          panX = (containerWidth - scaledWidth) / 2;
+        } else {
+          panX = Math.max(minPanX, Math.min(maxPanX, panX));
+        }
+        
+        if (scaledHeight <= containerHeight) {
+          panY = (containerHeight - scaledHeight) / 2;
+        } else {
+          panY = Math.max(minPanY, Math.min(maxPanY, panY));
+        }
+      }
+
+      function updateTransform(smooth = false) {
+        constrainPan();
+        // Remove transition during dragging for smooth movement
+        if (!smooth || isDragging) {
+          wrapper.style.transition = 'none';
+        } else {
+          wrapper.style.transition = 'transform 0.1s';
+        }
+        wrapper.style.transform = `translate(${panX}px, ${panY}px) scale(${scale})`;
+        zoomLevel.textContent = Math.round(scale * 100) + '%';
+      }
+
+      function initializeView() {
+        // Set up immediately with known dimensions (from viewBox: 6928.32 x 1683)
+        // This ensures the diagram is visible right away
+        setupInitialView();
+        
+        // Also try to update when object loads (in case we can get better dimensions)
+        svgImg.addEventListener('load', function() {
+          setTimeout(setupInitialView, 100);
+        });
+      }
+
+      function setupInitialView() {
+        const containerRect = container.getBoundingClientRect();
+        const containerWidth = containerRect.width;
+        const containerHeight = containerRect.height;
+        
+        // Try to get dimensions from object's SVG content
+        let imgWidth = 6928.32; // Default from viewBox
+        let imgHeight = 1683;   // Default from viewBox
+        
+        try {
+          if (svgImg.contentDocument) {
+            const svgDoc = svgImg.contentDocument;
+            const svgElement = svgDoc.querySelector('svg');
+            if (svgElement) {
+              const viewBox = svgElement.getAttribute('viewBox');
+              if (viewBox) {
+                const parts = viewBox.split(/\s+/);
+                if (parts.length >= 4) {
+                  imgWidth = parseFloat(parts[2]) || imgWidth;
+                  imgHeight = parseFloat(parts[3]) || imgHeight;
+                }
+              }
+              // Also try width/height attributes
+              if (svgElement.hasAttribute('width') && svgElement.hasAttribute('height')) {
+                const w = parseFloat(svgElement.getAttribute('width'));
+                const h = parseFloat(svgElement.getAttribute('height'));
+                if (w > 0 && h > 0) {
+                  imgWidth = w;
+                  imgHeight = h;
+                }
+              }
+            }
+          }
+        } catch (e) {
+          // CORS or other error, use defaults
+          console.log('Using default SVG dimensions');
+        }
+        
+        // Store dimensions globally
+        svgWidth = imgWidth;
+        svgHeight = imgHeight;
+        
+        // Calculate scale to fit with some padding (5% margin)
+        const scaleX = (containerWidth * 0.95) / imgWidth;
+        const scaleY = (containerHeight * 0.95) / imgHeight;
+        initialScale = Math.min(scaleX, scaleY, 1); // Don't scale up beyond 100%
+        
+        // Center the image
+        const scaledWidth = imgWidth * initialScale;
+        const scaledHeight = imgHeight * initialScale;
+        initialPanX = (containerWidth - scaledWidth) / 2;
+        initialPanY = (containerHeight - scaledHeight) / 2;
+        
+        scale = initialScale;
+        panX = initialPanX;
+        panY = initialPanY;
+        
+        updateTransform(true);
+      }
+
+      function zoomAtPoint(delta, clientX, clientY) {
+        const rect = container.getBoundingClientRect();
+        const x = clientX - rect.left;
+        const y = clientY - rect.top;
+        
+        const oldScale = scale;
+        scale += delta;
+        scale = Math.max(minScale, Math.min(maxScale, scale));
+        
+        if (scale !== oldScale) {
+          const scaleChange = scale / oldScale;
+          panX = x - (x - panX) * scaleChange;
+          panY = y - (y - panY) * scaleChange;
+          updateTransform(true);
+        }
+      }
+
+      function resetZoom() {
+        scale = initialScale;
+        panX = initialPanX;
+        panY = initialPanY;
+        updateTransform(true);
+      }
+
+      // Mouse wheel zoom
+      window.handleWheel = function(e) {
+        e.preventDefault();
+        const delta = e.deltaY > 0 ? -zoomStep : zoomStep;
+        zoomAtPoint(delta, e.clientX, e.clientY);
+      };
+
+      // Mouse drag pan
+      window.handleMouseDown = function(e) {
+        if (e.button === 0) { // Left mouse button
+          isDragging = true;
+          startX = e.clientX;
+          startY = e.clientY;
+          startPanX = panX;
+          startPanY = panY;
+          container.style.cursor = 'grabbing';
+        }
+      };
+
+      window.handleMouseMove = function(e) {
+        if (isDragging) {
+          panX = startPanX + (e.clientX - startX);
+          panY = startPanY + (e.clientY - startY);
+          updateTransform(false); // No smooth transition during drag
+        }
+      };
+
+      window.handleMouseUp = function(e) {
+        isDragging = false;
+        container.style.cursor = 'grab';
+      };
+
+      // Button controls
+      zoomInBtn.addEventListener('click', function() {
+        const rect = container.getBoundingClientRect();
+        zoomAtPoint(zoomStep, rect.left + rect.width / 2, rect.top + rect.height / 2);
+      });
+
+      zoomOutBtn.addEventListener('click', function() {
+        const rect = container.getBoundingClientRect();
+        zoomAtPoint(-zoomStep, rect.left + rect.width / 2, rect.top + rect.height / 2);
+      });
+
+      resetBtn.addEventListener('click', resetZoom);
+
+      // Touch support for mobile
+      let touchStartDistance = 0;
+      let touchStartScale = 1;
+      let touchStartPanX = 0;
+      let touchStartPanY = 0;
+      let touchStartCenterX = 0;
+      let touchStartCenterY = 0;
+
+      container.addEventListener('touchstart', function(e) {
+        if (e.touches.length === 1) {
+          isDragging = true;
+          startX = e.touches[0].clientX;
+          startY = e.touches[0].clientY;
+          startPanX = panX;
+          startPanY = panY;
+        } else if (e.touches.length === 2) {
+          isDragging = false;
+          const touch1 = e.touches[0];
+          const touch2 = e.touches[1];
+          touchStartDistance = Math.hypot(touch2.clientX - touch1.clientX, touch2.clientY - touch1.clientY);
+          touchStartScale = scale;
+          touchStartPanX = panX;
+          touchStartPanY = panY;
+          touchStartCenterX = (touch1.clientX + touch2.clientX) / 2;
+          touchStartCenterY = (touch1.clientY + touch2.clientY) / 2;
+        }
+      }, { passive: false });
+
+      container.addEventListener('touchmove', function(e) {
+        e.preventDefault();
+        if (e.touches.length === 1 && isDragging) {
+          panX = startPanX + (e.touches[0].clientX - startX);
+          panY = startPanY + (e.touches[0].clientY - startY);
+          updateTransform(false); // No smooth transition during drag
+        } else if (e.touches.length === 2) {
+          const touch1 = e.touches[0];
+          const touch2 = e.touches[1];
+          const distance = Math.hypot(touch2.clientX - touch1.clientX, touch2.clientY - touch1.clientY);
+          const scaleChange = distance / touchStartDistance;
+          scale = Math.max(minScale, Math.min(maxScale, touchStartScale * scaleChange));
+          
+          const centerX = (touch1.clientX + touch2.clientX) / 2;
+          const centerY = (touch1.clientY + touch2.clientY) / 2;
+          const rect = container.getBoundingClientRect();
+          const x = centerX - rect.left;
+          const y = centerY - rect.top;
+          
+          panX = x - (x - touchStartPanX) * scale / touchStartScale;
+          panY = y - (y - touchStartPanY) * scale / touchStartScale;
+          updateTransform(false); // No smooth transition during pinch zoom
+        }
+      }, { passive: false });
+
+      container.addEventListener('touchend', function(e) {
+        isDragging = false;
+      });
+
+      // Initialize - wait for image to load and set up initial view
+      initializeView();
+      
+      // Also handle window resize to recalculate initial view
+      let resizeTimeout;
+      window.addEventListener('resize', function() {
+        clearTimeout(resizeTimeout);
+        resizeTimeout = setTimeout(function() {
+          setupInitialView();
+        }, 250);
+      });
+    })();
+  </script>
 </body>
 </html>
