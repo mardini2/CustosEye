@@ -95,7 +95,7 @@ This document summarizes the comprehensive test suite for CustosEye. The test su
 - **test_exe_smoke_optional.py** - EXE smoke tests
 
 ## Test Count
-Current test count: **252+ tests**
+Current test count: **275 tests** (265 passing, 10 skipped)
 
 ## Coverage Goals
 - Agent modules (monitor, network_scan, integrity_check, rules_engine, win_sign) - Complete

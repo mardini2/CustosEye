@@ -5,10 +5,8 @@ Tests main entry point, event bus, and component initialization.
 
 from __future__ import annotations
 
-import queue
-import sys
 from pathlib import Path
-from unittest.mock import MagicMock, Mock, patch
+from unittest.mock import Mock, patch
 
 import pytest
 
@@ -49,25 +47,25 @@ class TestEventBus:
         """Test that publish sends events to all subscribers"""
         sub1 = event_bus.subscribe()
         sub2 = event_bus.subscribe()
-        
+
         event = {"source": "test", "data": "test"}
         event_bus.publish(event)
-        
+
         # Get events from subscribers
         ev1 = next(sub1)
         ev2 = next(sub2)
-        
+
         assert ev1 == event
         assert ev2 == event
 
     def test_event_bus_publish_handles_full_queue(self, event_bus):
         """Test that publish handles full queues gracefully"""
-        sub = event_bus.subscribe()
-        
+        event_bus.subscribe()  # Create subscriber to test queue behavior
+
         # Fill the queue
         for _ in range(1001):  # More than maxsize
             event_bus.publish({"source": "test"})
-        
+
         # Should not crash
 
     def test_event_bus_subscribe_creates_iterator(self, event_bus):
@@ -78,7 +76,7 @@ class TestEventBus:
     def test_event_bus_subscribe_yields_none_on_timeout(self, event_bus):
         """Test that subscribe yields None on timeout"""
         sub = event_bus.subscribe()
-        
+
         # No events published, should yield None after timeout
         ev = next(sub)
         assert ev is None
@@ -94,10 +92,11 @@ class TestPrintBanner:
         assert mock_print.called
 
     @patch("builtins.print")
-    @patch("app.console._colorama_init", side_effect=ImportError())
-    def test_print_banner_works_without_colorama(self, mock_colorama, mock_print):
+    def test_print_banner_works_without_colorama(self, mock_print):
         """Test that print_banner works without colorama"""
-        print_banner()
+        # Test that it works even if colorama import fails
+        with patch.dict("sys.modules", {"colorama": None}):
+            print_banner()
         assert mock_print.called
 
 
@@ -110,6 +109,7 @@ class TestMain:
     @patch("app.console.run_dashboard")
     @patch("app.console.print_banner")
     @patch("app.console._resolve_base_dir")
+    @patch("sys.argv", ["__main__.py"])  # Remove pytest's -q flag
     def test_main_initializes_components(
         self,
         mock_resolve_dir,
@@ -122,18 +122,18 @@ class TestMain:
     ):
         """Test that main initializes all components"""
         mock_resolve_dir.return_value = tmp_path
-        
+
         # Mock threading to avoid actually starting threads
         with patch("app.console.threading.Thread") as mock_thread:
             mock_thread.return_value.start = Mock()
-            
+
             # Run main in a way that exits quickly
             with patch("app.console.time.sleep", side_effect=KeyboardInterrupt()):
                 try:
                     main()
                 except KeyboardInterrupt:
                     pass
-        
+
         # Verify components were created
         assert mock_monitor.called or mock_thread.called
         assert mock_banner.called
@@ -141,12 +141,13 @@ class TestMain:
     @patch("app.console.run_dashboard")
     @patch("app.console.print_banner")
     @patch("app.console._resolve_base_dir")
+    @patch("sys.argv", ["__main__.py"])  # Remove pytest's -q flag
     def test_main_handles_no_dashboard(
         self, mock_resolve_dir, mock_banner, mock_dashboard, tmp_path
     ):
         """Test that main handles missing dashboard module"""
         mock_resolve_dir.return_value = tmp_path
-        
+
         with patch("app.console.HAVE_DASHBOARD", False):
             with patch("app.console.threading.Thread") as mock_thread:
                 mock_thread.return_value.start = Mock()
@@ -155,19 +156,20 @@ class TestMain:
                         main()
                     except KeyboardInterrupt:
                         pass
-        
+
         assert mock_banner.called
 
     @patch("app.console.webbrowser.open")
     @patch("app.console.run_dashboard")
     @patch("app.console.print_banner")
     @patch("app.console._resolve_base_dir")
+    @patch("sys.argv", ["__main__.py"])  # Remove pytest's -q flag
     def test_main_opens_browser(
         self, mock_resolve_dir, mock_banner, mock_dashboard, mock_browser, tmp_path
     ):
         """Test that main opens browser when not --no-open"""
         mock_resolve_dir.return_value = tmp_path
-        
+
         with patch("app.console.HAVE_DASHBOARD", True):
             with patch("app.console.threading.Thread") as mock_thread:
                 mock_thread.return_value.start = Mock()
@@ -176,19 +178,17 @@ class TestMain:
                         main()
                     except KeyboardInterrupt:
                         pass
-        
+
         # Browser opening happens in a thread, so we can't easily verify it
         # But we can verify the code path doesn't crash
 
     @patch("app.console.run_dashboard")
     @patch("app.console.print_banner")
     @patch("app.console._resolve_base_dir")
-    def test_main_no_open_flag(
-        self, mock_resolve_dir, mock_banner, mock_dashboard, tmp_path
-    ):
+    def test_main_no_open_flag(self, mock_resolve_dir, mock_banner, mock_dashboard, tmp_path):
         """Test that main respects --no-open flag"""
         mock_resolve_dir.return_value = tmp_path
-        
+
         with patch("app.console.sys.argv", ["console.py", "--no-open"]):
             with patch("app.console.threading.Thread") as mock_thread:
                 mock_thread.return_value.start = Mock()
@@ -197,5 +197,5 @@ class TestMain:
                         main()
                     except KeyboardInterrupt:
                         pass
-        
+
         assert mock_banner.called

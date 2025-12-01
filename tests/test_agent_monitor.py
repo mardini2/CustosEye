@@ -5,14 +5,11 @@ Tests process monitoring, hash caching, signature extraction, and event publishi
 
 from __future__ import annotations
 
-import os
-import tempfile
 import time
-from pathlib import Path
 from unittest.mock import MagicMock, Mock, patch
 
-import pytest
 import psutil
+import pytest
 
 from agent.monitor import ProcessMonitor, _Hasher
 
@@ -35,11 +32,11 @@ class TestHasher:
         """Test that hasher caches results based on path and mtime"""
         test_file = tmp_path / "test.exe"
         test_file.write_bytes(b"test content")
-        
+
         hasher = _Hasher()
         hash1 = hasher.sha256_file(str(test_file))
         hash2 = hasher.sha256_file(str(test_file))
-        
+
         assert hash1 == hash2
         assert len(hasher._cache) == 1
 
@@ -47,14 +44,14 @@ class TestHasher:
         """Test that cache invalidates when file mtime changes"""
         test_file = tmp_path / "test.exe"
         test_file.write_bytes(b"original")
-        
+
         hasher = _Hasher()
         hash1 = hasher.sha256_file(str(test_file))
-        
+
         # Wait a bit and modify file
         time.sleep(0.1)
         test_file.write_bytes(b"modified")
-        
+
         hash2 = hasher.sha256_file(str(test_file))
         assert hash1 != hash2
 
@@ -93,7 +90,7 @@ class TestProcessMonitor:
         # Get a real process for testing
         proc = psutil.Process()
         event = monitor._proc_event(proc)
-        
+
         assert event["source"] == "process"
         assert "pid" in event
         assert "name" in event
@@ -112,7 +109,7 @@ class TestProcessMonitor:
         mock_proc.create_time = Mock(return_value=time.time())
         mock_proc.memory_info = Mock(return_value=Mock(rss=1024, vms=2048))
         mock_proc.connections = Mock(return_value=[])
-        
+
         event = monitor._proc_event(mock_proc)
         assert event["exe"] is None
         assert "sha256" not in event or event.get("sha256") is None
@@ -128,14 +125,14 @@ class TestProcessMonitor:
         mock_proc.username = Mock(return_value="user")
         mock_proc.create_time = Mock(return_value=time.time())
         mock_proc.memory_info = Mock(return_value=Mock(rss=1024, vms=2048))
-        
+
         # Mock connection with listening port
         mock_conn = Mock()
         mock_conn.status = psutil.CONN_LISTEN
         mock_conn.laddr = Mock(port=8080)
         mock_conn.raddr = None
         mock_proc.connections = Mock(return_value=[mock_conn])
-        
+
         event = monitor._proc_event(mock_proc)
         assert 8080 in event["listening_ports"]
 
@@ -150,14 +147,14 @@ class TestProcessMonitor:
         mock_proc.username = Mock(return_value="user")
         mock_proc.create_time = Mock(return_value=time.time())
         mock_proc.memory_info = Mock(return_value=Mock(rss=1024, vms=2048))
-        
+
         # Mock connection with remote address
         mock_conn = Mock()
         mock_conn.status = psutil.CONN_ESTABLISHED
         mock_conn.laddr = Mock(port=12345)
         mock_conn.raddr = Mock(ip="192.168.1.1", port=80)
         mock_proc.connections = Mock(return_value=[mock_conn])
-        
+
         event = monitor._proc_event(mock_proc)
         assert "192.168.1.1:80" in event["remote_addrs"]
 
@@ -166,7 +163,7 @@ class TestProcessMonitor:
         mock_proc = Mock(spec=psutil.Process)
         mock_proc.pid = 1234
         mock_proc.name = Mock(side_effect=psutil.NoSuchProcess(1234))
-        
+
         event = monitor._proc_event(mock_proc)
         assert event.get("status") == "gone"
 
@@ -175,7 +172,7 @@ class TestProcessMonitor:
         mock_proc = Mock(spec=psutil.Process)
         mock_proc.pid = 1234
         mock_proc.name = Mock(side_effect=psutil.AccessDenied(1234))
-        
+
         event = monitor._proc_event(mock_proc)
         assert event.get("status") == "gone"
 
@@ -184,7 +181,7 @@ class TestProcessMonitor:
         mock_proc = Mock(spec=psutil.Process)
         mock_proc.pid = 1234
         mock_proc.name = Mock(side_effect=psutil.ZombieProcess(1234))
-        
+
         event = monitor._proc_event(mock_proc)
         assert event.get("status") == "gone"
 
@@ -201,9 +198,9 @@ class TestProcessMonitor:
         mock_proc.create_time = Mock(return_value=time.time())
         mock_proc.memory_info = Mock(return_value=Mock(rss=1024, vms=2048))
         mock_proc.connections = Mock(return_value=[])
-        
+
         mock_get_sig.return_value = {"valid": True, "subject": "Microsoft Corporation"}
-        
+
         with patch("sys.platform", "win32"):
             with patch("os.path.exists", return_value=True):
                 event = monitor._proc_event(mock_proc)
@@ -223,9 +220,9 @@ class TestProcessMonitor:
         mock_proc.create_time = Mock(return_value=time.time())
         mock_proc.memory_info = Mock(return_value=Mock(rss=1024, vms=2048))
         mock_proc.connections = Mock(return_value=[])
-        
+
         mock_get_sig.side_effect = Exception("Signature check failed")
-        
+
         with patch("sys.platform", "win32"):
             with patch("os.path.exists", return_value=True):
                 event = monitor._proc_event(mock_proc)
@@ -244,20 +241,20 @@ class TestProcessMonitor:
         # Add a fake PID that's old
         old_time = time.time() - 120  # 2 minutes ago
         monitor._seen[99999] = old_time
-        
+
         # Simulate cleanup (normally done in run loop)
         now = time.time()
         to_forget = [pid for pid, ts in monitor._seen.items() if now - ts > 60]
         for pid in to_forget:
             monitor._seen.pop(pid, None)
-        
+
         assert 99999 not in monitor._seen
 
     def test_monitor_hashes_executable(self, monitor, tmp_path):
         """Test that monitor hashes executable files"""
         test_exe = tmp_path / "test.exe"
         test_exe.write_bytes(b"executable content")
-        
+
         mock_proc = Mock(spec=psutil.Process)
         mock_proc.pid = 1234
         mock_proc.name = Mock(return_value="test.exe")
@@ -268,7 +265,7 @@ class TestProcessMonitor:
         mock_proc.create_time = Mock(return_value=time.time())
         mock_proc.memory_info = Mock(return_value=Mock(rss=1024, vms=2048))
         mock_proc.connections = Mock(return_value=[])
-        
+
         event = monitor._proc_event(mock_proc)
         assert "sha256" in event
         assert event["sha256"] is not None

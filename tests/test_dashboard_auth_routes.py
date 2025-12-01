@@ -6,11 +6,9 @@ Tests Flask routes for login, signup, logout, 2FA, and password management.
 from __future__ import annotations
 
 import os
-from pathlib import Path
-from unittest.mock import MagicMock, Mock, patch
+from unittest.mock import patch
 
 import pytest
-import pyotp
 
 # Set required environment variables before importing
 os.environ.setdefault("CUSTOSEYE_SESSION_SECRET", "test_session_secret_key_for_testing_only")
@@ -19,9 +17,9 @@ os.environ.setdefault("CUSTOSEYE_PASSWORD_PEPPER", "test_password_pepper_for_tes
 from dashboard.auth_routes import (
     _get_csrf_token,
     _verify_csrf_token,
-    require_auth,
-    require_admin,
     register_auth_routes,
+    require_admin,
+    require_auth,
 )
 
 
@@ -114,6 +112,9 @@ class TestRequireAuth:
         app = Flask(__name__)
         app.secret_key = "test_secret"
 
+        # Register auth routes so url_for works
+        register_auth_routes(app)
+
         @app.route("/test")
         @require_auth
         def test_route():
@@ -173,6 +174,14 @@ class TestRequireAdmin:
         app.secret_key = "test_secret"
         mock_is_admin.return_value = False
 
+        # Register auth routes so url_for works
+        register_auth_routes(app)
+
+        # Add index route that require_admin redirects to
+        @app.route("/")
+        def index():
+            return "index"
+
         @app.route("/admin")
         @require_admin
         def admin_route():
@@ -217,6 +226,12 @@ class TestAuthRoutes:
         app = Flask(__name__)
         app.secret_key = os.getenv("CUSTOSEYE_SESSION_SECRET", "test_secret")
         app.config["TESTING"] = True
+
+        # Add index route that auth routes redirect to
+        @app.route("/")
+        def index():
+            return "index"
+
         register_auth_routes(app)
         return app
 
@@ -226,10 +241,13 @@ class TestAuthRoutes:
         return app.test_client()
 
     @patch.dict(os.environ, {"CUSTOSEYE_PASSWORD_PEPPER": "test_pepper"})
-    def test_login_get_renders_template(self, client):
+    @patch("dashboard.auth_routes.render_template")
+    def test_login_get_renders_template(self, mock_render, client):
         """Test that GET /auth/login renders template"""
+        mock_render.return_value = "rendered"
         response = client.get("/auth/login")
         assert response.status_code == 200
+        mock_render.assert_called_once()
 
     @patch.dict(os.environ, {"CUSTOSEYE_PASSWORD_PEPPER": "test_pepper"})
     def test_login_post_valid_credentials(self, client, tmp_path, monkeypatch):
@@ -245,9 +263,11 @@ class TestAuthRoutes:
 
         create_user("testuser", "TestPass1!")
 
-        # Get CSRF token
+        # Get CSRF token by making a request first (mock template to avoid TemplateNotFound)
+        with patch("dashboard.auth_routes.render_template", return_value="rendered"):
+            client.get("/auth/login")  # This generates CSRF token in session
         with client.session_transaction() as sess:
-            csrf_token = _get_csrf_token()
+            csrf_token = sess.get("csrf_token", "test_token")
 
         # Login
         response = client.post(
@@ -266,9 +286,11 @@ class TestAuthRoutes:
         users_file.write_text("{}", encoding="utf-8")
         monkeypatch.setattr(auth, "USERS_DB_PATH", users_file)
 
-        # Get CSRF token
+        # Get CSRF token by making a request first (mock template to avoid TemplateNotFound)
+        with patch("dashboard.auth_routes.render_template", return_value="rendered"):
+            client.get("/auth/login")  # This generates CSRF token in session
         with client.session_transaction() as sess:
-            csrf_token = _get_csrf_token()
+            csrf_token = sess.get("csrf_token", "test_token")
 
         # Try to login with invalid credentials
         response = client.post(
@@ -278,7 +300,8 @@ class TestAuthRoutes:
         assert response.status_code == 401
 
     @patch.dict(os.environ, {"CUSTOSEYE_PASSWORD_PEPPER": "test_pepper"})
-    def test_signup_get_renders_template(self, client, tmp_path, monkeypatch):
+    @patch("dashboard.auth_routes.render_template")
+    def test_signup_get_renders_template(self, mock_render, client, tmp_path, monkeypatch):
         """Test that GET /auth/signup renders template"""
         from dashboard import auth
 
@@ -286,8 +309,10 @@ class TestAuthRoutes:
         users_file.write_text("{}", encoding="utf-8")
         monkeypatch.setattr(auth, "USERS_DB_PATH", users_file)
 
+        mock_render.return_value = "rendered"
         response = client.get("/auth/signup")
         assert response.status_code == 200
+        mock_render.assert_called_once()
 
     @patch.dict(os.environ, {"CUSTOSEYE_PASSWORD_PEPPER": "test_pepper"})
     def test_signup_post_creates_user(self, client, tmp_path, monkeypatch):
@@ -298,9 +323,11 @@ class TestAuthRoutes:
         users_file.write_text("{}", encoding="utf-8")
         monkeypatch.setattr(auth, "USERS_DB_PATH", users_file)
 
-        # Get CSRF token
-        with client.session_transaction() as sess:
-            csrf_token = _get_csrf_token()
+        # Get CSRF token by making a request first (mock template to avoid TemplateNotFound)
+        with patch("dashboard.auth_routes.render_template", return_value="rendered"):
+            client.get("/auth/signup")  # This generates CSRF token in session
+            with client.session_transaction() as sess:
+                csrf_token = sess.get("csrf_token", "test_token")
 
         # Signup
         response = client.post(
@@ -321,9 +348,11 @@ class TestAuthRoutes:
         with client.session_transaction() as sess:
             sess["username"] = "testuser"
 
-        # Get CSRF token
+        # Get CSRF token by making a request first (mock template to avoid TemplateNotFound)
+        with patch("dashboard.auth_routes.render_template", return_value="rendered"):
+            client.get("/auth/login")  # This generates CSRF token in session
         with client.session_transaction() as sess:
-            csrf_token = _get_csrf_token()
+            csrf_token = sess.get("csrf_token", "test_token")
 
         response = client.post("/auth/logout", json={"csrf_token": csrf_token})
         assert response.status_code == 200
@@ -333,7 +362,8 @@ class TestAuthRoutes:
             assert "username" not in sess
 
     @patch.dict(os.environ, {"CUSTOSEYE_PASSWORD_PEPPER": "test_pepper"})
-    def test_enable_2fa_get_renders_template(self, client, tmp_path, monkeypatch):
+    @patch("dashboard.auth_routes.render_template")
+    def test_enable_2fa_get_renders_template(self, mock_render, client, tmp_path, monkeypatch):
         """Test that GET /auth/enable-2fa renders template"""
         from dashboard import auth
 
@@ -348,17 +378,25 @@ class TestAuthRoutes:
         with client.session_transaction() as sess:
             sess["username"] = "testuser"
 
+        mock_render.return_value = "rendered"
         response = client.get("/auth/enable-2fa")
         assert response.status_code == 200
+        mock_render.assert_called_once()
 
     @patch.dict(os.environ, {"CUSTOSEYE_PASSWORD_PEPPER": "test_pepper"})
-    def test_forgot_password_get_renders_template(self, client):
+    @patch("dashboard.auth_routes.render_template")
+    def test_forgot_password_get_renders_template(self, mock_render, client):
         """Test that GET /auth/forgot-password renders template"""
+        mock_render.return_value = "rendered"
         response = client.get("/auth/forgot-password")
         assert response.status_code == 200
+        mock_render.assert_called_once()
 
     @patch.dict(os.environ, {"CUSTOSEYE_PASSWORD_PEPPER": "test_pepper"})
-    def test_forgot_username_get_renders_template(self, client):
+    @patch("dashboard.auth_routes.render_template")
+    def test_forgot_username_get_renders_template(self, mock_render, client):
         """Test that GET /auth/forgot-username renders template"""
+        mock_render.return_value = "rendered"
         response = client.get("/auth/forgot-username")
         assert response.status_code == 200
+        mock_render.assert_called_once()

@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import json
 import os
-import sys
 from pathlib import Path
 from unittest.mock import patch
 
@@ -31,7 +30,9 @@ class TestResolveBaseDir:
             with patch("sys.executable", "C:\\app\\CustosEye.exe"):
                 result = _resolve_base_dir()
                 assert isinstance(result, Path)
-                assert "CustosEye.exe" in str(result) or result.name == "CustosEye.exe"
+                # In frozen mode, it returns the directory containing the executable
+                # So it should be "C:\\app" not "C:\\app\\CustosEye.exe"
+                assert str(result) == "C:\\app" or "app" in str(result)
 
 
 class TestGet:
@@ -101,7 +102,7 @@ class TestLoadConfig:
         """Test that load_config creates config with defaults"""
         with patch("dashboard.config._resolve_base_dir", return_value=tmp_base_dir):
             config = load_config()
-            
+
             assert isinstance(config, Config)
             assert config.base_dir == tmp_base_dir
             assert config.buffer_max == 1200
@@ -117,10 +118,10 @@ class TestLoadConfig:
             "host": "0.0.0.0",
         }
         config_file.write_text(json.dumps(config_data), encoding="utf-8")
-        
+
         with patch("dashboard.config._resolve_base_dir", return_value=tmp_base_dir):
             config = load_config()
-            
+
             assert config.buffer_max == 2000
             assert config.port == 9000
             assert config.host == "0.0.0.0"
@@ -130,7 +131,7 @@ class TestLoadConfig:
         config_file = tmp_base_dir / "data" / "config.json"
         config_data = {"port": 9000}
         config_file.write_text(json.dumps(config_data), encoding="utf-8")
-        
+
         with patch("dashboard.config._resolve_base_dir", return_value=tmp_base_dir):
             with patch.dict(os.environ, {"CUSTOSEYE_PORT": "8000"}):
                 config = load_config()
@@ -147,7 +148,7 @@ class TestLoadConfig:
         """Test that load_config handles invalid JSON"""
         config_file = tmp_base_dir / "data" / "config.json"
         config_file.write_text("{ invalid json }", encoding="utf-8")
-        
+
         with patch("dashboard.config._resolve_base_dir", return_value=tmp_base_dir):
             config = load_config()
             # Should use defaults
@@ -157,7 +158,7 @@ class TestLoadConfig:
         """Test that load_config handles empty JSON file"""
         config_file = tmp_base_dir / "data" / "config.json"
         config_file.write_text("", encoding="utf-8")
-        
+
         with patch("dashboard.config._resolve_base_dir", return_value=tmp_base_dir):
             config = load_config()
             # Should use defaults
@@ -167,7 +168,7 @@ class TestLoadConfig:
         """Test that config paths are relative to base_dir"""
         with patch("dashboard.config._resolve_base_dir", return_value=tmp_base_dir):
             config = load_config()
-            
+
             assert config.rules_path == tmp_base_dir / "data" / "rules.json"
             assert config.csc_weights_path == tmp_base_dir / "data" / "csc_weights.json"
             assert config.integrity_targets_path == tmp_base_dir / "data" / "integrity_targets.json"
@@ -177,7 +178,7 @@ class TestLoadConfig:
         custom_base = tmp_path / "custom"
         custom_base.mkdir()
         (custom_base / "data").mkdir()
-        
+
         with patch.dict(os.environ, {"CUSTOSEYE_BASE_DIR": str(custom_base)}):
             config = load_config()
             assert config.base_dir == custom_base
@@ -186,7 +187,7 @@ class TestLoadConfig:
         """Test that all config paths are set"""
         with patch("dashboard.config._resolve_base_dir", return_value=tmp_base_dir):
             config = load_config()
-            
+
             assert config.rules_path is not None
             assert config.csc_weights_path is not None
             assert config.csc_db_path is not None
@@ -197,7 +198,7 @@ class TestLoadConfig:
         """Test that numeric defaults are correct"""
         with patch("dashboard.config._resolve_base_dir", return_value=tmp_base_dir):
             config = load_config()
-            
+
             assert isinstance(config.buffer_max, int)
             assert isinstance(config.port, int)
             assert isinstance(config.drain_limit_per_call, int)

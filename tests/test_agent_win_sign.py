@@ -6,7 +6,6 @@ Tests Authenticode signature verification using PowerShell.
 from __future__ import annotations
 
 import json
-import os
 import subprocess
 import sys
 from unittest.mock import Mock, patch
@@ -29,7 +28,7 @@ class TestGetSignatureInfo:
         """Test that get_signature_info returns empty dict for non-existent file"""
         if sys.platform != "win32":
             pytest.skip("Windows-only test")
-        
+
         result = get_signature_info("C:\\nonexistent\\file.exe")
         assert result == {}
 
@@ -37,7 +36,7 @@ class TestGetSignatureInfo:
         """Test that get_signature_info handles empty path"""
         if sys.platform != "win32":
             pytest.skip("Windows-only test")
-        
+
         result = get_signature_info("")
         assert result == {}
 
@@ -45,7 +44,7 @@ class TestGetSignatureInfo:
         """Test that get_signature_info strips quotes from path"""
         if sys.platform != "win32":
             pytest.skip("Windows-only test")
-        
+
         with patch("os.path.exists", return_value=False):
             result = get_signature_info('"C:\\test.exe"')
             assert result == {}
@@ -56,15 +55,15 @@ class TestGetSignatureInfo:
         """Test that get_signature_info returns valid signature info"""
         if sys.platform != "win32":
             pytest.skip("Windows-only test")
-        
+
         mock_exists.return_value = True
         mock_proc = Mock()
         mock_proc.returncode = 0
         mock_proc.stdout = '{"valid": true, "subject": "Microsoft Corporation"}'
         mock_run.return_value = mock_proc
-        
+
         result = get_signature_info("C:\\test.exe")
-        
+
         assert result["valid"] is True
         assert result["subject"] == "Microsoft Corporation"
 
@@ -74,15 +73,15 @@ class TestGetSignatureInfo:
         """Test that get_signature_info returns invalid signature info"""
         if sys.platform != "win32":
             pytest.skip("Windows-only test")
-        
+
         mock_exists.return_value = True
         mock_proc = Mock()
         mock_proc.returncode = 0
         mock_proc.stdout = '{"valid": false, "subject": ""}'
         mock_run.return_value = mock_proc
-        
+
         result = get_signature_info("C:\\test.exe")
-        
+
         assert result["valid"] is False
         assert result["subject"] == ""
 
@@ -92,12 +91,12 @@ class TestGetSignatureInfo:
         """Test that get_signature_info handles PowerShell failure"""
         if sys.platform != "win32":
             pytest.skip("Windows-only test")
-        
+
         mock_exists.return_value = True
         mock_proc = Mock()
         mock_proc.returncode = 1  # PowerShell failed
         mock_run.return_value = mock_proc
-        
+
         result = get_signature_info("C:\\test.exe")
         assert result == {}
 
@@ -107,13 +106,13 @@ class TestGetSignatureInfo:
         """Test that get_signature_info handles empty PowerShell output"""
         if sys.platform != "win32":
             pytest.skip("Windows-only test")
-        
+
         mock_exists.return_value = True
         mock_proc = Mock()
         mock_proc.returncode = 0
         mock_proc.stdout = ""
         mock_run.return_value = mock_proc
-        
+
         result = get_signature_info("C:\\test.exe")
         assert result == {}
 
@@ -123,13 +122,13 @@ class TestGetSignatureInfo:
         """Test that get_signature_info handles invalid JSON"""
         if sys.platform != "win32":
             pytest.skip("Windows-only test")
-        
+
         mock_exists.return_value = True
         mock_proc = Mock()
         mock_proc.returncode = 0
         mock_proc.stdout = "{ invalid json }"
         mock_run.return_value = mock_proc
-        
+
         result = get_signature_info("C:\\test.exe")
         assert result == {}
 
@@ -139,13 +138,13 @@ class TestGetSignatureInfo:
         """Test that get_signature_info handles non-dict JSON"""
         if sys.platform != "win32":
             pytest.skip("Windows-only test")
-        
+
         mock_exists.return_value = True
         mock_proc = Mock()
         mock_proc.returncode = 0
         mock_proc.stdout = '["not", "a", "dict"]'
         mock_run.return_value = mock_proc
-        
+
         result = get_signature_info("C:\\test.exe")
         assert result == {}
 
@@ -155,10 +154,10 @@ class TestGetSignatureInfo:
         """Test that get_signature_info handles timeout"""
         if sys.platform != "win32":
             pytest.skip("Windows-only test")
-        
+
         mock_exists.return_value = True
         mock_run.side_effect = subprocess.TimeoutExpired("powershell", 5)
-        
+
         result = get_signature_info("C:\\test.exe")
         assert result == {}
 
@@ -168,16 +167,16 @@ class TestGetSignatureInfo:
         """Test that get_signature_info truncates long subject strings"""
         if sys.platform != "win32":
             pytest.skip("Windows-only test")
-        
+
         mock_exists.return_value = True
         long_subject = "A" * 1000  # Very long subject
         mock_proc = Mock()
         mock_proc.returncode = 0
         mock_proc.stdout = json.dumps({"valid": True, "subject": long_subject})
         mock_run.return_value = mock_proc
-        
+
         result = get_signature_info("C:\\test.exe")
-        
+
         assert result["valid"] is True
         assert len(result["subject"]) <= 512  # Should be truncated
 
@@ -187,16 +186,16 @@ class TestGetSignatureInfo:
         """Test that get_signature_info escapes single quotes in path"""
         if sys.platform != "win32":
             pytest.skip("Windows-only test")
-        
+
         mock_exists.return_value = True
         mock_proc = Mock()
         mock_proc.returncode = 0
         mock_proc.stdout = '{"valid": true, "subject": "Test"}'
         mock_run.return_value = mock_proc
-        
+
         # Path with single quote
         result = get_signature_info("C:\\test's file.exe")
-        
+
         # Should not crash
         assert isinstance(result, dict)
         # Verify that the path was escaped in the PowerShell command

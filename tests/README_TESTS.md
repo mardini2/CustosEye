@@ -1,10 +1,10 @@
 # CustosEye Test Suite
 
 ## Overview
-Comprehensive test suite for CustosEye with **252+ tests** covering all major components.
+Comprehensive test suite for CustosEye with **275 tests** covering all major components.
 
 ## Test Statistics
-- **Total Tests**: 252+
+- **Total Tests**: 275 (265 passing, 10 skipped)
 - **Coverage**: All major modules
 - **Status**: Complete - all planned tests implemented
 

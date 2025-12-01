@@ -5,23 +5,18 @@ Tests user creation, password hashing, 2FA, and authentication logic.
 
 from __future__ import annotations
 
-import json
 import os
-import time
-from pathlib import Path
-from unittest.mock import Mock, patch
+from unittest.mock import patch
 
-import pytest
 import pyotp
+import pytest
 
 from dashboard.auth import (
     _check_brute_force,
     _clear_failed_attempts,
     _hash_password,
-    _load_users,
     _normalize_username,
     _record_failed_attempt,
-    _save_users,
     _validate_password,
     _verify_password,
     change_password,
@@ -47,11 +42,12 @@ def tmp_users_db(tmp_path, monkeypatch):
     """Create temporary users database"""
     users_file = tmp_path / "users.json"
     users_file.write_text("{}", encoding="utf-8")
-    
+
     # Monkeypatch the USERS_DB_PATH
     from dashboard import auth
+
     monkeypatch.setattr(auth, "USERS_DB_PATH", users_file)
-    
+
     return users_file
 
 
@@ -172,15 +168,15 @@ class TestUserManagement:
         # Too short
         success, _ = create_user("a", "TestPass1!")
         assert not success
-        
+
         # Too long
         success, _ = create_user("a" * 26, "TestPass1!")
         assert not success
-        
+
         # Contains space
         success, _ = create_user("user name", "TestPass1!")
         assert not success
-        
+
         # Contains special chars
         success, _ = create_user("user@name", "TestPass1!")
         assert not success
@@ -244,7 +240,7 @@ class TestBruteForceProtection:
     def test_record_failed_attempt_tracks_attempts(self):
         """Test that _record_failed_attempt records attempts"""
         from dashboard.auth import FAILED_ATTEMPTS
-        
+
         FAILED_ATTEMPTS.clear()
         _record_failed_attempt("testuser")
         assert len(FAILED_ATTEMPTS["testuser"]) > 0
@@ -252,14 +248,14 @@ class TestBruteForceProtection:
     def test_check_brute_force_locks_after_max_attempts(self):
         """Test that _check_brute_force locks after max attempts"""
         from dashboard.auth import FAILED_ATTEMPTS, MAX_ATTEMPTS
-        
+
         FAILED_ATTEMPTS.clear()
         username = "testuser"
-        
+
         # Record max attempts
         for _ in range(MAX_ATTEMPTS):
             _record_failed_attempt(username)
-        
+
         can_login, error = _check_brute_force(username)
         assert not can_login
         assert "locked" in error.lower()
@@ -267,7 +263,7 @@ class TestBruteForceProtection:
     def test_clear_failed_attempts_clears_attempts(self):
         """Test that _clear_failed_attempts clears attempts"""
         from dashboard.auth import FAILED_ATTEMPTS
-        
+
         FAILED_ATTEMPTS.clear()
         username = "testuser"
         _record_failed_attempt(username)
@@ -328,10 +324,10 @@ class Test2FA:
         secret = generate_totp_secret("admin")
         totp = pyotp.TOTP(secret)
         code = totp.now()
-        
+
         success, message = enable_2fa("admin", secret, code)
         assert success
-        
+
         user = get_user("admin")
         assert user["totp_enabled"] is True
         assert user["totp_secret"] == secret
@@ -342,7 +338,7 @@ class Test2FA:
         """Test that enable_2fa requires valid code"""
         create_user("admin", "TestPass1!")
         secret = generate_totp_secret("admin")
-        
+
         success, message = enable_2fa("admin", secret, "000000")
         assert not success
         assert "invalid" in message.lower()
@@ -362,7 +358,7 @@ class Test2FA:
         secret = generate_totp_secret("admin")
         totp = pyotp.TOTP(secret)
         enable_2fa("admin", secret, totp.now())
-        
+
         valid, error = verify_2fa("admin", None)
         assert not valid
         assert "required" in error.lower()
@@ -374,12 +370,12 @@ class Test2FA:
         secret = generate_totp_secret("admin")
         totp = pyotp.TOTP(secret)
         enable_2fa("admin", secret, totp.now())
-        
+
         user = get_user("admin")
         backup_code = user["backup_codes"][0]
-        
+
         assert verify_backup_code(user, backup_code) is True
-        
+
         # Code should be removed after use
         user = get_user("admin")
         assert backup_code not in user["backup_codes"]
@@ -391,10 +387,10 @@ class Test2FA:
         secret = generate_totp_secret("admin")
         totp = pyotp.TOTP(secret)
         enable_2fa("admin", secret, totp.now())
-        
+
         success, message = disable_2fa("admin", totp.now())
         assert success
-        
+
         user = get_user("admin")
         assert user["totp_enabled"] is False
         assert user["totp_secret"] is None
@@ -411,10 +407,10 @@ class TestPasswordReset:
         secret = generate_totp_secret("admin")
         totp = pyotp.TOTP(secret)
         enable_2fa("admin", secret, totp.now())
-        
+
         success, message = reset_password_with_2fa("admin", "NewPass1!", totp.now())
         assert success
-        
+
         # Should be able to login with new password
         valid, _ = verify_user("admin", "NewPass1!")
         assert valid
@@ -426,7 +422,7 @@ class TestPasswordReset:
         secret = generate_totp_secret("admin")
         totp = pyotp.TOTP(secret)
         enable_2fa("admin", secret, totp.now())
-        
+
         success, message = reset_password_with_2fa("admin", "NewPass1!", "000000")
         assert not success
 
@@ -434,10 +430,10 @@ class TestPasswordReset:
     def test_change_password_changes_password(self, tmp_users_db):
         """Test that change_password changes password"""
         create_user("admin", "OldPass1!")
-        
+
         success, message = change_password("admin", "OldPass1!", "NewPass1!")
         assert success
-        
+
         # Should be able to login with new password
         valid, _ = verify_user("admin", "NewPass1!")
         assert valid
@@ -446,7 +442,7 @@ class TestPasswordReset:
     def test_change_password_requires_old_password(self, tmp_users_db):
         """Test that change_password requires old password"""
         create_user("admin", "OldPass1!")
-        
+
         success, message = change_password("admin", "WrongPass1!", "NewPass1!")
         assert not success
 
@@ -454,7 +450,7 @@ class TestPasswordReset:
     def test_change_password_rejects_same_password(self, tmp_users_db):
         """Test that change_password rejects same password"""
         create_user("admin", "TestPass1!")
-        
+
         success, message = change_password("admin", "TestPass1!", "TestPass1!")
         assert not success
         assert "different" in message.lower()
