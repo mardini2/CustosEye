@@ -41,6 +41,17 @@ from dashboard.auth import (
     verify_user,
 )
 
+# Color codes for terminal output (matching console.py)
+try:
+    from colorama import init as _colorama_init
+
+    _colorama_init()
+    purple = "\x1b[35m"
+    cyan = "\x1b[36m"
+    reset = "\x1b[0m"
+except Exception:
+    purple = cyan = reset = ""
+
 
 def _get_csrf_token() -> str:
     """get or generate CSRF token for current session"""
@@ -232,7 +243,9 @@ def register_auth_routes(app: Flask) -> None:
             from dashboard.auth import auth_logger
 
             if shutdown:
-                auth_logger.info(f"✓ User {username} logged out\n\nShutting down CustosEye...\n")
+                auth_logger.info(
+                    f"✓ User {username} logged out\n\n{purple}⬩{reset}{cyan}➢ {reset} Shutting down {purple}CustosEye{reset}...\n"
+                )
             else:
                 auth_logger.info(f"✓ User {username} logged out")
 
@@ -265,7 +278,9 @@ def register_auth_routes(app: Flask) -> None:
         """shutdown handler - shuts down the server without requiring authentication"""
         from dashboard.auth import auth_logger
 
-        auth_logger.info("\nShutting down CustosEye...\n")
+        auth_logger.info(
+            f"\n{purple}⬩{reset}{cyan}➢ {reset} Shutting down {purple}CustosEye{reset}...\n"
+        )
         # schedule shutdown in a separate thread to allow response to be sent
         import os
         import threading

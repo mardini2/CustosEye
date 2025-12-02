@@ -37,8 +37,11 @@
     }
     .dashboard-background {
       position:fixed; top:0; left:0; width:100%; height:100%;
-      z-index:0; filter:blur(8px) brightness(0.3); pointer-events:none;
-      border:none; transform:scale(1.1);
+      z-index:0;
+      /* Keep the live dashboard fully visible behind the 2FA flow, but blurred */
+      filter:blur(8px) brightness(0.3); pointer-events:none;
+      border:none;
+      /* No scale: show the full dashboard without cropping */
       opacity:0; transition:opacity 0.4s ease-in-out;
       will-change:opacity;
     }
@@ -186,7 +189,7 @@
   </style>
 </head>
 <body>
-  <iframe id="dashboardPreview" class="dashboard-background" loading="lazy" title="Dashboard Preview"></iframe>
+  <iframe id="dashboardPreview" class="dashboard-background" src="/preview" loading="lazy" title="Dashboard Preview" scrolling="no"></iframe>
   <div class="auth-overlay">
   <div class="auth-container" data-totp-enabled="{% if totp_enabled %}true{% else %}false{% endif %}">
     <button id="close2faBtn" class="close-btn" aria-label="Close 2FA page" title="Close and return to dashboard">
@@ -364,30 +367,16 @@
       fadeOutAndNavigate(url);
     };
     
-    // handle iframe loading for smooth background transition - lazy load to improve initial page load
+    // handle iframe loading for smooth background transition (same behavior as login/signup)
     const dashboardPreview = document.getElementById('dashboardPreview');
     if (dashboardPreview) {
-      // Delay iframe loading to improve initial page load time
-      // Show content immediately, load background iframe after page is interactive
-      // Use requestIdleCallback if available, otherwise use a short delay
-      const loadIframe = () => {
-        if (!dashboardPreview.src) {
-          dashboardPreview.src = '/preview';
-        }
-        // fade in iframe when loaded to prevent freeze/lag feeling
-        dashboardPreview.addEventListener('load', function() {
-          this.classList.add('loaded');
-        }, { once: true });
-        // if iframe is already loaded (cached), show it immediately
-        if (dashboardPreview.complete || dashboardPreview.readyState === 'complete') {
-          dashboardPreview.classList.add('loaded');
-        }
-      };
-      
-      if (window.requestIdleCallback) {
-        requestIdleCallback(loadIframe, { timeout: 1000 });
-      } else {
-        setTimeout(loadIframe, 500); // Fallback delay
+      // fade in iframe when loaded to prevent freeze/lag feeling
+      dashboardPreview.addEventListener('load', function() {
+        this.classList.add('loaded');
+      }, { once: true });
+      // if iframe is already loaded (cached), show it immediately
+      if (dashboardPreview.complete || dashboardPreview.readyState === 'complete') {
+        dashboardPreview.classList.add('loaded');
       }
     }
     

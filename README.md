@@ -45,7 +45,7 @@ python setup_env.py
 python -m app.console
 ```
 
-The dashboard will open at `http://127.0.0.1:8765/`. If it doesn't open automatically, visit that URL in your browser.
+The dashboard will open automatically in a windowed application or in your browser at `http://127.0.0.1:8765/`. If it doesn't open automatically, visit that URL in your browser.
 
 **Viewing static HTML files (for GitHub Pages):**
 If you want to preview the static HTML files (like index.html, privacy.html, etc.) without running the full application:
@@ -60,9 +60,12 @@ Then visit `http://127.0.0.1:8765/` in your browser to see the static pages.
 
 **Command-line options:**
 ```bash
-python -m app.console --no-open    # Don't open browser automatically
+python -m app.console --no-open    # Don't open dashboard automatically
 python -m app.console --tray       # Run with system tray icon
+python -m app.console --browser   # Open dashboard in browser instead of windowed application
 ```
+
+**Note:** By default, CustosEye opens the dashboard in a windowed application (if pywebview is available). Use `--browser` to open it in your default browser instead. Press `Ctrl+C` in the terminal to shut down the application.
 
 **Regenerating secrets:**
 If you need to regenerate the `.env` file (deletes existing one first):
@@ -78,7 +81,7 @@ python setup_env.py
 The project includes a pytest test suite. Run all tests with:
 
 ```bash
-python -m pytest -q
+python -m pytest tests/ -q
 ```
 
 The test suite covers:

@@ -19,6 +19,8 @@ pyinstaller==6.6.0
 pystray==0.19.5
 # image processing library (required by pystray for tray icons)
 pillow==10.3.0
+# windowed application support (native window with embedded browser)
+pywebview==5.2
 # Excel file generation for export functionality
 openpyxl==3.1.5
 

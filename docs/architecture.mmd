@@ -19,6 +19,20 @@ flowchart LR
     EB["EventBus\napp.console.EventBus\nin-process pub/sub"]
   end
 
+  %% ===================== LAUNCHER / ORCHESTRATOR =====================
+  subgraph LAUNCH["Launcher & orchestrator (console.py)"]
+    MAIN["console.py\nentrypoint & CLI\n(--no-open, --tray, --browser)"]
+    START["Start agents\n(background threads)"]
+    DASHSTART["Start dashboard\n(Flask server + UI host)"]
+    ENVGEN[".env bootstrap\n(auto-generate if missing)"]
+    TRAY["System tray icon\n(optional)"]
+  end
+
+  %% Desktop host for windowed UI
+  subgraph DESKTOP["Desktop UI host"]
+    WEBVIEW["pywebview windowed dashboard\n(default when available)"]
+  end
+
   %% ===================== BACKEND (DASHBOARD) =====================
   subgraph CFG["Config & tuning"]
     DCFG["dashboard/config.py"]
@@ -153,3 +167,28 @@ flowchart LR
   GAJS -- "loads gtag only on\ncustoseye.com or ?debug=1\nand sends file_download events" --> GA
   GAJS -- "fetches release stats\nfor CustosEye.zip\n(only when ?debug=1)" --> GH
   NAVJS -- "keyboard & hover\nnav behavior" --> LAND
+
+  %% ===================== LAUNCHER FLOWS =====================
+
+  %% console.py orchestration
+  MAIN --> ENVGEN
+  MAIN --> START
+  MAIN --> DASHSTART
+  MAIN --> TRAY
+
+  %% Agents started by console.py
+  START --> AGENTS
+
+  %% Dashboard started by console.py
+  DASHSTART --> BACKEND
+
+  %% .env auto-generation
+  ENVGEN --> ENV
+
+  %% Windowed dashboard
+  DASHSTART --> WEBVIEW
+  WEBVIEW --> SPA
+
+  %% Tray actions: browser + window
+  TRAY -. "Open Dashboard (Window)" .-> WEBVIEW
+  TRAY -. "Open Dashboard (Browser)" .-> UI

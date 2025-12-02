@@ -106,7 +106,7 @@
         <li>Download the installer from the <a href="download.html" style="color: #8b5cf6;">Downloads page</a></li>
         <li>Run <code style="background: rgba(0,0,0,0.3); padding: 2px 6px; border-radius: 4px;">CustosEye-Setup.exe</code> and follow the installation wizard</li>
         <li>Launch CustosEye from the Start Menu or desktop shortcut</li>
-        <li>The web dashboard opens automatically in your browser at <code style="background: rgba(0,0,0,0.3); padding: 2px 6px; border-radius: 4px;">http://127.0.0.1:8765/</code></li>
+        <li>The dashboard opens automatically in a windowed application (if available) or in your browser at <code style="background: rgba(0,0,0,0.3); padding: 2px 6px; border-radius: 4px;">http://127.0.0.1:8765/</code></li>
         <li>Create your first account (becomes an admin account) and optionally enable 2FA</li>
       </ol>
 
@@ -123,7 +123,7 @@
         <li>Download the portable ZIP bundle from the <a href="https://github.com/mardini2/CustosEye/releases" style="color: #8b5cf6;">GitHub releases page</a></li>
         <li>Extract the ZIP file to a folder of your choice</li>
         <li>Run <code style="background: rgba(0,0,0,0.3); padding: 2px 6px; border-radius: 4px;">CustosEye.exe</code></li>
-        <li>The web dashboard opens automatically in your browser at <code style="background: rgba(0,0,0,0.3); padding: 2px 6px; border-radius: 4px;">http://127.0.0.1:8765/</code></li>
+        <li>The dashboard opens automatically in a windowed application (if available) or in your browser at <code style="background: rgba(0,0,0,0.3); padding: 2px 6px; border-radius: 4px;">http://127.0.0.1:8765/</code></li>
         <li>Create your first account (becomes an admin account) and optionally enable 2FA</li>
       </ol>
 
@@ -149,10 +149,17 @@ python -m pip install -r requirements.txt</code></pre>
         </li>
         <li>Run CustosEye:
           <pre style="background: rgba(0,0,0,0.3); padding: 12px; border-radius: 4px; overflow-x: auto; margin-top: 8px;"><code>python -m app.console</code></pre>
+          <p style="margin-top: 8px; margin-bottom: 0; line-height: 1.6; font-size: 0.9rem; color: #9aa3b2;">
+            The dashboard will open automatically in a windowed application (if pywebview is available) or in your browser. Press <code style="background: rgba(0,0,0,0.3); padding: 2px 6px; border-radius: 4px;">Ctrl+C</code> in the terminal to shut down.
+          </p>
         </li>
         <li>Optional command-line flags:
-          <pre style="background: rgba(0,0,0,0.3); padding: 12px; border-radius: 4px; overflow-x: auto; margin-top: 8px;"><code>python -m app.console --no-open    # Don't open browser automatically
-python -m app.console --tray       # Run with system tray icon</code></pre>
+          <pre style="background: rgba(0,0,0,0.3); padding: 12px; border-radius: 4px; overflow-x: auto; margin-top: 8px;"><code>python -m app.console --no-open    # Don't open dashboard automatically
+python -m app.console --tray       # Run with system tray icon
+python -m app.console --browser   # Open dashboard in browser instead of windowed application</code></pre>
+          <p style="margin-top: 8px; margin-bottom: 0; line-height: 1.6; font-size: 0.9rem; color: #9aa3b2;">
+            <strong>Note:</strong> By default, CustosEye opens the dashboard in a windowed application (if pywebview is available). Use <code style="background: rgba(0,0,0,0.3); padding: 2px 6px; border-radius: 4px;">--browser</code> to open it in your default browser instead. Press <code style="background: rgba(0,0,0,0.3); padding: 2px 6px; border-radius: 4px;">Ctrl+C</code> in the terminal to shut down the application.
+          </p>
         </li>
       </ol>
 
