@@ -1,0 +1,194 @@
+---
+config:
+  theme: neo-dark
+---
+flowchart LR
+
+  %% ===================== CUSTOSEYE ARCHITECTURE =====================
+
+  %% ===================== COLLECTION =====================
+  subgraph AGENTS["Collection agents (agent/*.py)"]
+    PM["ProcessMonitor\nagent/monitor.py"]
+    NS["NetworkSnapshot\nagent/network_scan.py"]
+    IC["IntegrityChecker\nagent/integrity_check.py"]
+  end
+
+  subgraph HOST["Endpoint host (Windows)"]
+    direction TB
+    AGENTS
+    EB["EventBus\napp.console.EventBus\nin-process pub/sub"]
+  end
+
+  %% ===================== LAUNCHER / ORCHESTRATOR =====================
+  subgraph LAUNCH["Launcher & orchestrator (console.py)"]
+    MAIN["console.py\nentrypoint & CLI\n(--no-open, --tray, --browser)"]
+    START["Start agents\n(background threads)"]
+    DASHSTART["Start dashboard\n(Flask server + UI host)"]
+    ENVGEN[".env bootstrap\n(auto-generate if missing)"]
+    TRAY["System tray icon\n(optional)"]
+  end
+
+  %% Desktop host for windowed UI
+  subgraph DESKTOP["Desktop UI host"]
+    WEBVIEW["pywebview windowed dashboard\n(default when available)"]
+  end
+
+  %% ===================== BACKEND (DASHBOARD) =====================
+  subgraph CFG["Config & tuning"]
+    DCFG["dashboard/config.py"]
+    CONF["data/config.json\npaths, buffer sizes,\nHTTP host/port"]
+    WEIGHTS["csc_weights.json\nCSC thresholds & knobs"]
+    NAMET["name_trust.json\nseed trust by name"]
+    RULES["rules.json\nwhen/then rules"]
+    SUP["self_suppress.json\nself-allowlist"]
+    INTGT["integrity_targets.json\nfiles to monitor"]
+    TRUSTDB["trust_db.json\nprevalence DB"]
+  end
+
+  subgraph PIPE["Processing pipeline\n(drain_into_buffer)"]
+    RE["RulesEngine\nagent/rules_engine.py"]
+    CSC["CSCTrustEngine\nalgorithm/csc_engine.py\n(process events only)"]
+  end
+
+  subgraph STATE["Runtime state (dashboard/app.py)"]
+    BUF["BUFFER\nin-memory event buffer\n(max buffer_max)"]
+    PROC["Process tree & network view\nPROC_INDEX + proctree"]
+    INTEGRITY["Integrity state\nper target + baselines"]
+  end
+
+  subgraph AUTH["Auth & secrets"]
+    AUTHMOD["dashboard/auth.py"]
+    USERS["data/users.json\naccounts, TOTP, backup codes"]
+    ENV[".env\nCUSTOSEYE_SESSION_SECRET\nCUSTOSEYE_PASSWORD_PEPPER"]
+  end
+
+  subgraph BACKEND["Dashboard backend (Flask, dashboard/app.py)"]
+    direction TB
+    CFG
+    PIPE
+    STATE
+    AUTH
+    API["Flask routes\n/, /api/events,\n/api/proctree,\n/api/integrity/*,\n/api/export,\n/api/about,\n/api/ping, /auth/*,\n/api/preview/*"]
+  end
+
+  %% ===================== STORAGE =====================
+  subgraph STORAGE["On-disk storage (data/ + project root)"]
+    direction TB
+    CONF
+    TRUSTDB
+    RULES
+    WEIGHTS
+    NAMET
+    SUP
+    INTGT
+    USERS
+  end
+
+  %% ===================== UI / FRONTEND =====================
+  subgraph DASHHTML["Dashboard & site HTML"]
+    SPA["dashboard/templates/index.html\n(single-page dashboard UI)"]
+    LAND["Static marketing pages\n(index, about, download,\ndocs, privacy, cookies, etc.)"]
+  end
+
+  subgraph DASHJS["Front-end JS (js/*.js)"]
+    NAVJS["nav-accessibility.js\nkeyboard/hover nav behavior"]
+    CONSENT["consent.js\ncookie & analytics consent modal"]
+    GAJS["analytics-attach.js\nGA4 loader\n+ GitHub release badge"]
+    BIN["binary.js\nbinary-rain animation\n(static pages)"]
+  end
+
+  subgraph UI["Browser"]
+    direction TB
+    DASHHTML
+    DASHJS
+  end
+
+  %% ===================== EXTERNAL SERVICES =====================
+  subgraph EXT["External services"]
+    GA["Google Analytics 4"]
+    GH["GitHub Releases API\nCustosEye.zip stats"]
+  end
+
+  %% ===================== FLOWS =====================
+
+  %% --- Collection -> EventBus ---
+  PM -- "process events:\nPID, name, exe, signer,\npaths, ports, parent PIDs..." --> EB
+  NS -- "system-wide socket &\nconnection snapshots\n(listening_ports, remote_endpoints)" --> EB
+  IC -- "file hash / mtime + size\nchange events" --> EB
+
+  %% --- EventBus -> pipeline ---
+  EB -- "drain_into_buffer\n(dashboard/app.py)" --> RE
+
+  %% process events path (Rules → CSC → BUFFER/DB)
+  RE -- "process events\nonly" --> CSC
+  CSC -- "verdict, class,\nconfidence, reasons" --> BUF
+  CSC -- "update prevalence\nand last_seen" --> TRUSTDB
+
+  %% network + integrity path (Rules → BUFFER directly)
+  RE -- "network + integrity events\n(skip CSC)" --> BUF
+
+  %% --- State updates ---
+  RE -- "route to views\n(events, process,\nintegrity)" --> STATE
+  INTGT -. "watch list" .-> IC
+  BUF --> PROC
+  BUF --> INTEGRITY
+
+  %% --- Config wiring ---
+  DCFG --> CONF
+  CONF -. "paths" .-> WEIGHTS
+  CONF -. "paths" .-> TRUSTDB
+  CONF -. "paths" .-> RULES
+  CONF -. "paths" .-> SUP
+  CONF -. "paths" .-> INTGT
+
+  WEIGHTS -. "thresholds" .-> CSC
+  NAMET -. "fast-path verdicts" .-> CSC
+  RULES -. "rule set" .-> RE
+  SUP -. "hide own activity" .-> RE
+
+  %% --- Backend <-> SPA only ---
+  STATE -- "JSON via\n/api/events,\n/api/proctree,\n/api/integrity/*" --> API
+  API --> SPA
+  SPA -- "user actions:\nlogin, filters, exports,\nadd integrity targets" --> API
+
+  %% --- Auth & secrets ---
+  USERS --> AUTHMOD
+  ENV --> AUTHMOD
+  AUTHMOD --> API
+
+  %% --- Static site & JS (all marketing pages) ---
+  LAND --> BIN
+  LAND --> CONSENT
+  LAND --> GAJS
+  LAND --> NAVJS
+
+  BIN -- "paints binary rain\n(no data sent)" --> LAND
+  CONSENT -- "writes localStorage\n'analytics_consent'\n+ dispatches\nanalytics:consent-granted" --> GAJS
+  GAJS -- "loads gtag only on\ncustoseye.com or ?debug=1\nand sends file_download events" --> GA
+  GAJS -- "fetches release stats\nfor CustosEye.zip\n(only when ?debug=1)" --> GH
+  NAVJS -- "keyboard & hover\nnav behavior" --> LAND
+
+  %% ===================== LAUNCHER FLOWS =====================
+
+  %% console.py orchestration
+  MAIN --> ENVGEN
+  MAIN --> START
+  MAIN --> DASHSTART
+  MAIN --> TRAY
+
+  %% Agents started by console.py
+  START --> AGENTS
+
+  %% Dashboard started by console.py
+  DASHSTART --> BACKEND
+
+  %% .env auto-generation
+  ENVGEN --> ENV
+
+  %% Windowed dashboard
+  DASHSTART --> WEBVIEW
+  WEBVIEW --> SPA
+
+  %% Tray actions: browser + window
+  TRAY -. "Open Dashboard (Window)" .-> WEBVIEW
+  TRAY -. "Open Dashboard (Browser)" .-> UI

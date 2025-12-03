@@ -29,6 +29,9 @@ jobs:
 
       - name: Lint, typecheck, test
         shell: pwsh
+        env:
+          CUSTOSEYE_SESSION_SECRET: "ci-test-session-secret-64-chars-12345678901234567890123456789012"
+          CUSTOSEYE_PASSWORD_PEPPER: "ci-test-password-pepper-64-chars-12345678901234567890123456789012"
         run: |
           python -m black --check app agent algorithm dashboard tests
           python -m ruff check app agent algorithm dashboard tests
@@ -117,6 +120,114 @@ jobs:
           Compress-Archive -Path release\* -DestinationPath CustosEye.zip -Force
           Get-ChildItem CustosEye.zip
 
+      - name: Install Inno Setup
+        shell: pwsh
+        run: |
+          $innoUrl = "https://jrsoftware.org/download.php/is.exe"
+          $innoInstaller = "$env:TEMP\innosetup.exe"
+          Write-Host "Downloading Inno Setup..."
+          Invoke-WebRequest -Uri $innoUrl -OutFile $innoInstaller
+          Write-Host "Installing Inno Setup (silent mode)..."
+          Start-Process -FilePath $innoInstaller -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART" -Wait
+          # Add Inno Setup to PATH
+          $innoPath = "${env:ProgramFiles(x86)}\Inno Setup 6"
+          if (Test-Path $innoPath) {
+            $env:PATH = "$innoPath;$env:PATH"
+            [Environment]::SetEnvironmentVariable("PATH", "$env:PATH;$innoPath", "Process")
+            Write-Host "Inno Setup installed to: $innoPath"
+          } else {
+            Write-Error "Inno Setup installation not found at expected path"
+            exit 1
+          }
+
+      - name: Build Windows Installer
+        shell: pwsh
+        run: |
+          # Read version from VERSION.txt
+          $versionFile = "dist\VERSION.txt"
+          if (Test-Path $versionFile) {
+            $versionContent = Get-Content $versionFile -First 1
+            $version = $versionContent.Trim()
+            
+            # Remove 'v' prefix if present
+            if ($version -match '^v(.+)$') {
+              $version = $matches[1]
+            }
+            
+            # Handle dev builds - extract commit hash or use dev version
+            if ($version -match '^dev-(.+)$') {
+              # For dev builds, convert commit hash to numeric build number
+              # Inno Setup VersionInfoVersion requires numeric format (major.minor.build)
+              $commitHash = $matches[1]
+              if ($commitHash.Length -ge 7) {
+                # Convert first 7 hex characters to decimal for build number
+                # This ensures it's always numeric and fits in a reasonable range
+                $hexPart = $commitHash.Substring(0, 7)
+                try {
+                  $buildNumber = [Convert]::ToInt32($hexPart, 16) % 65535  # Limit to 16-bit range
+                  $version = "0.0.$buildNumber"
+                } catch {
+                  # Fallback if conversion fails
+                  $version = "0.0.0"
+                }
+              } else {
+                $version = "0.0.0"
+              }
+            } else {
+              # Clean version string - keep numbers, dots, and dashes for pre-release
+              $version = $version -replace '[^0-9.\-]', ''
+            }
+            
+            # Ensure we have a valid version format (at least major.minor, can have build)
+            if ([string]::IsNullOrWhiteSpace($version) -or $version -notmatch '^\d+\.\d+(\.\d+)?$') {
+              $version = "0.2.0"
+            }
+          } else {
+            $version = "0.2.0"
+          }
+          Write-Host "Building installer with version: $version"
+          
+          # Find Inno Setup compiler
+          $isccPath = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $isccPath)) {
+            Write-Error "ISCC.exe not found at $isccPath"
+            exit 1
+          }
+          
+          # Compile installer
+          $issFile = "installer.iss"
+          if (-not (Test-Path $issFile)) {
+            Write-Error "Installer script not found: $issFile"
+            exit 1
+          }
+          
+          # Ensure output directory exists
+          New-Item -ItemType Directory -Force -Path installer_output | Out-Null
+          
+          # Run Inno Setup compiler with version define
+          & $isccPath /DAppVersion="$version" $issFile
+          
+          if ($LASTEXITCODE -ne 0) {
+            Write-Error "Inno Setup compilation failed with exit code $LASTEXITCODE"
+            exit 1
+          }
+          
+          # Check for output
+          $installerOutput = "installer_output\CustosEye-Setup.exe"
+          if (Test-Path $installerOutput) {
+            Write-Host "Installer created successfully: $installerOutput"
+            Get-ChildItem $installerOutput
+            # Rename to include version if it's a release
+            if ($env:GITHUB_REF -like 'refs/tags/*') {
+              $versionedName = "CustosEye-Setup-$version.exe"
+              Copy-Item $installerOutput "installer_output\$versionedName"
+              Write-Host "Also created versioned installer: $versionedName"
+            }
+          } else {
+            Write-Error "Installer output not found at $installerOutput"
+            exit 1
+          }
+
       - name: Upload EXE artifact
         uses: actions/upload-artifact@v4
         with:
@@ -134,9 +245,18 @@ jobs:
           path: CustosEye.zip
           if-no-files-found: error
 
+      - name: Upload Installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: CustosEye-installer
+          path: installer_output/CustosEye-Setup*.exe
+          if-no-files-found: error
+
       - name: Create GitHub Release (tag push only)
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: CustosEye.zip
+          files: |
+            CustosEye.zip
+            installer_output/CustosEye-Setup*.exe
           generate_release_notes: true

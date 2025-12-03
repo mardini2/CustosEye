@@ -2,30 +2,62 @@
 # CustosEye Requirements
 # Compatible with Python 3.11.9
 # =========================
+# goal: Python package dependencies for CustosEye. includes runtime libraries for the
+#       dashboard, monitoring agents, trust engine, and build tools. pin versions for
+#       reproducible builds and deployments.
 
 # --- Core runtime ---
+# web framework for the dashboard
 flask==3.0.0
+# production-ready WSGI server (alternative to Flask dev server)
 waitress==3.0.2
+# cross-platform process and system monitoring (used by agents)
 psutil==5.9.8
+# executable builder for creating Windows .exe files
 pyinstaller==6.6.0
+# system tray icon support (optional feature)
 pystray==0.19.5
+# image processing library (required by pystray for tray icons)
 pillow==10.3.0
+# windowed application support (native window with embedded browser)
+pywebview==5.2
+# Excel file generation for export functionality
 openpyxl==3.1.5
 
 # --- Optional utilities ---
-# (used by algorithm module and for integrity scanning)
+# HTTP library (used by algorithm module and for integrity scanning)
 requests==2.32.3
 
+# --- Authentication ---
+# load environment variables from .env file
+python-dotenv==1.0.0
+# TOTP 2FA support for authenticator apps
+pyotp==2.9.0
+# QR code generation for 2FA setup
+qrcode==7.4.2
+# password hashing library (preferred, more secure)
+argon2-cffi==23.1.0
+# password hashing library (fallback if argon2 not available)
+bcrypt==4.1.2
+
 # --- Development & Testing ---
+# test framework for running unit tests
 pytest==8.2.0
+# code coverage plugin for pytest
 pytest-cov==5.0.0
+# code formatter (Black)
 black==24.8.0
+# fast Python linter (replaces Flake8 and more)
 ruff==0.6.8
+# static type checker for Python
 mypy==1.11.1
+# type stubs for requests library (helps mypy understand requests)
 types-requests==2.32.0.20240622
+# timeout plugin for pytest (prevents tests from hanging)
 pytest-timeout==2.3.1
 
 # --- System info (optional, used in builds or diagnostics) ---
+# cross-platform directory utilities (used by PyInstaller and diagnostics)
 platformdirs==4.2.0
 
 # --- Notes ---
