@@ -157,8 +157,19 @@ if not PASSWORD_PEPPER:
 assert SESSION_SECRET is not None
 assert PASSWORD_PEPPER is not None
 
+# figure out where the app is running from (handles PyInstaller bundles)
+def _resolve_base_dir() -> Path:
+    import sys
+
+    # if we are frozen (PyInstaller), use the executable's directory
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).parent
+    # otherwise, go up one level from this file (dashboard/auth.py -> project root)
+    return Path(__file__).resolve().parents[1]
+
+
 # user database path (stored in data directory)
-BASE_DIR = Path(__file__).resolve().parents[1]
+BASE_DIR = _resolve_base_dir()
 USERS_DB_PATH = BASE_DIR / "data" / "users.json"
 
 # brute force protection: track failed login attempts
