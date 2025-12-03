@@ -1,0 +1,151 @@
+<!--
+  goal: license page for CustosEye website. fetches and displays the LICENSE.md file
+        from the repository root, showing it in a formatted monospace container.
+        dynamically loads the license text when the page loads.
+-->
+<!doctype html>
+<html lang="en">
+  
+<head>
+  <!-- standard metadata -->
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+
+  <!-- title -->
+  <title>License - CustosEye</title>
+
+  <!-- SEO and structured metadata -->
+  <meta name="description" content="View the CustosEye license and usage terms. Transparency and trust in local-first software." />
+  <meta name="robots" content="index, follow" />
+  <link rel="canonical" href="https://www.custoseye.com/legal.html" />
+
+  <!-- Open Graph (social preview) -->
+  <meta property="og:title" content="License - CustosEye" />
+  <meta property="og:description" content="View the CustosEye license and usage terms for transparency and compliance." />
+  <meta property="og:url" content="https://www.custoseye.com/legal.html" />
+  <meta property="og:type" content="website" />
+  <meta property="og:image" content="https://www.custoseye.com/assets/favicon.png" />
+
+  <!-- Favicon -->
+  <link rel="icon" href="https://www.custoseye.com/assets/favicon.png" type="image/png" />
+  <link rel="icon" href="assets/favicon.ico?v=2" sizes="any" />
+
+  <!-- shared styles -->
+  <link rel="stylesheet" href="styles.css?v=2" />
+  <link rel="preload" href="styles.css?v=2" as="style" />
+</head>
+
+<body class="page">
+
+  <!-- a slim royal-purple stripe for subtle branding -->
+  <div class="top-stripe" aria-hidden="true"></div>
+
+  <!-- header: logo + brand + navigation -->
+  <header class="topbar">
+    <!-- logo links home -->
+    <a class="home-link" href="/" aria-label="Go to homepage">
+      <img class="logo" src="assets/favicon.png" alt="CustosEye logo" />
+    </a>
+    <!-- title + tagline link home -->
+    <a class="home-link brand" href="/" aria-label="Go to homepage">
+      <h1>CustosEye</h1>
+      <p class="tagline">Your Third Eye</p>
+    </a>
+
+    <!-- main navigation: primary site sections only -->
+    <nav class="topbar-nav" role="menubar" aria-label="Main navigation">
+      <a href="index.html" role="menuitem">Home</a>
+      <span class="nav-sep">|</span>
+      <div class="nav-has-submenu">
+        <a href="#" role="menuitem" aria-haspopup="true" aria-expanded="false" id="about-menu-button" tabindex="0">About</a>
+        <div class="nav-submenu" role="menu" aria-labelledby="about-menu-button">
+          <a href="about.html" role="menuitem">About</a>
+          <a href="methodology.html" role="menuitem">Methodology</a>
+          <a href="ethics.html" role="menuitem">Code of Ethics</a>
+        </div>
+      </div>
+      <span class="nav-sep">|</span>
+      <a href="download.html" role="menuitem">Downloads</a>
+      <span class="nav-sep">|</span>
+      <a href="documentation.html" role="menuitem">Documentation</a>
+    </nav>
+  </header>
+
+  <!-- main content -->
+  <main class="wrap">
+    <!-- license display card: shows the LICENSE.md file content -->
+    <section class="card">
+      <h2 class="hero-title" style="margin-bottom:8px">License</h2>
+      <p class="muted" style="margin-bottom:16px">
+        Current license for CustosEye
+      </p>
+
+      <!-- container where we will render the LICENSE text (monospace formatting for code-like display) -->
+      <div id="license-container" style="
+           white-space: pre-wrap;      /* keep line breaks from the LICENSE file */
+           font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
+           font-size: 0.95rem;
+           color: #e5e7eb;
+           background: rgba(0,0,0,0.15);
+           border: 1px solid rgba(255,255,255,0.07);
+           border-radius: 12px;
+           padding: 16px;
+      ">
+        Loading license…
+      </div>
+    </section>
+  </main>
+
+  <!-- footer: legal and consent links (license page shows license as selected, not a link) -->
+  <footer class="foot">
+    <nav class="foot-nav">
+      <!-- cookie settings link goes to cookies page -->
+      <a href="cookies.html">Cookie Settings</a>
+      <a href="privacy.html">Privacy Policy</a>
+      <!-- license is shown as selected on the license page (matches footer link style but not clickable) -->
+      <span style="color: #c8d0dd;" aria-current="page">License</span>
+    </nav>
+    <small class="muted">© <span id="year"></span> CustosEye. All rights reserved.</small>
+  </footer>
+
+  <!-- navigation accessibility and keyboard support -->
+  <script src="js/nav-accessibility.js?v=2"></script>
+
+  <!-- consent gate (only shows if no choice stored) -->
+  <script src="js/consent.js?v=2"></script>
+
+  <!-- GA attaches only after consent -->
+  <script src="js/analytics-attach.js?v=2" defer></script>
+
+    <script>
+    // write the current year in the footer
+    document.getElementById('year').textContent = new Date().getFullYear();
+
+    // try common license filenames in order (different repos use different naming)
+    const CANDIDATES = ['LICENSE.md', 'LICENSE', 'LICENSE.txt'];
+
+    // fetch and display the license file
+    (async () => {
+        const el = document.getElementById('license-container');
+        // try each candidate filename until one works
+        for (const path of CANDIDATES) {
+        try {
+            const res = await fetch(path, { cache: 'no-store' });  // fetch without caching
+            if (!res.ok) continue; // try the next candidate if this one fails
+            const text = await res.text();  // read the file as text
+
+            // keep it simple: show the text exactly as written (preserves formatting)
+            // if we later want nicer Markdown rendering, we can add a tiny parser.
+            el.textContent = text;
+            return;  // success, exit the loop
+        } catch {
+            // ignore and try next candidate if fetch fails
+        }
+        }
+        // if none of the candidates worked, show an error message
+        el.textContent = 'Could not load license. Please try again later.';
+        console.warn('[license] None of the expected license files were found:', CANDIDATES.join(', '));
+    })();
+    </script>
+</body>
+</html>

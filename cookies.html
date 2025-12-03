@@ -1,0 +1,177 @@
+<!--
+  goal: cookie consent settings page for CustosEye website. allows users to accept or decline
+        analytics cookies, displays their current choice, and stores the preference in localStorage.
+        this page is separate from the consent modal and provides a dedicated settings interface.
+-->
+<!doctype html>
+<html lang="en">
+
+<head>
+  <!-- standard metadata -->
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+
+  <!-- title -->
+  <title>Cookie Settings - CustosEye</title>
+
+  <!-- SEO and structured metadata -->
+  <meta name="description" content="Manage your CustosEye cookie preferences. Control analytics consent anytime for a better browsing experience." />
+  <meta name="robots" content="index, follow" />
+  <link rel="canonical" href="https://www.custoseye.com/cookies.html" />
+
+  <!-- Open Graph (social preview) -->
+  <meta property="og:title" content="Cookie Settings - CustosEye" />
+  <meta property="og:description" content="Manage or update your CustosEye cookie preferences anytime for full control over analytics." />
+  <meta property="og:url" content="https://www.custoseye.com/cookies.html" />
+  <meta property="og:type" content="website" />
+  <meta property="og:image" content="https://www.custoseye.com/assets/favicon.png" />
+
+  <!-- Favicon -->
+  <link rel="icon" href="https://www.custoseye.com/assets/favicon.png" type="image/png" />
+  <link rel="icon" href="assets/favicon.ico?v=2" sizes="any" />
+
+  <!-- shared styles -->
+  <link rel="stylesheet" href="styles.css?v=2" />
+  <link rel="preload" href="styles.css?v=2" as="style" />
+</head>
+
+<body class="page">
+  <!-- slim royal-purple stripe for polish -->
+  <div class="top-stripe" aria-hidden="true"></div>
+
+  <!-- header: logo + brand + navigation -->
+  <header class="topbar">
+    <!-- logo is a link back home -->
+    <a class="home-link" href="/" aria-label="Go to homepage">
+      <img class="logo" src="assets/favicon.png" alt="CustosEye logo" />
+    </a>
+
+    <!-- title + tagline are also a link back home -->
+    <a class="home-link brand" href="/" aria-label="Go to homepage">
+      <h1>CustosEye</h1>
+      <p class="tagline">Your Third Eye</p>
+    </a>
+
+    <!-- main navigation: primary site sections only -->
+    <nav class="topbar-nav" role="menubar" aria-label="Main navigation">
+      <a href="index.html" role="menuitem">Home</a>
+      <span class="nav-sep">|</span>
+      <div class="nav-has-submenu">
+        <a href="#" role="menuitem" aria-haspopup="true" aria-expanded="false" id="about-menu-button" tabindex="0">About</a>
+        <div class="nav-submenu" role="menu" aria-labelledby="about-menu-button">
+          <a href="about.html" role="menuitem">About</a>
+          <a href="methodology.html" role="menuitem">Methodology</a>
+          <a href="ethics.html" role="menuitem">Code of Ethics</a>
+        </div>
+      </div>
+      <span class="nav-sep">|</span>
+      <a href="download.html" role="menuitem">Downloads</a>
+      <span class="nav-sep">|</span>
+      <a href="documentation.html" role="menuitem">Documentation</a>
+    </nav>
+  </header>
+
+  <!-- main content -->
+  <main class="wrap">
+    <!-- cookie settings card: accept/decline buttons and status display -->
+    <section class="card">
+      <h2 class="hero-title" style="margin-bottom: 16px">Cookie Settings</h2>
+
+      <p style="margin-bottom: 24px; line-height: 1.6;">
+        This website uses Google Analytics 4 (GA4) to understand how visitors use the site. Analytics is only loaded
+        after you explicitly consent. You can change your preference at any time using the controls below.
+      </p>
+
+      <!-- current status display - terminal design -->
+      <div style="margin-bottom: 24px;">
+        <h3 style="margin-bottom: 12px; font-size: 1rem; color: #c8d0dd;">Current Status</h3>
+        <div style="background: #0a0e27; border: 1px solid rgba(139, 92, 246, 0.3); border-radius: 8px; padding: 20px; font-family: 'Consolas', 'Monaco', 'Courier New', monospace; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.05);">
+          <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 12px;">
+            <span style="color: #8b5cf6; font-weight: 600;">$</span>
+            <span style="color: #9aa3b2;">custoseye --cookie-status</span>
+          </div>
+          <div id="cookie-status" style="color: #4ade80; font-size: 0.95rem; line-height: 1.6; min-height: 24px;">
+            <span style="color: #6b7280;">[</span><span style="color: #9ca3af;">LOADING</span><span style="color: #6b7280;">]</span> Checking consent status...
+          </div>
+        </div>
+      </div>
+
+      <!-- accept/decline buttons for cookie consent -->
+      <div style="display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 24px;">
+        <button class="btn btn-primary" id="accept-cookies" style="flex: 1; min-width: 150px;">Accept Analytics Cookies</button>
+        <button class="btn btn-ghost" id="decline-cookies" style="flex: 1; min-width: 150px;">Decline Analytics Cookies</button>
+      </div>
+
+      <!-- information section -->
+      <div style="margin-top: 32px; padding-top: 24px; border-top: 1px solid rgba(255,255,255,0.1);">
+        <h3 style="margin-bottom: 12px; font-size: 1.1rem;">What This Means</h3>
+        <ul style="margin-bottom: 16px; line-height: 1.8; padding-left: 20px;">
+          <li><strong>If you accept:</strong> Google Analytics will collect standard web analytics data (page views, navigation paths, device type, general location). This helps us understand how visitors use the site.</li>
+          <li><strong>If you decline:</strong> No analytics code runs and no data is sent to Google. The website functions normally without analytics tracking.</li>
+        </ul>
+        <p style="margin-bottom: 16px; line-height: 1.6; font-size: 0.9rem; color: #9aa3b2;">
+          Your choice is stored in your browser's local storage and persists across visits. 
+          For more details, see our <a href="privacy.html" style="color: #8b5cf6;">Privacy Policy</a>.
+        </p>
+      </div>
+    </section>
+  </main>
+
+  <!-- footer: legal and consent links (cookie settings page shows cookie settings as selected, not a link) -->
+  <footer class="foot">
+    <nav class="foot-nav">
+      <!-- cookie settings is shown as selected on this page (matches footer link style but not clickable) -->
+      <span style="color: #c8d0dd;" aria-current="page">Cookie Settings</span>
+      <a href="privacy.html">Privacy Policy</a>
+      <a href="legal.html">License</a>
+    </nav>
+    <small class="muted">© <span id="year"></span> CustosEye. All rights reserved.</small>
+  </footer>
+
+  <script>
+    // write the current year in the footer
+    document.getElementById('year').textContent = new Date().getFullYear();
+
+    // use the same key as the banner/index page (must match consent.js)
+    const KEY = 'analytics_consent';
+    const statusEl = document.getElementById('cookie-status');
+
+    // helper to show the current choice (reads from localStorage and displays status)
+    function setStatusText() {
+      const v = localStorage.getItem(KEY);
+      if (v === 'granted') {
+        statusEl.innerHTML = '<span style="color: #6b7280;">[</span><span style="color: #4ade80;">✓ GRANTED</span><span style="color: #6b7280;">]</span> <span style="color: #4ade80;">Analytics cookies: ENABLED</span><br><span style="color: #9ca3af; font-size: 0.85rem;">→ Google Analytics will track page views and navigation</span>';
+      } else if (v === 'denied') {
+        statusEl.innerHTML = '<span style="color: #6b7280;">[</span><span style="color: #f87171;">✗ DENIED</span><span style="color: #6b7280;">]</span> <span style="color: #f87171;">Analytics cookies: DISABLED</span><br><span style="color: #9ca3af; font-size: 0.85rem;">→ No analytics tracking, all data stays local</span>';
+      } else {
+        statusEl.innerHTML = '<span style="color: #6b7280;">[</span><span style="color: #fbbf24;">⚠ PENDING</span><span style="color: #6b7280;">]</span> <span style="color: #fbbf24;">No preference set</span><br><span style="color: #9ca3af; font-size: 0.85rem;">→ Use buttons below to set your preference</span>';
+      }
+    }
+
+    // Accept => store 'granted', notify any listeners, update status
+    document.getElementById('accept-cookies').addEventListener('click', () => {
+      localStorage.setItem(KEY, 'granted');  // save acceptance to localStorage
+      window.dispatchEvent(new Event('analytics:consent-granted'));  // fire event for analytics script
+      setStatusText();  // update status display
+    });
+
+    // Decline => store 'denied', update status
+    document.getElementById('decline-cookies').addEventListener('click', () => {
+      localStorage.setItem(KEY, 'denied');  // save denial to localStorage
+      setStatusText();  // update status display
+    });
+
+    // show initial state when page loads
+    setStatusText();
+  </script>
+
+  <!-- navigation accessibility and keyboard support -->
+  <script src="js/nav-accessibility.js?v=2"></script>
+
+  <!-- Cookie banner (shows once until a choice is stored) -->
+  <script src="js/consent.js?v=2"></script>
+
+  <!-- GA attaches only after consent -->
+  <script src="js/analytics-attach.js?v=2" defer></script>
+</body>
+</html>

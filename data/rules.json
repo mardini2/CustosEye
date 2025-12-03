@@ -1,9 +1,9 @@
 [
   {
     "name": "Allow Windows/System listener",
-    "when": { "source": "process", "listening_port": true, "name_contains": ["system"] },
+    "when": { "source": "process", "listening_port": true, "name_contains": ["System","system"] },
     "then": { "level": "info", "reason": "Known system listener" }
-  },
+  },  
   {
     "name": "Allow CustosEye self-listener",
     "when": { "source": "process", "listening_port": true, "name_contains": ["CustosEye"] },
@@ -36,12 +36,261 @@
   },
   {
     "name": "High-risk ports",
-    "when": { "source": "process", "listening_port": true, "port_in": [22, 3389, 4444, 5900] },
+    "when": { "source": "process", "listening_port": true, "port_in": [22,23,135,139,445,3389,4444,5900,5985,5986,1433,3306,5432] },
     "then": { "level": "critical", "reason": "Process listening on risky port" }
-  },
+  },  
   {
     "name": "Default listener alert",
     "when": { "source": "process", "listening_port": true },
     "then": { "level": "warning", "reason": "Unexpected listener" }
-  }
+  },
+  {
+    "name": "Allow core Windows processes",
+    "when": { "source": "process",
+      "name_contains": [
+        "smss.exe","csrss.exe","wininit.exe","services.exe","lsass.exe","winlogon.exe",
+        "svchost.exe","fontdrvhost.exe","dwm.exe","taskhostw.exe","taskhostex.exe",
+        "runtimebroker.exe","sihost.exe","explorer.exe","ctfmon.exe","applicationframehost.exe",
+        "lockapp.exe","startmenuexperiencehost.exe",
+        "SearchApp.exe","SearchFilterHost.exe","SearchIndexer.exe","searchindexer.exe","SearchHost.exe","searchhost.exe",
+        "perfhost.exe","werfault.exe","werfaultsecure.exe","NgcCtnrSvc.exe","NgcSvc.exe",
+        "SecurityHealthHost.exe","AssignedAccessLockApp.exe","CredentialUIBroker.exe",
+        "SystemSettingsBroker.exe","UserOOBEBroker.exe","Widgets.exe","WidgetService.exe",
+        "conhost.exe","spoolsv.exe","audiodg.exe","shellexperiencehost.exe",
+        "securityhealthservice.exe","securityhealthsystray.exe","textinputhost.exe",
+        "wlanext.exe","aggregatorhost.exe","appinfo.exe","ClipSVC.exe","wsreset.exe",
+        "cloudexperiencehostbroker.exe","peopleapp.exe","wudfhost.exe","dllhost.exe","wmiprvse.exe",
+        "rdpclip.exe"
+      ]
+    },
+    "then": { "level": "info", "reason": "Known Windows process" }
+  },  
+  {
+    "name": "Allow Windows security stack",
+    "when": { "source": "process",
+      "name_contains": ["MsSense.exe","MsMpEng.exe","msmpeng.exe","MpDefenderCoreService.exe","nissrv.exe","smartscreen.exe","LsaIso.exe"]
+    },
+    "then": { "level": "info", "reason": "Microsoft security component" }
+  },
+  {
+    "name": "Allow Microsoft updaters",
+    "when": { "source": "process",
+      "name_contains": ["msiexec.exe","OfficeClickToRun.exe","GoogleUpdate.exe","MicrosoftEdgeUpdate.exe","wermgr.exe","OneDriveStandaloneUpdater.exe","GoogleCrashHandler.exe","GoogleCrashHandler64.exe"]
+    },
+    "then": { "level": "info", "reason": "Updater/telemetry helper" }
+  },
+  {
+    "name": "Allow GPU driver processes",
+    "when": { "source": "process",
+      "name_contains": [
+        "nvcontainer.exe","NVContainer.exe",
+        "nvdisplay.container.exe","NVDisplay.Container.exe",
+        "nvidia share.exe","NVIDIA Share.exe",
+        "nvidia web helper.exe","NVIDIA Web Helper.exe",
+        "igfxcuiservicen.exe","igfxEmN.exe","igfxemn.exe",
+        "igcctray.exe","IntelGraphicsCommandCenter.exe",
+        "intelcphdcpsvc.exe","intelcphecs.exe","lms.exe"
+      ]
+    },
+    "then": { "level": "info", "reason": "Graphics driver/service" }
+  },
+  {
+    "name": "Allow OEM vendor services",
+    "when": { "source": "process",
+      "name_contains": [
+        "Lenovo.Modern.ImController.exe","lenovovantageservice.exe","lenovoutilityservice.exe",
+        "lenovoservicebridgeaddin.exe","LenovoUtilityHost.exe",
+        "LenovoVantage-(SmartPanelAddin).exe","LenovoVantage-(LenovoAuthenticationAddin).exe",
+        "LenovoVantage-(LenovoGamingSystemAddin).exe","LenovoVantage-(SmartDisplayAddin).exe",
+        "SystemNotificationPlugin.exe",
+        "NahimicService.exe","RtkAudUService64.exe","logi_lamparray_service.exe","lghub_updater.exe","jhi_service.exe","HPSIsvc.exe","TbtP2pShortcutService.exe","WMIRegistrationService.exe"
+      ]
+    },
+    "then": { "level": "info", "reason": "OEM utility/service" }
+  },
+  {
+    "name": "Allow Office/OneDrive/Teams",
+    "when": { "source": "process",
+      "name_contains": ["winword.exe","onenote.exe","onenotem.exe","onedrive.exe","outlook.exe","msteams.exe","OfficeClickToRun.exe"]
+    },
+    "then": { "level": "info", "reason": "Microsoft productivity app" }
+  },
+  {
+    "name": "Allow browsers",
+    "when": { "source": "process",
+      "name_contains": ["msedge.exe","chrome.exe","firefox.exe","brave.exe","opera.exe","vivaldi.exe","msedgewebview2.exe","chromium.exe"]
+    },
+    "then": { "level": "info", "reason": "Web browser/WebView" }
+  },
+  {
+    "name": "Allow chat/collab clients",
+    "when": { "source": "process",
+      "name_contains": ["slack.exe","zoom.exe","zoomus.exe","teams.exe","skype.exe","discord.exe","discordcanary.exe","discordptb.exe","telegram.exe","whatsapp.exe","element.exe","teamspeak.exe","mumble.exe"]
+    },
+    "then": { "level": "info", "reason": "Collaboration/IM client" }
+  },
+  {
+    "name": "Allow common dev tools",
+    "when": { "source": "process",
+      "name_contains": [
+        "code.exe","devenv.exe","pycharm64.exe","intellijidea64.exe","clion64.exe","androidstudio.exe",
+        "git.exe","githubdesktop.exe","putty.exe","WindowsTerminal.exe","OpenConsole.exe",
+        "python.exe","node.exe","adb.exe","ssh.exe","ssh-agent.exe","msbuild.exe","dotnet.exe",
+        "vmcompute.exe","vmwp.exe","vmmem.exe","vmmemWSL.exe","wslservice.exe","cursor.exe"
+      ]
+    },
+    "then": { "level": "info", "reason": "Developer tool" }
+  },
+  {
+    "name": "Allow common dev server ports",
+    "when": { "source": "process", "listening_port": true,
+      "name_contains": ["python","node","dotnet","code","deno","php","bun","vite","next","nuxt"],
+      "port_in": [3000,3001,3002,4200,5173,5174,5000,5050,7000,7001,8000,8080,8081,8765,9000,19000,9323]
+    },
+    "then": { "level": "info", "reason": "Local dev server" }
+  },
+  {
+    "name": "Script host listening",
+    "when": { "source": "process", "listening_port": true,
+      "name_contains": ["wscript.exe","cscript.exe","powershell.exe","pwsh.exe","rundll32.exe","mshta.exe","wmic.exe","regsvr32.exe","certutil.exe","bitsadmin.exe","installutil.exe","schtasks.exe","forfiles.exe","hh.exe","powershell_ise.exe"]
+    },
+    "then": { "level": "warning", "reason": "Scripting/LOLBIN with listener" }
+  },  
+  {
+    "name": "Allow Adobe apps/services",
+    "when": { "source": "process",
+      "name_contains": [
+        "photoshop.exe","Photoshop.exe",
+        "illustrator.exe","Illustrator.exe",
+        "after effects.exe","AfterFX.exe",
+        "acrobat.exe","Acrobat.exe","acrobatreader.exe","AcroRd32.exe",
+        "adobecollabsync.exe","AdobeCollabSync.exe",
+        "adobeupdateservice.exe","AdobeUpdateService.exe",
+        "acrobatnotificationclient.exe","AcrobatNotificationClient.exe",
+        "armsvc.exe","ARMSvc.exe"
+      ]
+    },
+    "then": { "level": "info", "reason": "Adobe application/service" }
+  },  
+  {
+    "name": "Allow game launchers",
+    "when": { "source": "process",
+      "name_contains": [
+        "steam.exe","epicgameslauncher.exe","origin.exe","battlenet.exe","uplay.exe",
+        "goggalaxy.exe","xboxappservices.exe","gamingservices.exe","xboxpcappft.exe",
+        "GameBar.exe","GameBarPresenceWriter.exe"
+      ]
+    },
+    "then": { "level": "info", "reason": "Game platform" }
+  },
+  {
+    "name": "Allow anti-cheat (no inbound)",
+    "when": { "source": "process",
+      "name_contains": ["riotclientanticheat.exe","vanguard.exe","battlEye.exe","eaclauncher.exe"],
+      "listening_port": false
+    },
+    "then": { "level": "info", "reason": "Anti-cheat driver/service (not listening)" }
+  },
+  {
+    "name": "Remote-control tool idle",
+    "when": { "source": "process",
+      "name_contains": ["anydesk.exe","teamviewer.exe","rustdesk.exe"],
+      "listening_port": false
+    },
+    "then": { "level": "info", "reason": "Remote-control tool (no listener)" }
+  },
+  {
+    "name": "Remote-control tool listening",
+    "when": { "source": "process",
+      "name_contains": ["anydesk.exe","teamviewer.exe","rustdesk.exe"],
+      "listening_port": true
+    },
+    "then": { "level": "warning", "reason": "Remote-control tool accepting connections" }
+  },
+  {
+    "name": "Script host listening",
+    "when": { "source": "process", "listening_port": true,
+      "name_contains": ["wscript.exe","cscript.exe","powershell.exe","rundll32.exe","mshta.exe","wmic.exe","regsvr32.exe"]
+    },
+    "then": { "level": "warning", "reason": "Scripting/LOLBIN with listener" }
+  },
+  {
+    "name": "Allow observability agents",
+    "when": { "source": "process",
+      "name_contains": ["alloy-windows-amd64.exe","alloy-service-windows-amd64.exe","grafana-agent.exe","promtail.exe"]
+    },
+    "then": { "level": "info", "reason": "Observability agent" }
+  },
+  {
+    "name": "Default non-listener process",
+    "when": { "source": "process", "listening_port": false },
+    "then": { "level": "info", "reason": "No listening socket; lower risk by default" }
+  },
+  {
+    "name": "Socket: allow Windows/System listener",
+    "when": { "source": "socket", "state": "listening", "process_name_contains": ["System","system"] },
+    "then": { "level": "info", "reason": "Known system listener (socket)" }
+  },
+  {
+    "name": "Socket: high-risk ports",
+    "when": { "source": "socket", "state": "listening", "local_port_in": [22, 23, 135, 139, 445, 3389, 4444, 5900, 5985, 5986, 1433, 3306, 5432] },
+    "then": { "level": "critical", "reason": "Socket listening on risky port" }
+  },
+  {
+    "name": "Socket: default listener alert",
+    "when": { "source": "socket", "state": "listening" },
+    "then": { "level": "warning", "reason": "Unexpected socket listener" }
+  },
+  {
+    "name": "EdgeGameAssist present (no listener)",
+    "when": { "source": "process", "listening_port": false, "name_contains": ["EdgeGameAssist.exe","edgegameassist.exe"] },
+    "then": { "level": "info", "reason": "Trusted utility present" }
+  },
+  {
+    "name": "EdgeGameAssist listening (process)",
+    "when": { "source": "process", "listening_port": true, "name_contains": ["EdgeGameAssist.exe","edgegameassist.exe"], "port_not_in": [22,23,135,139,445,3389,4444,5900,5985,5986,1433,3306,5432] },
+    "then": { "level": "warning", "reason": "Trusted utility listening" }
+  },
+  {
+    "name": "EdgeGameAssist on risky port (process)",
+    "when": { "source": "process", "listening_port": true, "name_contains": ["EdgeGameAssist.exe","edgegameassist.exe"], "port_in": [22,23,135,139,445,3389,4444,5900,5985,5986,1433,3306,5432] },
+    "then": { "level": "critical", "reason": "Trusted utility on risky port" }
+  },
+  {
+    "name": "EdgeGameAssist listening (socket)",
+    "when": { "source": "socket", "state": "listening", "process_name_contains": ["EdgeGameAssist.exe","edgegameassist.exe"], "local_port_not_in": [22,23,135,139,445,3389,4444,5900,5985,5986,1433,3306,5432] },
+    "then": { "level": "warning", "reason": "EdgeGameAssist socket listener" }
+  },
+  {
+    "name": "EdgeGameAssist on risky port (socket)",
+    "when": { "source": "socket", "state": "listening", "process_name_contains": ["EdgeGameAssist.exe","edgegameassist.exe"], "local_port_in": [22,23,135,139,445,3389,4444,5900,5985,5986,1433,3306,5432] },
+    "then": { "level": "critical", "reason": "EdgeGameAssist socket on risky port" }
+  },
+  {
+    "name": "Chrome Remote Desktop",
+    "when": { "source": "process", "name_contains": ["remoting_host.exe","chromeremotedesktophost.exe"] },
+    "then": { "level": "info", "reason": "Remote desktop host detected" }
+  },
+  {
+    "name": "Allow more Microsoft updaters",
+    "when": { "source": "process",
+      "name_contains": ["usoclient.exe","wuauclt.exe","tiworker.exe","trustedinstaller.exe"]
+    },
+    "then": { "level": "info", "reason": "Windows update/servicing component" }
+  },
+  {
+    "name": "Allow Defender helpers",
+    "when": { "source": "process", "name_contains": ["NisSrv.exe","MpCmdRun.exe","SecurityHealthSystray.exe"] },
+    "then": { "level": "info", "reason": "Microsoft Defender helper" }
+  },
+  {
+    "name": "Catch-all: log unmatched",
+    "when": {},
+    "then": { "level": "debug", "reason": "No specific rule matched; dumping event for tuning" }
+  },
+  {
+    "name": "Unknown/unnamed process listener",
+    "when": { "source": "process", "listening_port": true, "name_contains": ["(unknown)","unknown"] },
+    "then": { "level": "warning", "reason": "Unnamed process listening" }
+  }  
 ]

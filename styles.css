@@ -1,0 +1,537 @@
+/* ===== styles.css ===== */
+/* goal: shared stylesheet for CustosEye website. provides dark theme styling with
+   purple accents, responsive layout, and accessibility features. used by all HTML
+   pages (index.html, cookies.html, legal.html) for consistent visual design. */
+
+/* ===== base reset ===== */
+/* reset all margins and padding, use border-box sizing for predictable layouts */
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+/* body becomes a column flex container so footer sticks to bottom */
+html, body {
+  height: 100%;
+}
+
+/* main page container with dark theme and flex layout for sticky footer */
+body.page {
+  min-height: 100svh;
+  display: flex;
+  flex-direction: column;
+  font-family: system-ui, -apple-system, Segoe UI, Roboto, Inter, Arial, sans-serif;
+  color: #e5e7eb;
+  background: radial-gradient(1000px 500px at 20% 0%, #0b1022 0%, #0b1022 40%, #0a0f1e 100%);
+  -webkit-user-select: none;  /* prefix first */
+  user-select: none;
+}
+
+/* add a slim royal-purple stripe at the very top for polish */
+.top-stripe {
+  display: block;
+  width: 100%;
+  height: 3px;
+  min-height: 3px;
+  flex-shrink: 0;
+  background: linear-gradient(90deg, #6d28d9, #8b5cf6, #6d28d9);
+  opacity: 0.9;
+  margin: 0;
+  padding: 0;
+}
+
+/* content wrapper: main gets flex:1 so footer is pushed down */
+.wrap {
+  width: 100%;
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 24px;
+  flex: 1; /* <- this makes sure main area expands, pushing footer to bottom */
+}
+
+/* ===== header ===== */
+/* top navigation bar with logo and branding */
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 16px 24px;
+  border-bottom: 1px solid rgba(255,255,255,0.07);
+  background: rgba(0,0,0,0.15);
+  -webkit-backdrop-filter: blur(4px);  /* prefix first */
+  backdrop-filter: blur(4px);
+}
+
+/* home link styling (logo and brand both link to homepage) */
+.home-link { display: inline-flex; text-decoration: none; }
+.logo { height: 40px; width: auto; }
+
+/* brand typography (title and tagline) */
+.brand h1 { font-size: 1.4rem; font-weight: 700; }
+.brand .tagline { color: #a8b1c0; font-size: 0.95rem; }
+
+/* ===== navigation ===== */
+/* main navigation links in header (appears next to logo/brand) */
+.topbar-nav {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+  flex-wrap: wrap;
+}
+
+.topbar-nav a {
+  color: #c8d0dd;
+  text-decoration: none;
+  font-size: 1rem;
+  font-weight: 500;
+  padding: 10px 18px;
+  border-radius: 8px;
+  transition: all 200ms cubic-bezier(0.4, 0, 0.2, 1);
+  position: relative;
+  border: 1px solid transparent;
+  background: transparent;
+}
+
+.topbar-nav a::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 8px;
+  padding: 1px;
+  background: linear-gradient(135deg, rgba(139, 92, 246, 0.3), rgba(139, 92, 246, 0));
+  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  mask-composite: exclude;
+  opacity: 0;
+  transition: opacity 200ms ease;
+}
+
+.topbar-nav a:hover {
+  background: rgba(139, 92, 246, 0.08);
+  color: #e5e7eb;
+  border-color: rgba(139, 92, 246, 0.2);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(139, 92, 246, 0.15);
+}
+
+.topbar-nav a:hover::before {
+  opacity: 1;
+}
+
+/* current page indicator (active nav link) */
+.topbar-nav a[aria-current="page"] {
+  color: #8b5cf6;
+  background: linear-gradient(135deg, rgba(139, 92, 246, 0.15), rgba(139, 92, 246, 0.08));
+  border-color: rgba(139, 92, 246, 0.3);
+  font-weight: 600;
+  box-shadow: 0 2px 8px rgba(139, 92, 246, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+}
+
+.topbar-nav a[aria-current="page"]::before {
+  opacity: 1;
+}
+
+/* separator between nav links (visual divider) */
+.topbar-nav .nav-sep {
+  color: rgba(255,255,255,0.15);
+  padding: 0 2px;
+  font-weight: 300;
+}
+
+/* ===== dropdown menu ===== */
+/* container for nav item with submenu (About dropdown) */
+.nav-has-submenu {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+/* align About button with other nav items (fix vertical alignment) */
+/* make About button non-clickable (hover only, no click navigation) */
+#about-menu-button {
+  display: inline-flex;
+  align-items: center;
+  line-height: 1.5;
+  padding-top: 10px;
+  padding-bottom: 10px;
+  cursor: default;
+  color: #c8d0dd;
+  text-decoration: none;
+  font-size: 1rem;
+  font-weight: 500;
+  padding-left: 18px;
+  padding-right: 18px;
+  border-radius: 8px;
+  transition: all 200ms cubic-bezier(0.4, 0, 0.2, 1);
+  position: relative;
+  border: 1px solid transparent;
+  background: transparent;
+}
+
+#about-menu-button::after {
+  content: '▼';
+  font-size: 0.65rem;
+  margin-left: 6px;
+  color: rgba(139, 92, 246, 0.6);
+  transition: transform 200ms ease, color 200ms ease;
+  display: inline-block;
+}
+
+#about-menu-button:hover {
+  background: rgba(139, 92, 246, 0.08);
+  color: #e5e7eb;
+  border-color: rgba(139, 92, 246, 0.2);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(139, 92, 246, 0.15);
+}
+
+#about-menu-button:hover::after {
+  color: rgba(139, 92, 246, 0.9);
+  transform: translateY(1px);
+}
+
+/* submenu container: hidden by default, centered under About with minimal gap */
+.nav-submenu {
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%) translateY(8px);
+  margin-top: 8px;
+  background: rgba(10, 14, 39, 0.98);
+  border: 1px solid rgba(139, 92, 246, 0.25);
+  border-radius: 12px;
+  padding: 6px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5), 
+              0 4px 16px rgba(139, 92, 246, 0.15),
+              inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  z-index: 1000;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 250ms cubic-bezier(0.4, 0, 0.2, 1), 
+              transform 250ms cubic-bezier(0.4, 0, 0.2, 1);
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 200px;
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+/* show submenu when open (via class or hover/focus) */
+/* class-based visibility takes priority to keep submenu open during grace period */
+.nav-has-submenu.nav-submenu-open .nav-submenu {
+  opacity: 1 !important;
+  pointer-events: auto !important;
+  transform: translateX(-50%) translateY(4px) !important;
+}
+
+.nav-has-submenu.nav-submenu-open #about-menu-button::after {
+  transform: rotate(180deg) translateY(-1px);
+  color: rgba(139, 92, 246, 0.9);
+}
+
+/* hover and focus also show submenu */
+.nav-has-submenu:hover .nav-submenu,
+.nav-has-submenu:focus-within .nav-submenu {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateX(-50%) translateY(4px);
+}
+
+.nav-has-submenu:hover #about-menu-button::after,
+.nav-has-submenu:focus-within #about-menu-button::after {
+  transform: rotate(180deg) translateY(-1px);
+  color: rgba(139, 92, 246, 0.9);
+}
+
+/* prevent hover from opening submenu immediately after click */
+.nav-has-submenu.click-just-happened:hover .nav-submenu,
+.nav-has-submenu.click-just-happened:focus-within .nav-submenu {
+  opacity: 0 !important;
+  pointer-events: none !important;
+  transform: translateX(-50%) translateY(4px) !important;
+}
+
+/* submenu links */
+.nav-submenu a {
+  display: flex;
+  align-items: center;
+  padding: 12px 16px;
+  color: #c8d0dd;
+  text-decoration: none;
+  font-size: 0.95rem;
+  font-weight: 500;
+  white-space: nowrap;
+  transition: all 180ms cubic-bezier(0.4, 0, 0.2, 1);
+  border-radius: 8px;
+  position: relative;
+  border: 1px solid transparent;
+}
+
+.nav-submenu a::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 3px;
+  height: 0;
+  background: linear-gradient(180deg, #8b5cf6, #6d28d9);
+  border-radius: 0 2px 2px 0;
+  transition: height 180ms ease;
+}
+
+.nav-submenu a:hover,
+.nav-submenu a:focus {
+  background: rgba(139, 92, 246, 0.12);
+  color: #e5e7eb;
+  border-color: rgba(139, 92, 246, 0.2);
+  padding-left: 20px;
+  transform: translateX(2px);
+}
+
+.nav-submenu a:hover::before,
+.nav-submenu a:focus::before {
+  height: 60%;
+}
+
+/* active submenu item (current page) */
+.nav-submenu a[aria-current="page"] {
+  color: #8b5cf6;
+  background: linear-gradient(135deg, rgba(139, 92, 246, 0.18), rgba(139, 92, 246, 0.1));
+  border-color: rgba(139, 92, 246, 0.3);
+  font-weight: 600;
+  box-shadow: inset 0 1px 2px rgba(139, 92, 246, 0.2);
+  padding-left: 20px;
+}
+
+.nav-submenu a[aria-current="page"]::before {
+  height: 70%;
+  background: linear-gradient(180deg, #8b5cf6, #a78bfa);
+}
+
+/* parent link stays highlighted when on submenu pages */
+.nav-has-submenu > a[aria-current="page"],
+.nav-has-submenu:has(.nav-submenu a[aria-current="page"]) > a,
+.nav-has-submenu:has(.nav-submenu a[aria-current="page"]) #about-menu-button {
+  color: #8b5cf6;
+  background: linear-gradient(135deg, rgba(139, 92, 246, 0.15), rgba(139, 92, 246, 0.08));
+  border-color: rgba(139, 92, 246, 0.3);
+  font-weight: 600;
+  box-shadow: 0 2px 8px rgba(139, 92, 246, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+}
+
+
+/* responsive: stack nav on mobile */
+@media (max-width: 768px) {
+  .topbar {
+    flex-wrap: wrap;
+  }
+  .topbar-nav {
+    width: 100%;
+    margin-left: 0;
+    margin-top: 12px;
+    padding-top: 12px;
+    border-top: 1px solid rgba(255,255,255,0.05);
+  }
+  .topbar-nav .nav-sep {
+    display: none; /* hide separators on mobile for cleaner look */
+  }
+}
+
+/* ===== cards & visual style ===== */
+/* card component: dark background with subtle borders and purple glow edge */
+.card {
+  background: rgba(17, 24, 39, 0.9);
+  border: 1px solid rgba(255,255,255,0.07);
+  border-radius: 16px;
+  padding: 24px;
+  box-shadow: 0 24px 60px rgba(0,0,0,0.35);
+  /* subtle purple glow edge on cards for the "royal" touch */
+  outline: 1px solid rgba(109, 40, 217, 0.18); /* #6d28d9 */
+}
+
+/* responsive grid layout (3 columns on desktop, 1 column on mobile) */
+.grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
+  margin-top: 16px;
+}
+@media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
+
+/* ===== hero ===== */
+/* hero section styling (main landing area with download CTA) */
+.hero { margin-top: 24px; }
+.hero-title { font-size: 1.6rem; margin-bottom: 8px; }
+.hero-sub { color: #c8d0dd; margin-bottom: 16px; }
+
+/* ===== buttons ===== */
+/* base button styles with smooth transitions */
+.btn {
+  display: inline-block;
+  padding: 12px 16px;
+  border-radius: 12px;
+  border: 1px solid rgba(255,255,255,0.1);
+  text-decoration: none;
+  font-weight: 600;
+  transition: transform 120ms ease, background 120ms ease, border-color 120ms ease, box-shadow 120ms ease;
+  user-select: none;
+  -webkit-user-select: none; /* Safari prefix fix */
+}
+
+/* primary button: green with purple glow on hover */
+.btn-primary {
+  background: #22c55e; /* green accent */
+  color: #062e12;      /* dark text on green */
+  border-color: rgba(34,197,94,0.45);
+  box-shadow: 0 12px 30px rgba(34,197,94,0.3);
+}
+.btn-primary:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 16px 36px rgba(109, 40, 217, 0.45); /* purple glow on hover */
+}
+
+/* ghost button: subtle background, minimal styling */
+.btn-ghost { background: rgba(255,255,255,0.03); color: #e5e7eb; }
+.btn-ghost:hover { background: rgba(255,255,255,0.07); }
+
+/* row that holds buttons (flex layout with wrapping) */
+.btn-row { margin-top: 12px; display: flex; gap: 10px; flex-wrap: wrap; }
+
+/* subtle helper text (muted/secondary text color) */
+.muted { color: #9aa3b2; font-size: 0.9rem; margin-top: 8px; }
+
+/* ===== footer (now truly at the bottom) ===== */
+/* footer styling: flex layout pushes it to bottom via parent flex container */
+.foot {
+  padding: 20px 24px 40px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  border-top: 1px solid rgba(255,255,255,0.07);
+  color: #a8b1c0;
+  /* footer does not need absolute positioning; flex column handles it */
+}
+/* footer navigation links */
+.foot-nav { display: flex; gap: 16px; }
+.foot-nav a { color: #c8d0dd; text-decoration: none; font-size: 0.95rem; }
+.foot-nav a:hover { text-decoration: underline; }
+
+/* active footer item (when on cookies/privacy/license pages) */
+.foot-nav span[aria-current="page"] {
+  color: #8b5cf6 !important;
+  font-weight: 600;
+  font-size: 0.95rem;
+}
+
+/* cookie banner text styling (legacy, kept for compatibility) */
+.cookie-text { color: #d1d7e4; line-height: 1.5; }
+.cookie-actions { display: flex; gap: 10px; margin-left: auto; }
+.cookie-btn { padding: 10px 14px; border-radius: 10px; border: 1px solid rgba(255,255,255,0.12); cursor: pointer; }
+.cookie-accept { background: #22c55e; color: #062e12; border-color: rgba(34,197,94,0.45); font-weight: 700; }
+.cookie-decline, .cookie-settings { background: rgba(255,255,255,0.06); color: #e5e7eb; }
+
+/* ===== accessibility: focus rings ===== */
+/* remove default browser focus outlines and add custom accessible focus indicators */
+:focus { outline: none; }
+.btn:focus, .cookie-btn:focus, .home-link:focus {
+  outline: 2px solid #93c5fd;  /* soft blue ring */
+  outline-offset: 2px;
+  box-shadow: 0 0 0 2px rgba(147,197,253,0.35);
+}
+
+/* nav links use white box focus style for keyboard only (not mouse clicks) */
+.topbar-nav a:focus-visible,
+.nav-submenu a:focus-visible,
+.user-is-tabbing .topbar-nav a:focus,
+.user-is-tabbing .nav-submenu a:focus {
+  outline: 2px solid #ffffff !important;
+  outline-offset: 2px;
+  box-shadow: 0 0 0 2px rgba(255,255,255,0.5) !important;
+}
+
+/* ===== reduced motion ===== */
+/* respect user's motion preferences (disables all transitions for accessibility) */
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important; }
+}
+
+/* keep brand-as-link looking like text (maintains text appearance while being clickable) */
+.brand { color: inherit; text-decoration: none; display: inline-block; }
+.brand:hover { text-decoration: none; filter: brightness(1.05); }
+
+/* layout that pushes footer to page bottom (flex column layout makes sure footer sticks to bottom) */
+body.page { display: flex; flex-direction: column; min-height: 100svh; }
+.wrap { flex: 1; }
+
+/* ===== binary design section ===== */
+/* container for the binary rain animation canvas */
+.binary-wrap {
+  margin-top: 16px;
+  padding: 0;                 /* canvas fills it */
+  overflow: hidden;           /* hide overspill while animating */
+  position: relative;
+  height: 420px;              /* nice, compact band; tweak if you want taller */
+  outline: 1px solid rgba(109, 40, 217, 0.18); /* keep the royal edge */
+}
+
+/* the canvas should fully cover this section (absolute positioning fills parent) */
+#binary-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  background: #0a0f1e; /* gentle dark base */
+}
+
+/* respect users who prefer reduced motion: hide the animation entirely */
+@media (prefers-reduced-motion: reduce) {
+  #binary-canvas { display: none; }  /* simplest: hide the animation entirely */
+  .binary-wrap { height: 0; padding: 0; border: 0; outline: 0; } /* collapse it */
+}
+
+/* make this section ignore the centered .wrap and stretch edge-to-edge */
+/* full-bleed technique: breaks out of centered container to span full viewport width */
+.full-bleed {
+  position: relative;
+  left: 50%;
+  right: 50%;
+  margin-left: -50vw;
+  margin-right: -50vw;
+  width: 100vw;       /* span full viewport width */
+  border-left: 0;     /* optional: remove card border edges when full-bleed */
+  border-right: 0;
+  border-radius: 0;   /* optional: square edges for the full-width band */
+}
+
+/* prevent any horizontal scrollbar due to full-bleed technique */
+html, body { overflow-x: hidden; }
+
+/* full-screen cookie modal overlay */
+/* modal backdrop: covers entire screen with blurred dark background */
+.cookie-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(2, 6, 23, 0.75);
+  -webkit-backdrop-filter: blur(4px);  /* prefix first */
+  backdrop-filter: blur(4px);
+  display: grid;
+  place-items: center;
+  z-index: 99999;
+  padding: 24px;
+}
+
+/* dialog container (reuses your .card look for consistency) */
+.cookie-modal {
+  max-width: 560px;
+  width: 100%;
+  padding: 24px;
+}
+
+/* when modal is open, prevent the page from scrolling (body lock) */
+.no-scroll { overflow: hidden !important; }
+
+/* kill any legacy bottom banner if its CSS/HTML is still around (cleanup) */
+.cookie-banner { display: none !important; }

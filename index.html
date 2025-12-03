@@ -1,0 +1,144 @@
+<!--
+  goal: main landing page for CustosEye website. displays download link, feature highlights,
+        and includes the binary rain animation effect. loads analytics scripts only after
+        user consent. serves as the entry point for the public-facing website.
+-->
+<!doctype html>
+<html lang="en">
+
+<head>
+  <!-- HTML & responsive viewport -->
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+
+  <!-- Title -->
+  <title>CustosEye</title>
+
+  <!-- SEO and structured metadata -->
+  <meta name="description" content="CustosEye - local-first system visibility and integrity checks. Portable, private, and telemetry-free." />
+  <meta name="robots" content="index, follow" />
+  <link rel="canonical" href="https://www.custoseye.com/" />
+
+  <!-- Open Graph (social preview) -->
+  <meta property="og:title" content="CustosEye" />
+  <meta property="og:description" content="Your Third Eye - local-first visibility and integrity monitoring." />
+  <meta property="og:url" content="https://www.custoseye.com/" />
+  <meta property="og:type" content="website" />
+  <meta property="og:image" content="https://www.custoseye.com/assets/favicon.png" />
+
+  <!-- Favicon (absolute URL helps Google pick it up) -->
+  <link rel="icon" href="https://www.custoseye.com/assets/favicon.png" type="image/png" />
+  <!-- keep the .ico too for legacy browsers -->
+  <link rel="icon" href="assets/favicon.ico?v=2" sizes="any" />
+
+  <!-- CSS (with cache-busting) -->
+  <link rel="stylesheet" href="styles.css?v=2" />
+  <link rel="preload" href="styles.css?v=2" as="style" />
+</head>
+
+<!-- we use flex on <body> to push footer to the bottom even on short pages -->
+<body class="page">
+
+  <!-- a slim royal-purple stripe for subtle branding -->
+  <div class="top-stripe" aria-hidden="true"></div>
+
+  <!-- header bar with clickable logo that always returns home -->
+  <header class="topbar">
+    <!-- logo links home -->
+    <a class="home-link" href="/" aria-label="Go to homepage">
+      <img class="logo" src="assets/favicon.png" alt="CustosEye logo" />
+    </a>
+
+    <!-- wrap the brand (title + tagline) in the same home link -->
+    <a class="home-link brand" href="/" aria-label="Go to homepage">
+      <h1>CustosEye</h1>
+      <p class="tagline">Your Third Eye</p>
+    </a>
+
+    <!-- main navigation: primary site sections only -->
+    <nav class="topbar-nav" role="menubar" aria-label="Main navigation">
+      <a href="index.html" role="menuitem" aria-current="page">Home</a>
+      <span class="nav-sep">|</span>
+      <div class="nav-has-submenu">
+        <a href="#" role="menuitem" aria-haspopup="true" aria-expanded="false" id="about-menu-button" tabindex="0">About</a>
+        <div class="nav-submenu" role="menu" aria-labelledby="about-menu-button">
+          <a href="about.html" role="menuitem">About</a>
+          <a href="methodology.html" role="menuitem">Methodology</a>
+          <a href="ethics.html" role="menuitem">Code of Ethics</a>
+        </div>
+      </div>
+      <span class="nav-sep">|</span>
+      <a href="download.html" role="menuitem">Downloads</a>
+      <span class="nav-sep">|</span>
+      <a href="documentation.html" role="menuitem">Documentation</a>
+    </nav>
+  </header>
+
+  <!-- main grows to fill leftover vertical space so footer sits at bottom -->
+  <main class="wrap">
+    <!-- hero section: main call-to-action with download link -->
+    <section class="hero card">
+      <h2 class="hero-title">Local-first system monitoring</h2>
+      <p class="hero-sub">
+        Monitor processes, network connections, and file integrity. Everything runs on your machine, meaning no cloud, no telemetry, no external connections.
+      </p>
+
+      <!-- primary download CTA (links to downloads page) -->
+      <a href="download.html"
+         class="btn btn-primary"
+         rel="noopener">
+        Download for Windows
+      </a>
+    </section>
+
+    <!-- feature grid: three-column layout showcasing key features -->
+    <section class="features grid">
+      <article class="card">
+        <h3>Process monitoring</h3>
+        <p>Track all running processes with trust scoring. See parent relationships, memory usage, command lines, and network connections. Each process is evaluated by a trust engine that considers code signing, path context, and local prevalence.</p>
+      </article>
+      <article class="card">
+        <h3>Network monitoring</h3>
+        <p>Scan active network connections to see what's listening on ports and what outbound connections processes are making. Identify unexpected network activity in real time. Export your findings in multiple formats like CSV, JSON, JSONL, or XLSX for further analysis or reporting.</p>
+      </article>
+      <article class="card">
+        <h3>File integrity monitoring</h3>
+        <p>Watch specific files for changes with SHA-256 hashing or lightweight mtime+size tracking. View diffs when changes are detected, this works on any type of text files including Office documents, JSONs and PDFs.</p>
+      </article>
+    </section>
+
+    <!-- decorative section: subtle moving binary "rain" animation -->
+    <section class="binary-wrap card full-bleed" aria-hidden="true">
+      <canvas id="binary-canvas"></canvas>
+    </section>
+  </main>
+
+  <!-- load the tiny renderer after the DOM (binary rain animation script) -->
+  <script src="js/binary.js?v=2" defer></script>
+
+  <!-- navigation accessibility and keyboard support -->
+  <script src="js/nav-accessibility.js?v=2"></script>
+
+  <!-- footer: legal and consent links -->
+  <footer class="foot">
+    <nav class="foot-nav">
+      <!-- cookie settings link goes to cookies page -->
+      <a href="cookies.html">Cookie Settings</a>
+      <a href="privacy.html">Privacy Policy</a>
+      <a href="legal.html">License</a>
+    </nav>
+    <small class="muted">© <span id="year"></span> CustosEye. All rights reserved.</small>
+  </footer>
+
+  <!-- set current year in footer dynamically -->
+  <script>
+    document.getElementById('year').textContent = new Date().getFullYear();
+  </script>
+
+  <!-- Cookie banner (shows once until a choice is stored in localStorage) -->
+  <script src="js/consent.js?v=2"></script>
+
+  <!-- GA attaches only after consent; ?debug=1 enables DebugView + dev/test -->
+  <script src="js/analytics-attach.js?v=2" defer></script>
+</body>
+</html>

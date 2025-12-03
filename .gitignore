@@ -1,13 +1,18 @@
 # =========================================
 # CustosEye .gitignore
 # =========================================
+# goal: tells git which files and folders to ignore so they don't get committed.
+#       includes Python artifacts, build outputs, IDE files, OS files, local data,
+#       and CustosEye-specific files like the trust database. keeps the repo clean
+#       by excluding generated files and local-only data that shouldn't be shared.
 
 # ---- Python ----
+# compiled Python bytecode files (generated automatically by Python)
 __pycache__/
 *.py[cod]
 *$py.class
 
-# virtual environments
+# virtual environments (Python package isolation)
 .venv/
 env/
 venv/
@@ -15,19 +20,22 @@ ENV/
 env.bak/
 venv.bak/
 
-# environment / secret files
+# environment / secret files (API keys, passwords, configs with sensitive data)
 .env
 .env.*
 *.env
 .envrc
+# exceptions: allow .env.example to be tracked (it's documentation only, no secrets)
+!.env.example
+!*.env.example
 
-# byte-compiled / optimized / DLL files
+# byte-compiled / optimized / DLL files (compiled extensions and optimizations)
 *.pyo
 *.pyd
 *.so
 *.dll
 
-# unit test / coverage reports
+# unit test / coverage reports (test artifacts and coverage data)
 htmlcov/
 .tox/
 .nox/
@@ -43,8 +51,11 @@ coverage.xml
 .pytest_cache/
 
 # ---- build / packaging ----
+# build directories and package artifacts (generated during build process)
 build/
 dist/
+release/
+installer_output/
 *.egg-info/
 *.egg
 *.spec
@@ -53,6 +64,7 @@ sdist/
 wheels/
 
 # ---- Logs ----
+# log files from applications and tools
 *.log
 *.out
 *.err
@@ -60,55 +72,55 @@ logs/
 log/
 
 # ---- IDEs / Editors ----
-# VS Code
+# VS Code (editor settings and workspace files)
 .vscode/
 .vscode-test/
 *.code-workspace
 
-# PyCharm / IntelliJ
+# PyCharm / IntelliJ (IDE project files)
 .idea/
 *.iml
 
-# Sublime Text
+# Sublime Text (editor project files)
 *.sublime-project
 *.sublime-workspace
 
 # ---- OS Artifacts ----
-# macOS
+# macOS (system metadata files)
 .DS_Store
 .AppleDouble
 .LSOverride
 
-# Windows
+# Windows (thumbnail cache and system files)
 Thumbs.db
 ehthumbs.db
 Desktop.ini
 $RECYCLE.BIN/
 
-# Linux
+# Linux (backup files created by editors)
 *~
 
 # ---- Tools ----
-# Jupyter / IPython
+# Jupyter / IPython (notebook checkpoints and config)
 .ipynb_checkpoints
 profile_default/
 ipython_config.py
 
-# MyPy / Type Checking
+# MyPy / Type Checking (type checker cache files)
 .mypy_cache/
 .dmypy.json
 dmypy.json
 
-# Pylint / Ruff / Flake8
+# Pylint / Ruff / Flake8 (linter cache directories)
 .pylint.d/
 .ruff_cache/
 
 # ---- packaging / dependency managers ----
-# pipenv
+# pipenv (dependency lock file, should be committed in some workflows)
 Pipfile.lock
-# poetry
+# poetry (dependency lock file, should be committed in some workflows)
 poetry.lock
-# conda
+# conda (conda environment files)
 *.conda
 *.yml
 *.yaml
@@ -116,6 +128,7 @@ poetry.lock
 # requirements files should remain tracked
 
 # ---- Documentation ----
+# documentation build outputs (generated from source docs)
 docs/_build/
 doc/_build/
 build/docs/
@@ -125,6 +138,7 @@ build/docs/
 
 # ---- PyInstaller executables ----
 # keep the source clean; artifacts rebuilt via CI or local CLI
+# these are generated during the build process, don't commit them
 dist/
 build/
 *.spec
@@ -132,6 +146,7 @@ build/
 *.dll
 
 # ---- temporary / sandbox data ----
+# temporary files and directories (test data, scratch files)
 tmp/
 temp/
 data/tmp/
@@ -141,28 +156,35 @@ data/temp/
 *.swp
 
 # ---- CustosEye specific ----
-# local trust database, optional autosaves, and reports
+# local trust database (machine-specific, shouldn't be shared)
 data/trust_db.json
+# autosave files for integrity targets (generated automatically)
 data/integrity_targets_autosave.json
-# test fixtures (exclude from repo and builds)
+# session key file (generated on each program start to invalidate old sessions)
+data/.session_key
+# user database (contains hashed passwords and 2FA secrets)
+data/users.json
+# test fixtures (test data that shouldn't be in the repo)
 data/fixtures/
+# build artifacts and test reports
 artifacts/
 reports/
 *.json.backup
 
 # ---- archives ----
+# archive files (build outputs, downloads, backups)
 *.zip
 *.tar.gz
 *.tar
 *.7z
 *.rar
 
-# Misc
+# Misc (backup and old files)
 *.old
 *.orig
 *.bak
 
 # ---- gitHub actions ----
-# keep workflows tracked
+# keep workflows tracked (explicitly include GitHub Actions workflows)
 !.github/
 !.github/workflows/

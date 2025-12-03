@@ -1,0 +1,201 @@
+<!--
+  goal: download page for CustosEye website. provides a professional layout with primary
+        "Latest release" button linking to the latest GitHub tag, plus a list/table of
+        recent versions. includes placeholders for OS-specific builds.
+-->
+<!doctype html>
+<html lang="en">
+
+<head>
+  <!-- standard metadata -->
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+
+  <!-- title -->
+  <title>Downloads - CustosEye</title>
+
+  <!-- SEO and structured metadata -->
+  <meta name="description" content="Download CustosEye - portable Windows bundle. No installer required. Extract and run." />
+  <meta name="robots" content="index, follow" />
+  <link rel="canonical" href="https://www.custoseye.com/download.html" />
+
+  <!-- Open Graph (social preview) -->
+  <meta property="og:title" content="Downloads - CustosEye" />
+  <meta property="og:description" content="Download CustosEye - latest release and previous versions." />
+  <meta property="og:url" content="https://www.custoseye.com/download.html" />
+  <meta property="og:type" content="website" />
+  <meta property="og:image" content="https://www.custoseye.com/assets/favicon.png" />
+
+  <!-- Favicon -->
+  <link rel="icon" href="https://www.custoseye.com/assets/favicon.png" type="image/png" />
+  <link rel="icon" href="assets/favicon.ico?v=2" sizes="any" />
+
+  <!-- shared styles -->
+  <link rel="stylesheet" href="styles.css?v=2" />
+  <link rel="preload" href="styles.css?v=2" as="style" />
+</head>
+
+<body class="page">
+
+  <!-- a slim royal-purple stripe for subtle branding -->
+  <div class="top-stripe" aria-hidden="true"></div>
+
+  <!-- header: logo + brand + navigation -->
+  <header class="topbar">
+    <!-- logo links home -->
+    <a class="home-link" href="/" aria-label="Go to homepage">
+      <img class="logo" src="assets/favicon.png" alt="CustosEye logo" />
+    </a>
+
+    <!-- brand (title + tagline) links home -->
+    <a class="home-link brand" href="/" aria-label="Go to homepage">
+      <h1>CustosEye</h1>
+      <p class="tagline">Your Third Eye</p>
+    </a>
+
+    <!-- main navigation: primary site sections only -->
+    <nav class="topbar-nav" role="menubar" aria-label="Main navigation">
+      <a href="index.html" role="menuitem">Home</a>
+      <span class="nav-sep">|</span>
+      <div class="nav-has-submenu">
+        <a href="#" role="menuitem" aria-haspopup="true" aria-expanded="false" id="about-menu-button" tabindex="0">About</a>
+        <div class="nav-submenu" role="menu" aria-labelledby="about-menu-button">
+          <a href="about.html" role="menuitem">About</a>
+          <a href="methodology.html" role="menuitem">Methodology</a>
+          <a href="ethics.html" role="menuitem">Code of Ethics</a>
+        </div>
+      </div>
+      <span class="nav-sep">|</span>
+      <a href="download.html" role="menuitem" aria-current="page">Downloads</a>
+      <span class="nav-sep">|</span>
+      <a href="documentation.html" role="menuitem">Documentation</a>
+    </nav>
+  </header>
+
+  <!-- main content -->
+  <main class="wrap">
+    <!-- latest release section -->
+    <section class="card" style="margin-bottom: 24px;">
+      <h2 class="hero-title" style="margin-bottom: 8px">Latest Release</h2>
+      <p class="muted" style="margin-bottom: 16px;">
+        Download the most recent stable version of CustosEye.
+      </p>
+
+      <!-- primary download button -->
+      <a href="https://github.com/mardini2/CustosEye/releases/download/v0.2.0/CustosEye-Setup.exe"
+         class="btn btn-primary"
+         id="download-btn"
+         rel="noopener"
+         style="display: inline-block; margin-top: 8px;">
+        Download v0.2.0 for Windows
+      </a>
+
+      <p style="margin-top: 16px; font-size: 0.9rem; color: #9aa3b2; line-height: 1.5;">
+        Run the installer to set up CustosEye with Start Menu shortcuts and an uninstaller. The dashboard will open automatically at <code style="background: rgba(0,0,0,0.3); padding: 2px 6px; border-radius: 4px;">http://127.0.0.1:8765/</code> after running the program. A portable ZIP bundle is also available on the GitHub releases page</a>.
+      </p>
+    </section>
+
+    <!-- previous versions section -->
+    <section class="card" style="margin-bottom: 24px;">
+      <h2 style="margin-bottom: 16px">Previous Versions</h2>
+      <p class="muted" style="margin-bottom: 16px;">
+        Download older releases or browse all versions on GitHub.
+      </p>
+
+      <!-- version table -->
+      <table style="width: 100%; border-collapse: collapse; margin-top: 12px;">
+        <thead>
+          <tr style="border-bottom: 1px solid rgba(255,255,255,0.1);">
+            <th style="text-align: left; padding: 8px 40px 8px 12px; font-weight: 600;">Version</th>
+            <th style="text-align: left; padding: 8px 40px; font-weight: 600;">Date</th>
+            <th style="text-align: left; padding: 8px 12px 8px 40px; font-weight: 600;">Download</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr style="border-bottom: 1px solid rgba(255,255,255,0.05);">
+            <td style="padding: 8px 40px 8px 12px;"><code style="background: rgba(0,0,0,0.3); padding: 2px 6px; border-radius: 4px;">v0.2.0</code></td>
+            <td style="padding: 8px 40px; color: #9aa3b2;">Latest</td>
+            <td style="padding: 8px 12px 8px 40px;">
+              <a href="https://github.com/mardini2/CustosEye/releases/download/v0.2.0/CustosEye-Setup.exe" 
+                 style="color: #8b5cf6; text-decoration: none;" 
+                 rel="noopener">Windows Installer</a>
+            </td>
+          </tr>
+          <tr style="border-bottom: 1px solid rgba(255,255,255,0.05);">
+            <td style="padding: 8px 40px 8px 12px;"><code style="background: rgba(0,0,0,0.3); padding: 2px 6px; border-radius: 4px;">v0.1.0</code></td>
+            <td style="padding: 8px 40px; color: #9aa3b2;">Previous</td>
+            <td style="padding: 8px 12px 8px 40px;">
+              <a href="https://github.com/mardini2/CustosEye/releases/tag/v0.1.0" 
+                 style="color: #8b5cf6; text-decoration: none;" 
+                 rel="noopener">View on GitHub</a>
+              <span style="color: #9aa3b2; font-size: 0.85rem; margin-left: 8px;">(No longer available)</span>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+
+      <p style="margin-top: 16px; font-size: 0.9rem; color: #9aa3b2;">
+        <a href="https://github.com/mardini2/CustosEye/releases" 
+           style="color: #8b5cf6; text-decoration: none;" 
+           rel="noopener">View all releases on GitHub →</a>
+      </p>
+    </section>
+
+    <!-- OS-specific builds section (placeholders for future builds) -->
+    <section class="card">
+      <h2 style="margin-bottom: 16px">Platform-Specific Builds</h2>
+      <p class="muted" style="margin-bottom: 16px;">
+        Platform-specific builds will be available here as they are released.
+      </p>
+
+      <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 16px; margin-top: 16px;">
+        <!-- Windows placeholder -->
+        <div style="padding: 16px; background: rgba(0,0,0,0.2); border-radius: 8px; border: 1px solid rgba(255,255,255,0.05);">
+          <h3 style="margin-bottom: 8px; font-size: 1rem;">Windows</h3>
+          <p style="font-size: 0.85rem; color: #9aa3b2; margin-bottom: 8px;">Windows 10/11 (64-bit)</p>
+          <p style="font-size: 0.85rem; color: #9aa3b2; font-style: italic;">Available now</p>
+        </div>
+
+        <!-- macOS placeholder -->
+        <div style="padding: 16px; background: rgba(0,0,0,0.2); border-radius: 8px; border: 1px solid rgba(255,255,255,0.05);">
+          <h3 style="margin-bottom: 8px; font-size: 1rem;">macOS</h3>
+          <p style="font-size: 0.85rem; color: #9aa3b2; margin-bottom: 8px;">macOS 11+ (Intel/Apple Silicon)</p>
+          <p style="font-size: 0.85rem; color: #9aa3b2; font-style: italic;">Not supported yet</p>
+        </div>
+
+        <!-- Linux placeholder -->
+        <div style="padding: 16px; background: rgba(0,0,0,0.2); border-radius: 8px; border: 1px solid rgba(255,255,255,0.05);">
+          <h3 style="margin-bottom: 8px; font-size: 1rem;">Linux</h3>
+          <p style="font-size: 0.85rem; color: #9aa3b2; margin-bottom: 8px;">Linux (AppImage/Tarball)</p>
+          <p style="font-size: 0.85rem; color: #9aa3b2; font-style: italic;">Not supported yet</p>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- footer: legal and consent links -->
+  <footer class="foot">
+    <nav class="foot-nav">
+      <!-- cookie settings link goes to cookies page -->
+      <a href="cookies.html">Cookie Settings</a>
+      <a href="privacy.html">Privacy Policy</a>
+      <a href="legal.html">License</a>
+    </nav>
+    <small class="muted">© <span id="year"></span> CustosEye. All rights reserved.</small>
+  </footer>
+
+  <!-- set current year in footer -->
+  <script>
+    document.getElementById('year').textContent = new Date().getFullYear();
+  </script>
+
+  <!-- navigation accessibility and keyboard support -->
+  <script src="js/nav-accessibility.js?v=2"></script>
+
+  <!-- Cookie banner (shows once until a choice is stored) -->
+  <script src="js/consent.js?v=2"></script>
+
+  <!-- GA attaches only after consent -->
+  <script src="js/analytics-attach.js?v=2" defer></script>
+</body>
+</html>
