@@ -69,14 +69,45 @@ async function attachAnalytics() {
     console.info('[analytics] GA4 attached (debug_mode:', debugMode, ')');
 
     // recommended GA4 event for file downloads
-    const dl = document.getElementById('download-btn');  // find the download button
+    // track primary download button (installer on index, or both on download page)
+    const dl = document.getElementById('download-btn');  // find the primary download button
     if (dl) {
       // listen for clicks on the download button
       dl.addEventListener('click', () => {
+        // determine file name from href
+        const fileName = dl.href.includes('.exe') ? 'CustosEye-Setup.exe' : 'CustosEye.zip';
         // send a file_download event to GA4 with file details
         gtag('event', 'file_download', {
-          file_name: 'CustosEye.zip',
+          file_name: fileName,
           link_url: dl.href,
+          event_category: 'engagement',
+          event_label: window.location.pathname,
+          value: 1
+        });
+      });
+    }
+    
+    // track installer button on download page
+    const dlInstaller = document.getElementById('download-btn-installer');
+    if (dlInstaller) {
+      dlInstaller.addEventListener('click', () => {
+        gtag('event', 'file_download', {
+          file_name: 'CustosEye-Setup.exe',
+          link_url: dlInstaller.href,
+          event_category: 'engagement',
+          event_label: window.location.pathname,
+          value: 1
+        });
+      });
+    }
+    
+    // track zip button on download page
+    const dlZip = document.getElementById('download-btn-zip');
+    if (dlZip) {
+      dlZip.addEventListener('click', () => {
+        gtag('event', 'file_download', {
+          file_name: 'CustosEye.zip',
+          link_url: dlZip.href,
           event_category: 'engagement',
           event_label: window.location.pathname,
           value: 1
