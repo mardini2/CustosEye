@@ -188,3 +188,7 @@ reports/
 # keep workflows tracked (explicitly include GitHub Actions workflows)
 !.github/
 !.github/workflows/
+
+# ---- Exceptions ----
+# Exception: track our PyInstaller spec file (it's build config, not artifact)
+!CustosEye.spec

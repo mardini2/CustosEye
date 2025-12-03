@@ -121,7 +121,13 @@ python -m pytest -q
 
 ### Using PyInstaller
 
-Build a standalone Windows executable:
+Build a standalone Windows executable using the provided spec file (recommended):
+
+```powershell
+pyinstaller --noconfirm CustosEye.spec
+```
+
+Or build manually:
 
 ```powershell
 pyinstaller --noconfirm --onefile --name CustosEye.exe --console `
@@ -129,10 +135,19 @@ pyinstaller --noconfirm --onefile --name CustosEye.exe --console `
   --add-data "data;data" `
   --add-data "dashboard\static;dashboard\static" `
   --add-data "dashboard\templates;dashboard\templates" `
+  --add-data "assets;assets" `
+  --hidden-import=webview `
+  --hidden-import=webview.platforms.edgechromium `
   app\console.py
 ```
 
-The executable will be in the `dist/` folder. You'll also need to copy the `data/` directory alongside the exe for it to work properly.
+**Important Notes:**
+- The executable will be in the `dist/` folder
+- The spec file (`CustosEye.spec`) includes all necessary hidden imports for pywebview
+- **WebView2 Runtime**: The windowed dashboard requires Microsoft Edge WebView2 runtime on Windows
+  - Windows 11: Usually pre-installed
+  - Windows 10: May need manual installation from https://developer.microsoft.com/microsoft-edge/webview2/
+  - If WebView2 is not available, the app will automatically fall back to opening in your default browser
 
 ### Using the Installer (Inno Setup)
 
@@ -171,8 +186,8 @@ The installer will be created in `installer_output/` as `CustosEye-Setup.exe`. I
 
 **Quick test commands:**
 ```powershell
-# Build the executable
-pyinstaller --noconfirm --onefile --name CustosEye.exe --console --icon dashboard\static\assets\favicon.ico --add-data "data;data" --add-data "dashboard\static;dashboard\static" --add-data "dashboard\templates;dashboard\templates" app\console.py
+# Build the executable (using spec file - recommended)
+pyinstaller --noconfirm CustosEye.spec
 
 # Build the installer
 iscc installer.iss
@@ -180,6 +195,12 @@ iscc installer.iss
 # Run tests
 python -m pytest -q
 ```
+
+**Troubleshooting packaged builds:**
+- If the windowed app doesn't open, check the console for error messages
+- Ensure WebView2 runtime is installed (see note above)
+- Run from command prompt to see full error output: `.\dist\CustosEye.exe`
+- The app will automatically fall back to browser mode if webview fails
 
 ---
 

@@ -194,8 +194,13 @@ try:
     import webview  # type: ignore  # try to import webview for windowed application support
 
     HAVE_WEBVIEW = True  # flag indicating webview is available
-except Exception:  # if webview cannot be imported
+except Exception as e:  # if webview cannot be imported
     HAVE_WEBVIEW = False  # flag indicating webview is not available
+    webview = None  # type: ignore
+    if getattr(sys, "frozen", False):
+        # In packaged builds, provide helpful diagnostic
+        print(f"Warning: pywebview import failed in packaged build: {e}")
+        print("This may indicate missing dependencies in PyInstaller build.")
 
 
 def _resolve_base_dir() -> Path:
@@ -584,6 +589,33 @@ def launch_windowed_dashboard() -> None:
 
     if not HAVE_WEBVIEW:
         print("Windowed dashboard requires pywebview. Install it with: pip install pywebview")
+        print("Falling back to browser...")
+        try:
+            webbrowser.open("http://127.0.0.1:8765")
+        except Exception:
+            pass
+        return
+
+    # Additional check: verify webview can actually be used (important for packaged builds)
+    if webview is None:
+        print("Warning: webview module is None. Falling back to browser...")
+        try:
+            webbrowser.open("http://127.0.0.1:8765")
+        except Exception:
+            pass
+        return
+    
+    try:
+        # Try to get webview version to verify it's working
+        if hasattr(webview, "version"):
+            _ = webview.version
+    except Exception as e:
+        print(f"Warning: pywebview may not be fully functional: {e}")
+        print("This is common in packaged builds. Falling back to browser...")
+        try:
+            webbrowser.open("http://127.0.0.1:8765")
+        except Exception:
+            pass
         return
 
     with _window_lock:
@@ -622,18 +654,26 @@ def launch_windowed_dashboard() -> None:
             # Create the window (this can be done from any thread)
             # Note: icon parameter is not supported in create_window, will be set via webview.start()
             # IMPORTANT: create_window must be called before start(), and the window object must exist
-            window = webview.create_window(
-                "CustosEye",  # window title
-                url,  # URL to load
-                width=1400,  # window width
-                height=900,  # window height
-                min_size=(800, 600),  # minimum window size
-                resizable=True,  # allow resizing
-            )
+            try:
+                window = webview.create_window(
+                    "CustosEye",  # window title
+                    url,  # URL to load
+                    width=1400,  # window width
+                    height=900,  # window height
+                    min_size=(800, 600),  # minimum window size
+                    resizable=True,  # allow resizing
+                )
+            except Exception as create_error:
+                # More detailed error for window creation
+                error_msg = f"Failed to create webview window: {create_error}"
+                if getattr(sys, "frozen", False):
+                    error_msg += "\nNote: This is a packaged build. pywebview may require WebView2 runtime."
+                    error_msg += "\nDownload from: https://developer.microsoft.com/microsoft-edge/webview2/"
+                raise RuntimeError(error_msg) from create_error
 
             # Verify window was created successfully
             if window is None:
-                raise RuntimeError("Failed to create window")
+                raise RuntimeError("Failed to create window (window object is None)")
 
             # Wait to ensure window is fully registered before signaling start
             # This is critical - webview.start() will fail if window isn't registered
@@ -642,8 +682,19 @@ def launch_windowed_dashboard() -> None:
             # Signal main thread to start webview with icon
             _webview_start_queue.put(("start", icon_path))
         except Exception as e:
-            # If creating window fails, fall back to browser
-            print(f"Failed to create windowed dashboard: {e}")
+            # If creating window fails, fall back to browser with detailed error
+            import traceback
+            error_details = traceback.format_exc()
+            print(f"\n{'='*60}")
+            print("Failed to create windowed dashboard:")
+            print(f"Error: {e}")
+            if getattr(sys, "frozen", False):
+                print("\nThis is a packaged build. Common issues:")
+                print("1. WebView2 runtime may not be installed")
+                print("2. pywebview dependencies may not be included")
+                print("3. Check if the error occurs in development vs packaged mode")
+            print(f"\nFull traceback:\n{error_details}")
+            print(f"{'='*60}\n")
             print("Falling back to browser...")
             try:
                 webbrowser.open("http://127.0.0.1:8765")
@@ -956,7 +1007,8 @@ def main() -> None:
                             else:
                                 webview.start(debug=False)
                         except RuntimeError as e:
-                            if "create a window first" in str(e).lower():
+                            error_msg = str(e).lower()
+                            if "create a window first" in error_msg:
                                 # Window not ready yet, wait a bit more and try again
                                 time.sleep(0.5)
                                 try:
@@ -967,6 +1019,22 @@ def main() -> None:
                                     # Suppress all output before exit (Chrome error happens during cleanup)
                                     _suppress_stderr_os_level()
                                     os._exit(0)
+                            elif "webview2" in error_msg or "edge" in error_msg or "runtime" in error_msg:
+                                # WebView2 runtime issue - provide helpful message
+                                print(f"\n{'='*60}")
+                                print("WebView2 Runtime Error:")
+                                print(f"{e}")
+                                print("\nWebView2 runtime may not be installed or detected.")
+                                print("Download from: https://developer.microsoft.com/microsoft-edge/webview2/")
+                                print("Falling back to browser...")
+                                print(f"{'='*60}\n")
+                                try:
+                                    webbrowser.open("http://127.0.0.1:8765")
+                                except Exception:
+                                    pass
+                                with _window_lock:
+                                    _window_open = False
+                                return  # Exit the loop, browser fallback handled
                             else:
                                 raise
                         except KeyboardInterrupt:
@@ -980,7 +1048,18 @@ def main() -> None:
                         _print_shutdown_message(purple, cyan, reset)
                         os._exit(0)
                     except Exception as e:
-                        print(f"Failed to start windowed dashboard: {e}")
+                        import traceback
+                        error_details = traceback.format_exc()
+                        print(f"\n{'='*60}")
+                        print("Failed to start windowed dashboard:")
+                        print(f"Error: {e}")
+                        if getattr(sys, "frozen", False):
+                            print("\nThis is a packaged build. Common issues:")
+                            print("1. WebView2 runtime may not be installed")
+                            print("2. pywebview dependencies may not be included in PyInstaller build")
+                            print("3. Check PyInstaller spec file for missing hidden imports")
+                        print(f"\nFull traceback:\n{error_details}")
+                        print(f"{'='*60}\n")
                         print("Falling back to browser...")
                         try:
                             webbrowser.open("http://127.0.0.1:8765")
