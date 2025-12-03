@@ -81,18 +81,35 @@
         Download the most recent stable version of CustosEye.
       </p>
 
-      <!-- primary download button -->
-      <a href="https://github.com/mardini2/CustosEye/releases/download/v0.2.0/CustosEye-Setup.exe"
-         class="btn btn-primary"
-         id="download-btn"
-         rel="noopener"
-         style="display: inline-block; margin-top: 8px;">
-        Download v0.2.0 for Windows
-      </a>
+      <!-- download options: installer and zip side by side -->
+      <div class="download-options" style="display: flex; gap: 16px; flex-wrap: wrap; margin-top: 16px; margin-bottom: 16px;">
+        <!-- Windows Installer -->
+        <a href="https://github.com/mardini2/CustosEye/releases/download/v0.2.0/CustosEye-Setup.exe"
+           class="btn btn-primary"
+           id="download-installer-btn"
+           rel="noopener">
+          <span style="display: block; font-size: 0.9rem; opacity: 0.9; margin-bottom: 4px;">Windows Installer</span>
+          <span style="display: block; font-weight: 700;">Download v0.2.0</span>
+        </a>
 
-      <p style="margin-top: 16px; font-size: 0.9rem; color: #9aa3b2; line-height: 1.5;">
-        Run the installer to set up CustosEye with Start Menu shortcuts and an uninstaller. The dashboard will open automatically at <code style="background: rgba(0,0,0,0.3); padding: 2px 6px; border-radius: 4px;">http://127.0.0.1:8765/</code> after running the program. A portable ZIP bundle is also available on the GitHub releases page</a>.
-      </p>
+        <!-- Portable ZIP -->
+        <a href="https://github.com/mardini2/CustosEye/releases/download/v0.2.0/CustosEye.zip"
+           class="btn btn-zip"
+           id="download-zip-btn"
+           rel="noopener">
+          <span style="display: block; font-size: 0.9rem; opacity: 0.9; margin-bottom: 4px;">Portable ZIP</span>
+          <span style="display: block; font-weight: 700;">Download v0.2.0</span>
+        </a>
+      </div>
+
+      <div style="margin-top: 16px; padding: 16px; background: rgba(0,0,0,0.2); border-radius: 8px; border: 1px solid rgba(255,255,255,0.05);">
+        <p style="font-size: 0.9rem; color: #9aa3b2; line-height: 1.6; margin-bottom: 12px;">
+          <strong style="color: #c8d0dd;">Windows Installer:</strong> Run the installer to set up CustosEye with Start Menu shortcuts and an uninstaller. The dashboard will open automatically after running the program.
+        </p>
+        <p style="font-size: 0.9rem; color: #9aa3b2; line-height: 1.6; margin: 0;">
+          <strong style="color: #c8d0dd;">Portable ZIP:</strong> Extract the ZIP file to any folder and run CustosEye.exe directly. No installation required - perfect for portable use or testing.
+        </p>
+      </div>
     </section>
 
     <!-- previous versions section -->
@@ -116,9 +133,15 @@
             <td style="padding: 8px 40px 8px 12px;"><code style="background: rgba(0,0,0,0.3); padding: 2px 6px; border-radius: 4px;">v0.2.0</code></td>
             <td style="padding: 8px 40px; color: #9aa3b2;">Latest</td>
             <td style="padding: 8px 12px 8px 40px;">
-              <a href="https://github.com/mardini2/CustosEye/releases/download/v0.2.0/CustosEye-Setup.exe" 
-                 style="color: #8b5cf6; text-decoration: none;" 
-                 rel="noopener">Windows Installer</a>
+              <div style="display: flex; gap: 12px; flex-wrap: wrap;">
+                <a href="https://github.com/mardini2/CustosEye/releases/download/v0.2.0/CustosEye-Setup.exe" 
+                   style="color: #8b5cf6; text-decoration: none;" 
+                   rel="noopener">Windows Installer</a>
+                <span style="color: rgba(255,255,255,0.2);">|</span>
+                <a href="https://github.com/mardini2/CustosEye/releases/download/v0.2.0/CustosEye.zip" 
+                   style="color: #c4b5fd; text-decoration: none;" 
+                   rel="noopener">Portable ZIP</a>
+              </div>
             </td>
           </tr>
           <tr style="border-bottom: 1px solid rgba(255,255,255,0.05);">

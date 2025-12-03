@@ -20,8 +20,6 @@ body.page {
   font-family: system-ui, -apple-system, Segoe UI, Roboto, Inter, Arial, sans-serif;
   color: #e5e7eb;
   background: radial-gradient(1000px 500px at 20% 0%, #0b1022 0%, #0b1022 40%, #0a0f1e 100%);
-  -webkit-user-select: none;  /* prefix first */
-  user-select: none;
 }
 
 /* add a slim royal-purple stripe at the very top for polish */
@@ -394,6 +392,20 @@ body.page {
 /* ghost button: subtle background, minimal styling */
 .btn-ghost { background: rgba(255,255,255,0.03); color: #e5e7eb; }
 .btn-ghost:hover { background: rgba(255,255,255,0.07); }
+
+/* ZIP button: purple-tinted styling with glow effects */
+.btn-zip {
+  background: rgba(139, 92, 246, 0.15);
+  color: #c4b5fd;
+  border-color: rgba(139, 92, 246, 0.4);
+  box-shadow: 0 8px 24px rgba(139, 92, 246, 0.2);
+}
+.btn-zip:hover {
+  background: rgba(139, 92, 246, 0.25);
+  border-color: rgba(139, 92, 246, 0.6);
+  transform: translateY(-2px);
+  box-shadow: 0 12px 32px rgba(139, 92, 246, 0.35);
+}
 
 /* row that holds buttons (flex layout with wrapping) */
 .btn-row { margin-top: 12px; display: flex; gap: 10px; flex-wrap: wrap; }
