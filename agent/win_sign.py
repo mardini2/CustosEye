@@ -1,4 +1,3 @@
-# SPDX-License-Identifier: GPL-3.0-or-later
 """
 goal: checks Windows Authenticode signatures for executable files using PowerShell.
 returns whether the signature is valid and the certificate subject. only works on Windows,

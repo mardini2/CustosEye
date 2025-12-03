@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
 // goal: keyboard navigation and click behavior for top navigation menu
 // handles arrow keys, enter/space, escape, and click toggling for About submenu
 

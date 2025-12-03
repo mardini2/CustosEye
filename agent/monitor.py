@@ -1,4 +1,3 @@
-# SPDX-License-Identifier: GPL-3.0-or-later
 """
 goal: continuously monitors Windows processes and collects telemetry: PID, name, executable path, SHA256 hash,
 memory usage, parent PID, and open TCP/UDP ports. Polls at regular intervals and publishes events for

@@ -1,4 +1,3 @@
-# SPDX-License-Identifier: GPL-3.0-or-later
 """
 goal: main launcher for CustosEye: starts all monitoring agents, the web dashboard, and optionally opens the browser
 or shows a system tray icon. uses an event bus to fan-out events from agents to all subscribers (like the dashboard).
@@ -257,6 +256,193 @@ _webview_start_queue: queue.Queue = queue.Queue()
 # Global shutdown flag for Ctrl+C handling
 _shutdown_requested = False
 _shutdown_lock = threading.Lock()
+# Spinner coordination: lock to synchronize spinner updates with status line printing
+_spinner_lock = threading.Lock()
+_spinner_active = True  # whether the spinner is allowed to update
+
+
+def _spinner_animation() -> None:
+    """
+    Display a simple spinner animation on the current line.
+    The spinner uses a four-frame cycle (|, /, -, \) and appears only on the latest active line.
+    When shutdown occurs, the spinner resets to "-" before clearing to leave a clean state.
+    The animation checks for shutdown requests and stops cleanly when shutdown begins.
+    Updates are paused when _spinner_active is False to allow status lines to be finalized.
+    """
+    # Get color codes for consistent styling
+    try:
+        from colorama import init as _colorama_init
+
+        _colorama_init()
+        cyan = "\x1b[36m"
+        reset = "\x1b[0m"
+    except Exception:
+        cyan = reset = ""
+
+    # Four-frame spinner sequence
+    spinner_frames = ["|", "/", "-", "\\"]
+    frame_index = 0
+    first_update = True
+
+    try:
+        while True:
+            # Check for shutdown request before each frame update
+            with _shutdown_lock:
+                if _shutdown_requested:
+                    break
+
+            # Check if spinner is allowed to update (may be paused for status line finalization)
+            with _spinner_lock:
+                can_update = _spinner_active
+
+            if not can_update:
+                # Spinner is paused, wait a bit and check again
+                time.sleep(0.05)
+                continue
+
+            # Build the spinner line (just the spinner character with trailing space)
+            spinner_char = spinner_frames[frame_index]
+            line = f"{cyan}{spinner_char}{reset} "
+
+            # On first update, print on a new line to ensure visibility
+            # On subsequent updates, use carriage return to overwrite the same line
+            # This ensures the spinner is always on a visible line
+            if first_update:
+                sys.stdout.write(f"\n{line}")
+                first_update = False
+            else:
+                sys.stdout.write(f"\r{line}")
+            sys.stdout.flush()
+
+            # Move to next frame
+            frame_index = (frame_index + 1) % len(spinner_frames)
+
+            # Small delay between frames for smooth animation
+            time.sleep(0.15)
+
+            # Check shutdown again after sleep
+            with _shutdown_lock:
+                if _shutdown_requested:
+                    break
+    except (KeyboardInterrupt, SystemExit):
+        # Handle interrupts gracefully
+        pass
+    finally:
+        # On exit, just clear the spinner line without adding extra lines
+        try:
+            with _spinner_lock:
+                # Overwrite spinner chars with spaces and return to start of line
+                sys.stdout.write("\r  \r")
+                sys.stdout.flush()
+        except Exception:
+            try:
+                sys.stdout.write("\r")
+                sys.stdout.flush()
+            except Exception:
+                pass
+
+
+def print_status_line(message: str, prefix_done: str = "") -> None:
+    """
+    Print a status message by finalizing the current spinner line and starting a new one.
+    This ensures every finalized line starts with "-" and the spinner continues on a new line below.
+    The message can contain ANSI color codes and will be preserved.
+    """
+    # Get color codes for consistent styling
+    try:
+        from colorama import init as _colorama_init
+
+        _colorama_init()
+        cyan = "\x1b[36m"
+        reset = "\x1b[0m"
+    except Exception:
+        cyan = reset = ""
+
+    with _spinner_lock:
+        # Pause spinner updates while we finalize this line
+        global _spinner_active
+        _spinner_active = False
+
+        try:
+            # Handle multi-line messages (like shutdown messages)
+            lines = message.split("\n")
+            first_line = lines[0]
+            remaining_lines = "\n".join(lines[1:]) if len(lines) > 1 else ""
+
+            # Overwrite the current spinner line with finalized status
+            # Include prefix_done only if it's provided (formatter may already include checkmark)
+            if prefix_done:
+                finalized_line = f"{cyan}-{reset} {prefix_done} {first_line}\n"
+            else:
+                finalized_line = f"{cyan}-{reset} {first_line}\n"
+            sys.stdout.write(f"\r{finalized_line}")
+            sys.stdout.flush()
+
+            # If there are remaining lines (like shutdown message), print them
+            if remaining_lines:
+                sys.stdout.write(remaining_lines)
+                if not remaining_lines.endswith("\n"):
+                    sys.stdout.write("\n")
+                sys.stdout.flush()
+
+            # Immediately print a new spinner seed line on the next line so spinner can continue
+            # Start with the first frame "|" to give spinner a clean starting point
+            spinner_seed = f"{cyan}|{reset} "
+            sys.stdout.write(spinner_seed)
+            sys.stdout.flush()
+        finally:
+            # Re-enable spinner updates
+            _spinner_active = True
+
+
+class SpinnerStatusHandler(logging.Handler):
+    """
+    Custom logging handler that uses print_status_line() to display auth messages
+    with proper spinner coordination. The formatter is responsible for colors and
+    any ✓ symbols; this handler just finalizes the spinner line.
+    """
+
+    def emit(self, record: logging.LogRecord) -> None:
+        """
+        Emit a log record by formatting it and passing to print_status_line().
+        This ensures the message is displayed with spinner coordination.
+        """
+        try:
+            # Format the message using the formatter (preserves colors and checkmarks)
+            msg = self.format(record)
+            # Do NOT add another ✓ here. The formatter already did that.
+            print_status_line(msg, prefix_done="")
+        except Exception:
+            # If anything goes wrong, fall back to basic print
+            self.handleError(record)
+
+
+def _print_shutdown_message(purple: str, cyan: str, reset: str) -> None:
+    """
+    Clear any active spinner line and print a single, clean shutdown message.
+    This avoids stray spinner frames or a lonely "-" line around shutdown.
+    """
+    # Stop spinner updates and clear the current spinner line (if any)
+    global _spinner_active
+    try:
+        with _spinner_lock:
+            _spinner_active = False
+            try:
+                # Overwrite spinner chars with spaces and return to start of line
+                sys.stdout.write("\r  \r")
+                sys.stdout.flush()
+            except Exception:
+                pass
+    except NameError:
+        # If spinner globals are not defined for some reason, just continue
+        pass
+
+    # Now print the shutdown message with a leading newline, but no extra newline after
+    try:
+        print(f"\n{purple}⬩{reset}{cyan}➢ {reset} Shutting down {purple}CustosEye{reset}...")
+        sys.stdout.flush()
+    except Exception:
+        pass
 
 
 def _suppress_stderr_os_level():
@@ -517,12 +703,7 @@ def main() -> None:
 
         # Suppress output BEFORE printing shutdown message (Chrome error happens during destroy)
         # Print shutdown message first, then suppress everything
-        try:
-            print(f"\n{purple}⬩{reset}{cyan}➢ {reset} Shutting down {purple}CustosEye{reset}...\n")
-            # Flush stdout to ensure message is printed before we suppress it
-            sys.stdout.flush()
-        except Exception:
-            pass
+        _print_shutdown_message(purple, cyan, reset)
 
         # Now suppress all output before destroying webview (this is when the error occurs)
         _suppress_stderr_os_level()
@@ -557,13 +738,7 @@ def main() -> None:
                         _shutdown_requested = True
 
                     # Print shutdown message first
-                    try:
-                        print(
-                            f"\n{purple}⬩{reset}{cyan}➢ {reset} Shutting down {purple}CustosEye{reset}...\n"
-                        )
-                        sys.stdout.flush()
-                    except Exception:
-                        pass
+                    _print_shutdown_message(purple, cyan, reset)
 
                     # Now suppress all output before exit (Chrome error happens during cleanup)
                     _suppress_stderr_os_level()
@@ -709,8 +884,15 @@ def main() -> None:
     # minimal terminal output (no live stream)
     print_banner()  # print the welcome banner
     print(
-        f"{purple}⬩{reset}{cyan}➢ {reset} Welcome to {purple}CustosEye{reset}!\n"
+        f"{purple}⬩{reset}{cyan}➢ {reset} Welcome to {purple}CustosEye{reset}!"
     )  # print welcome message with colored CustosEye
+
+    # Start spinner animation in background thread
+    threading.Thread(
+        target=_spinner_animation,
+        name="spinner",
+        daemon=True,
+    ).start()
 
     # keep main alive and handle webview startup (webview must run on main thread)
     global _window_open
@@ -719,9 +901,7 @@ def main() -> None:
             # Check for shutdown request
             with _shutdown_lock:
                 if _shutdown_requested:
-                    print(
-                        f"\n{purple}⬩{reset}{cyan}➢ {reset} Shutting down {purple}CustosEye{reset}...\n"
-                    )
+                    _print_shutdown_message(purple, cyan, reset)
                     os._exit(0)
 
             # Check if webview needs to be started (non-blocking check)
@@ -760,9 +940,7 @@ def main() -> None:
                         # Check for shutdown before starting webview
                         with _shutdown_lock:
                             if _shutdown_requested:
-                                print(
-                                    f"\n{purple}⬩{reset}{cyan}➢ {reset} Shutting down {purple}CustosEye{reset}...\n"
-                                )
+                                _print_shutdown_message(purple, cyan, reset)
                                 os._exit(0)
 
                         # Start webview (this blocks until window is closed)
@@ -785,13 +963,7 @@ def main() -> None:
                                     webview.start(debug=False)
                                 except KeyboardInterrupt:
                                     # Ctrl+C pressed while webview is running
-                                    try:
-                                        print(
-                                            f"\n{purple}⬩{reset}{cyan}➢ {reset} Shutting down {purple}CustosEye{reset}...\n"
-                                        )
-                                        sys.stdout.flush()
-                                    except Exception:
-                                        pass
+                                    _print_shutdown_message(purple, cyan, reset)
                                     # Suppress all output before exit (Chrome error happens during cleanup)
                                     _suppress_stderr_os_level()
                                     os._exit(0)
@@ -799,21 +971,13 @@ def main() -> None:
                                 raise
                         except KeyboardInterrupt:
                             # Ctrl+C pressed while webview is running
-                            try:
-                                print(
-                                    f"\n{purple}⬩{reset}{cyan}➢ {reset} Shutting down {purple}CustosEye{reset}...\n"
-                                )
-                                sys.stdout.flush()
-                            except Exception:
-                                pass
+                            _print_shutdown_message(purple, cyan, reset)
                             # Suppress all output before exit (Chrome error happens during cleanup)
                             _suppress_stderr_os_level()
                             os._exit(0)
 
                         # Window was closed - shut down the application
-                        print(
-                            f"\n{purple}⬩{reset}{cyan}➢ {reset} Shutting down {purple}CustosEye{reset}...\n"
-                        )
+                        _print_shutdown_message(purple, cyan, reset)
                         os._exit(0)
                     except Exception as e:
                         print(f"Failed to start windowed dashboard: {e}")
@@ -832,11 +996,7 @@ def main() -> None:
         # Make Ctrl+C behave exactly like the banner promises: clean shutdown from terminal
         with _shutdown_lock:
             _shutdown_requested = True
-        try:
-            print(f"\n{purple}⬩{reset}{cyan}➢ {reset} Shutting down {purple}CustosEye{reset}...\n")
-            sys.stdout.flush()
-        except Exception:
-            pass
+        _print_shutdown_message(purple, cyan, reset)
         # Suppress all output before exit (Chrome error happens during cleanup)
         _suppress_stderr_os_level()
         # Don't call webview.destroy_window() - just exit and let OS clean up

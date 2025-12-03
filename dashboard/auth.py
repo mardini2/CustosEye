@@ -1,4 +1,3 @@
-# SPDX-License-Identifier: GPL-3.0-or-later
 """
 goal: authentication and authorization module for CustosEye. handles user accounts, password hashing,
       TOTP 2FA, session management, CSRF protection, and brute-force protection. enforces single-admin
@@ -128,7 +127,18 @@ class ColoredUsernameFormatter(logging.Formatter):
 
 # set up the custom formatter for auth logger
 # format only shows the message without levelname or logger name prefix for better UX
-handler = logging.StreamHandler()
+# use SpinnerStatusHandler from console.py if available to coordinate with spinner animation
+handler: logging.Handler
+try:
+    # Lazy import to avoid circular dependency - console.py imports dashboard modules
+    # This import only happens when auth.py is loaded, which is after console.py starts
+    from app.console import SpinnerStatusHandler
+
+    handler = SpinnerStatusHandler()
+except (ImportError, AttributeError):
+    # Fall back to StreamHandler if console.py handler is not available
+    handler = logging.StreamHandler()
+
 handler.setFormatter(ColoredUsernameFormatter("%(message)s"))
 auth_logger.addHandler(handler)
 auth_logger.propagate = False  # prevent duplicate messages

@@ -1,4 +1,3 @@
-# SPDX-License-Identifier: GPL-3.0-or-later
 """
 goal: continuously monitors file integrity by checking SHA256 hashes against expected values.
 only emits events when a file's status changes (missing -> ok, ok -> mismatch, etc).

@@ -1,4 +1,3 @@
-# SPDX-License-Identifier: GPL-3.0-or-later
 """
 goal: authentication routes for CustosEye. handles login, signup, logout, 2FA setup, and password reset.
       protects routes with CSRF tokens and enforces authentication requirements.
@@ -10,7 +9,10 @@ expects these environment variables:
 
 from __future__ import annotations
 
+import os
 import secrets
+import signal
+import sys
 from collections.abc import Callable
 from functools import wraps
 from typing import Any
@@ -242,16 +244,11 @@ def register_auth_routes(app: Flask) -> None:
         if username:
             from dashboard.auth import auth_logger
 
-            if shutdown:
-                auth_logger.info(
-                    f"✓ User {username} logged out\n\n{purple}⬩{reset}{cyan}➢ {reset} Shutting down {purple}CustosEye{reset}...\n"
-                )
-            else:
-                auth_logger.info(f"✓ User {username} logged out")
+            # log logout message (shutdown message will be handled by console.py via SIGINT)
+            auth_logger.info(f"✓ User {username} logged out")
 
         if shutdown:
             # shutdown the Flask app (will stop the server)
-            import os
             import threading
 
             # schedule shutdown in a separate thread to allow response to be sent
@@ -259,8 +256,21 @@ def register_auth_routes(app: Flask) -> None:
                 import time
 
                 time.sleep(0.5)  # give time for response to be sent
-                # force exit the entire process (this will stop all threads including the dashboard)
-                os._exit(0)
+                # trigger SIGINT to use the same shutdown path as Ctrl+C
+                # this ensures spinner clearing and clean shutdown message are handled by console.py
+                if sys.platform == "win32":
+                    # On Windows, use GenerateConsoleCtrlEvent to trigger CTRL_C_EVENT
+                    # This ensures the console control handler in console.py is called
+                    try:
+                        import ctypes
+
+                        ctypes.windll.kernel32.GenerateConsoleCtrlEvent(0, 0)  # CTRL_C_EVENT
+                    except Exception:
+                        # Fallback to os.kill if Windows API fails
+                        os.kill(os.getpid(), signal.SIGINT)
+                else:
+                    # On Unix-like systems, use os.kill to send SIGINT
+                    os.kill(os.getpid(), signal.SIGINT)
 
             threading.Thread(target=shutdown_server, daemon=False).start()
             return jsonify(
@@ -276,21 +286,28 @@ def register_auth_routes(app: Flask) -> None:
     @app.route("/auth/shutdown", methods=["POST"])
     def auth_shutdown():
         """shutdown handler - shuts down the server without requiring authentication"""
-        from dashboard.auth import auth_logger
-
-        auth_logger.info(
-            f"\n{purple}⬩{reset}{cyan}➢ {reset} Shutting down {purple}CustosEye{reset}...\n"
-        )
         # schedule shutdown in a separate thread to allow response to be sent
-        import os
         import threading
 
         def shutdown_server():
             import time
 
             time.sleep(0.5)  # give time for response to be sent
-            # force exit the entire process (this will stop all threads including the dashboard)
-            os._exit(0)
+            # trigger SIGINT to use the same shutdown path as Ctrl+C
+            # this ensures spinner clearing and clean shutdown message are handled by console.py
+            if sys.platform == "win32":
+                # On Windows, use GenerateConsoleCtrlEvent to trigger CTRL_C_EVENT
+                # This ensures the console control handler in console.py is called
+                try:
+                    import ctypes
+
+                    ctypes.windll.kernel32.GenerateConsoleCtrlEvent(0, 0)  # CTRL_C_EVENT
+                except Exception:
+                    # Fallback to os.kill if Windows API fails
+                    os.kill(os.getpid(), signal.SIGINT)
+            else:
+                # On Unix-like systems, use os.kill to send SIGINT
+                os.kill(os.getpid(), signal.SIGINT)
 
         threading.Thread(target=shutdown_server, daemon=False).start()
         return jsonify(

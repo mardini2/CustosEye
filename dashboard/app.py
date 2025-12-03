@@ -1,4 +1,3 @@
-# SPDX-License-Identifier: GPL-3.0-or-later
 # ruff: noqa: E501
 """
 Flask web dashboard for CustosEye - the main backend that powers the web interface

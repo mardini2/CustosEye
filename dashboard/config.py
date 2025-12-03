@@ -1,4 +1,3 @@
-# SPDX-License-Identifier: GPL-3.0-or-later
 """
 goal: configuration loader for the dashboard. loads settings from a JSON file and environment
       variables, with sensible defaults. handles PyInstaller frozen executables by detecting

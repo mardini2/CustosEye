@@ -1,4 +1,3 @@
-# SPDX-License-Identifier: GPL-3.0-or-later
 #!/usr/bin/env python3
 """
 goal: environment setup script for CustosEye. auto-generates .env file with secure secrets if it doesn't exist.

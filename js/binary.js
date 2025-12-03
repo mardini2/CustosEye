@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
 // binary.js
 // goal: creates a binary rain animation effect (falling 0s and 1s) for visual design on the
 //       index page. draws animated columns of binary digits that fall down the screen with
